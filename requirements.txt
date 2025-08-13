@@ -1,3 +1,4 @@
+@'
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 python-jose[cryptography]>=3.3.0
@@ -8,4 +9,5 @@ pydantic-settings>=2.2.1
 python-multipart>=0.0.9
 reportlab>=4.2.0
 jinja2>=3.1.4
-echo email-validator>>requirements.txt
+email-validator>=2.2.0
+'@ | Set-Content requirements.txt
