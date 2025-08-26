@@ -1,4 +1,17 @@
 {% extends 'base.html' %}{% block content %}
-<h1 class="text-2xl font-semibold mb-2">Bienvenido a AlertTrail</h1>
-<p class="text-sm text-gray-600">Obtén un token en <code>/auth/login</code> y navega al dashboard <code>/</code> con Authorization Bearer.</p>
+<h1 class="text-2xl font-semibold mb-3">Bienvenido a AlertTrail</h1>
+<p class="text-sm text-gray-600 mb-4">Iniciá sesión para ir al dashboard.</p>
+
+<form action="/auth/login_web" method="post" class="bg-white p-4 rounded-xl shadow max-w-md">
+  <label class="block text-sm font-medium mb-1">Email</label>
+  <input name="email" type="email" class="w-full border rounded p-2 mb-3" required>
+  <label class="block text-sm font-medium mb-1">Contraseña</label>
+  <input name="password" type="password" class="w-full border rounded p-2 mb-3" required>
+  <button class="px-4 py-2 rounded bg-black text-white">Entrar</button>
+</form>
+
+<p class="text-xs text-gray-500 mt-4">
+  ¿Preferís API? Usá <code>/auth/login</code> para obtener el token y
+  <code>/docs</code> para probar endpoints.
+</p>
 {% endblock %}
