@@ -1,5 +1,10 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, Any
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+from enum import Enum
+
+class PlanEnum(str, Enum):
+    free = "free"
+    pro = "pro"
 
 class Token(BaseModel):
     access_token: str
@@ -7,29 +12,26 @@ class Token(BaseModel):
 
 class UserBase(BaseModel):
     email: EmailStr
-    name: str
+    name: str | None = None
+    plan: PlanEnum = PlanEnum.free
 
 class UserCreate(UserBase):
-    password: str = Field(min_length=6)
+    password: str
 
 class UserOut(UserBase):
     id: int
-    is_pro: bool
     class Config:
         from_attributes = True
 
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
 class AnalysisCreate(BaseModel):
     title: str
-    content: str
+    raw_log: str
 
 class AnalysisOut(BaseModel):
     id: int
     title: str
-    input_summary: str
-    result_json: Any
+    result: str
+    created_at: str
+    pdf_ready: bool = False
     class Config:
         from_attributes = True

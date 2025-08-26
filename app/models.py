@@ -1,23 +1,38 @@
+from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, func, Boolean
+from enum import Enum
 from .database import Base
+
+class PlanEnum(str, Enum):
+    FREE = "free"
+    PRO = "pro"
 
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    name: Mapped[str] = mapped_column(String(255))
-    hashed_password: Mapped[str] = mapped_column(String(255))
-    is_pro: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    analyses: Mapped[list["Analysis"]] = relationship("Analysis", back_populates="owner", cascade="all, delete-orphan")
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), default="User")
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    plan: Mapped[PlanEnum] = mapped_column(SAEnum(PlanEnum), default=PlanEnum.FREE)
+    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    analyses: Mapped[list["Analysis"]] = relationship(back_populates="owner")
 
 class Analysis(Base):
     __tablename__ = "analyses"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    title: Mapped[str] = mapped_column(String(255))
-    input_summary: Mapped[str] = mapped_column(Text)
-    result_json: Mapped[str] = mapped_column(Text)
-    created_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    owner: Mapped["User"] = relationship("User", back_populates="analyses")
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now())
+    title: Mapped[str] = mapped_column(String(255), default="Log Analysis")
+    raw_log: Mapped[str] = mapped_column(Text, default="")
+    result: Mapped[str] = mapped_column(Text, default="")
+    pdf_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    owner: Mapped["User"] = relationship(back_populates="analyses")
+
+class DownloadMetric(Base):
+    __tablename__ = "download_metrics"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    month_key: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
+    count: Mapped[int] = mapped_column(Integer, default=0)

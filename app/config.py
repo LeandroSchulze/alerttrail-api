@@ -1,14 +1,11 @@
-from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl
-from typing import List, Union
+import os
+from pydantic import BaseModel
 
-class Settings(BaseSettings):
-    SECRET_KEY: str = "changeme"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    DATABASE_URL: str = "sqlite:///./alerttrail.sqlite3"
-    CORS_ORIGINS: Union[str, List[AnyHttpUrl]] = "*"
-
-    class Config:
-        env_file = ".env"
+class Settings(BaseModel):
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+    DEFAULT_LANGUAGE: str = os.getenv("DEFAULT_LANGUAGE", "es")
+    PYTHON_VERSION: str | None = os.getenv("PYTHON_VERSION")
+    DATABASE_URL: str | None = os.getenv("DATABASE_URL")
 
 settings = Settings()
