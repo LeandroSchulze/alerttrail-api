@@ -21,3 +21,4 @@ def set_plan(plan: PlanEnum, db: Session = Depends(get_db), user=Depends(get_cur
     user.plan = plan
     db.add(user); db.commit()
     return {"plan": user.plan.value}
+    return {"plan": user.plan.value}
