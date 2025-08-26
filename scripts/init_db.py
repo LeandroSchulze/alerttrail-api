@@ -1,3 +1,8 @@
+import os, sys
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 import os
 from app.database import Base, engine, SessionLocal
 from app.models import User
