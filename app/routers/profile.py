@@ -1,4 +1,4 @@
-rom fastapi import APIRouter, Depends, Form
+from fastapi import APIRouter, Depends, Form
 from sqlalchemy.orm import Session
 from ..deps import get_current_user, get_db
 from ..auth import get_password_hash
@@ -21,17 +21,3 @@ def set_plan(plan: PlanEnum, db: Session = Depends(get_db), user=Depends(get_cur
     user.plan = plan
     db.add(user); db.commit()
     return {"plan": user.plan.value}
-2) app/main.py (asegurá la inclusión)
-Verificá que tengas esto:
-
-python
-Copiar
-Editar
-from .routers import auth, dashboard, analysis, profile, settings, admin
-...
-app.include_router(auth.router)
-app.include_router(dashboard.router)
-app.include_router(analysis.router)
-app.include_router(profile.router)     # <- importante
-app.include_router(settings.router)
-app.include_router(admin.router)
