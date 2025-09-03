@@ -1,4 +1,8 @@
-﻿from fastapi import Depends, HTTPException, status, Request
+﻿from fastapi.security import OAuth2PasswordBearer
+
+# Esto registra el esquema en OpenAPI (aparece el botón Authorize)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+from fastapi import Depends, HTTPException, status, Request
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 from .config import settings
@@ -21,8 +25,13 @@ def _extract_token(request: Request) -> str | None:
         return cookie
     return None
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    token = _extract_token(request)
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    bearer_token: str = Depends(oauth2_scheme)  # <-- nuevo
+) -> User:
+    # primero intentamos cookie/header propio; si no, usamos el bearer de Swagger
+    token = _extract_token(request) or bearer_token
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     try:
@@ -34,7 +43,6 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
-
 def require_pro(user: User = Depends(get_current_user)) -> User:
     if user.plan != PlanEnum.PRO:
         raise HTTPException(status_code=402, detail="Función disponible para el plan Pro.")
