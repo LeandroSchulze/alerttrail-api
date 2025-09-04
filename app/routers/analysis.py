@@ -8,28 +8,36 @@ from ..services.analysis import analyze_log, format_result
 from ..services.pdf import build_pdf
 import base64
 
-# ✅ primero creamos el router
+# Router
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
-# --- GET /analysis/run -> redirige al dashboard (evita abrirlo directo y ver 403/GET) ---
-@router.get("/run")
+# --- Redirecciones para GET (si abren /analysis/* en el navegador) ---
+@router.get("/", include_in_schema=False)
+def analysis_index():
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+@router.get("/run", include_in_schema=False)
 def run_get_redirect():
     return RedirectResponse(url="/dashboard", status_code=302)
 
-# --- POST /analysis/run (form) acepta raw_b64 para evitar WAF ---
+@router.get("/{path:path}", include_in_schema=False)
+def analysis_catch_all(path: str):
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+# --- POST /analysis/run (form-data). Acepta raw_b64 para evitar bloqueos del WAF ---
 @router.post("/run")
 def run_analysis(
+    title: str = Form("Log Analysis"),
     raw_log: str | None = Form(None),
     raw_b64: str | None = Form(None),
-    title: str = Form("Log Analysis"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     if (not raw_log) and raw_b64:
         try:
             raw_log = base64.b64decode(raw_b64).decode("utf-8", "ignore")
-        except Exception:
-            raise HTTPException(status_code=400, detail="No se pudo decodificar raw_b64")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="No se pudo decodificar raw_b64") from e
     if not raw_log:
         raise HTTPException(status_code=400, detail="Falta raw_log o raw_b64")
 
@@ -39,7 +47,7 @@ def run_analysis(
     db.add(a); db.commit(); db.refresh(a)
     return {"id": a.id, "result": a.result}
 
-# --- POST /analysis/run_json (JSON) { "title": "...", "raw_b64": "..." } ---
+# --- POST /analysis/run_json (application/json) ---
 class RunPayload(BaseModel):
     title: str | None = "Log Analysis"
     raw_b64: str
@@ -52,8 +60,8 @@ def run_analysis_json(
 ):
     try:
         raw_log = base64.b64decode(payload.raw_b64).decode("utf-8", "ignore")
-    except Exception:
-        raise HTTPException(status_code=400, detail="No se pudo decodificar raw_b64")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="No se pudo decodificar raw_b64") from e
 
     findings = analyze_log(raw_log)
     result = format_result(findings)
@@ -61,12 +69,16 @@ def run_analysis_json(
     db.add(a); db.commit(); db.refresh(a)
     return {"id": a.id, "result": a.result}
 
-# --- PDF Pro ---
+# --- PDF (sólo plan Pro) ---
 @router.post("/pdf/{analysis_id}")
-def pdf_pro(analysis_id: int, db: Session = Depends(get_db), user=Depends(require_pro)):
+def pdf_pro(
+    analysis_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(require_pro),
+):
     a = db.get(Analysis, analysis_id)
     if not a or a.user_id != user.id:
-        raise HTTPException(404, "Análisis no encontrado")
+        raise HTTPException(status_code=404, detail="Análisis no encontrado")
     path = build_pdf(a, user)
     a.pdf_path = path
     db.add(a); db.commit()
