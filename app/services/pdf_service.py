@@ -1,25 +1,32 @@
+import os
+from pathlib import Path
+from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
-from datetime import datetime
-from pathlib import Path
 
-STATIC_DIR = Path("static")
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
+# Elegimos una carpeta escribible (var/data si existe, si no /tmp)
+_reports_dir = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
+try:
+    _reports_dir.mkdir(parents=True, exist_ok=True)
+except Exception:
+    _reports_dir = Path("/tmp/reports")
+    _reports_dir.mkdir(parents=True, exist_ok=True)
+
+# La URL pública será /reports/...
+REPORTS_URL_PREFIX = "reports"
 
 def generate_pdf(report_data: dict, filename_prefix: str = "analysis") -> str:
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    pdf_path = STATIC_DIR / f"{filename_prefix}_{ts}.pdf"
+    filename = f"{filename_prefix}_{ts}.pdf"
+    pdf_fs_path = _reports_dir / filename
 
-    c = canvas.Canvas(str(pdf_path), pagesize=A4)
+    c = canvas.Canvas(str(pdf_fs_path), pagesize=A4)
     width, height = A4
 
-    logo_path = STATIC_DIR / "logo.png"
-    if logo_path.exists():
-        c.drawImage(str(logo_path), 2*cm, height - 3*cm, width=3*cm, height=2*cm, preserveAspectRatio=True, mask='auto')
+    # Encabezado simple
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(6*cm, height - 2*cm, "AlertTrail – Reporte de Análisis")
-
+    c.drawString(2*cm, height - 2*cm, "AlertTrail – Reporte de Análisis")
     c.setFont("Helvetica", 10)
     c.drawRightString(width - 2*cm, height - 1.5*cm, datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
 
@@ -41,4 +48,6 @@ def generate_pdf(report_data: dict, filename_prefix: str = "analysis") -> str:
 
     c.showPage()
     c.save()
-    return str(pdf_path)
+
+    # Devolvemos la ruta web relativa (la UI hace href="/{a.pdf_path}")
+    return f"{REPORTS_URL_PREFIX}/{filename}"
