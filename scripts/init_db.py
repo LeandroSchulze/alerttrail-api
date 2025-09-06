@@ -1,4 +1,7 @@
-from app.database import Base, engine, SessionLocal
+from app.config import get_settings
+settings = get_settings()
+print(f"[init_db] DATABASE_URL = {settings.DATABASE_URL}")from app.database import Base, engine, SessionLocal
+
 from app.config import get_settings
 from app.models import User
 from app.security import get_password_hash
