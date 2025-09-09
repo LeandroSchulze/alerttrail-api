@@ -1,47 +1,40 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Form
-from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import timedelta
-
-from .. import schemas
-from ..models import User
-from ..auth import create_access_token, verify_password, get_password_hash
-from ..deps import get_db
-from ..config import settings
+from app.database import get_db
+from app import models, schemas
+from app.security import get_password_hash, verify_password, create_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-@router.post("/login", response_model=schemas.Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
-    token = create_access_token({"sub": str(user.id)}, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    return {"access_token": token, "token_type": "bearer"}
-
 @router.post("/register", response_model=schemas.UserOut)
-def register(email: str = Form(...), name: str = Form("User"), password: str = Form(...), db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == email).first():
-        raise HTTPException(400, "Email ya registrado")
-    user = User(email=email, name=name, hashed_password=get_password_hash(password))
-    db.add(user); db.commit(); db.refresh(user)
+def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
+    email = user_in.email.strip().lower()
+    exists = db.query(models.User).filter(models.User.email == email).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Email ya registrado")
+    user = models.User(
+        name=user_in.name.strip(),
+        email=email,
+        hashed_password=get_password_hash(user_in.password),
+        plan="FREE",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return user
 
-# --- Login web con cookie (para testers) ---
-@router.post("/login_web")
-def login_web(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-    token = create_access_token({"sub": str(user.id)}, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    resp = RedirectResponse(url="/dashboard", status_code=302)
-    # cookie httpOnly con el token
-    resp.set_cookie("access_token", token, httponly=True, max_age=60*60*24, samesite="lax")
-    return resp
-
-@router.post("/logout_web")
-def logout_web():
-    resp = RedirectResponse(url="/", status_code=302)
-    resp.delete_cookie("access_token")
-    return resp
+@router.post("/login", response_model=schemas.Token)
+def login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    password = payload.password
+    user = db.query(models.User).filter(models.User.email == email).first()
+    ok = False
+    if user and getattr(user, "hashed_password", None):
+        try:
+            ok = verify_password(password, user.hashed_password)
+        except Exception as e:
+            print(f"[login] verify error for {email}: {e}")
+    if not user or not ok:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
+    token = create_access_token({"sub": user.email})
+    return {"access_token": token, "token_type": "bearer"}

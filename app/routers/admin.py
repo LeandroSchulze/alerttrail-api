@@ -1,17 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from ..deps import get_current_user, get_db
-from ..models import User, DownloadMetric, PlanEnum
+from sqlalchemy import func
+from app.database import get_db
+from app import models
+from app.security import get_current_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-def require_admin(user: User):
-    if user.email != "admin@example.com":
-        raise HTTPException(403, "Solo admin")
-
-@router.get("/stats")
-def stats(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    require_admin(user)
-    pro_users = db.query(User).filter(User.plan == PlanEnum.PRO).count()
-    downloads = db.query(DownloadMetric).all()
-    return {"pro_users": pro_users, "downloads": [{"month": d.month_key, "count": d.count} for d in downloads]}
+@router.get("/metrics")
+def metrics(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    if user.plan != "PRO":
+        return {"detail": "Solo Pro", "ok": False}
+    total_pdfs = db.query(models.Analysis).filter(models.Analysis.pdf_path.isnot(None)).count()
+    users_pro = db.query(models.User).filter(models.User.plan == "PRO").count()
+    per_month = (
+        db.query(func.strftime('%Y-%m', models.Analysis.created_at), func.count(models.Analysis.id))
+        .group_by(func.strftime('%Y-%m', models.Analysis.created_at))
+        .all()
+    )
+    return {"ok": True, "pdf_reports": total_pdfs, "users_pro": users_pro, "analyses_per_month": dict(per_month)}

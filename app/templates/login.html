@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <h1>Iniciar sesión</h1>
+  <input id="email" placeholder="email" value="admin@tudominio.com"/>
+  <input id="password" placeholder="password" type="password" value="Cambiar123!"/>
+  <button id="btn">Entrar</button>
+  <p id="err" class="err" style="display:none;">Credenciales incorrectas</p>
+</div>
+<script>
+  const btn = document.querySelector('#btn');
+  const email = document.querySelector('#email');
+  const password = document.querySelector('#password');
+  const err = document.querySelector('#err');
+  btn.onclick = async () => {
+    err.style.display = 'none';
+    const res = await fetch('/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email: email.value, password: password.value})
+    });
+    if(!res.ok){ err.style.display = 'block'; return; }
+    const data = await res.json();
+    localStorage.setItem('token', data.access_token);
+    location.href = '/dashboard';
+  }
+</script>
+{% endblock %}

@@ -1,23 +1,17 @@
-from fastapi import APIRouter, Depends, Form
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from ..deps import get_current_user, get_db
-from ..auth import get_password_hash
-from ..models import User, PlanEnum
+from app.database import get_db
+from app import models
+from app.security import get_current_user, get_password_hash, verify_password
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
-@router.get("/me")
-def me(user=Depends(get_current_user)):
-    return {"id": user.id, "email": user.email, "name": user.name, "plan": user.plan.value}
-
-@router.post("/password")
-def change_password(new_password: str = Form(...), db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.post("/change-password")
+def change_password(old_password: str, new_password: str,
+                    db: Session = Depends(get_db),
+                    user: models.User = Depends(get_current_user)):
+    if not verify_password(old_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Clave actual incorrecta")
     user.hashed_password = get_password_hash(new_password)
-    db.add(user); db.commit()
-    return {"ok": True}
-
-@router.post("/plan")
-def set_plan(plan: PlanEnum, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    user.plan = plan
-    db.add(user); db.commit()
-    return {"plan": user.plan.value}
+    db.commit()
+    return {"detail": "Password actualizado"}

@@ -1,24 +1,23 @@
 services:
   - type: web
-    name: alerttrail
-    runtime: python
+    name: alerttrail-api
+    env: python
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
-      - key: ADMIN_EMAIL
-        sync: false
-      - key: ADMIN_PASS
-        sync: false
-      - key: ADMIN_NAME
-        sync: false
-      - key: DEFAULT_LANGUAGE
-        value: es
+    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+    startCommand: python -m scripts.init_db && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    autoDeploy: true
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1
+    envVars:
+      - key: SECRET_KEY
+        value: change_this_secret
+      - key: ADMIN_EMAIL
+        value: admin@tudominio.com
+      - key: ADMIN_PASS
+        value: Cambiar123!
+      - key: ADMIN_NAME
+        value: Admin
+      - key: FREE_DAILY_LIMIT
+        value: "10"
+      - key: DATABASE_URL
+        value: sqlite:////tmp/alerttrail.sqlite3
+      - key: REPORTS_DIR
+        value: /tmp/reports

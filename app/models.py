@@ -1,39 +1,20 @@
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from enum import Enum
-from datetime import datetime
-from .database import Base
-
-class PlanEnum(str, Enum):
-    FREE = "free"
-    PRO = "pro"
+from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy.sql import func
+from app.database import Base
 
 class User(Base):
     __tablename__ = "users"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(255), default="User")
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    plan: Mapped[PlanEnum] = mapped_column(SAEnum(PlanEnum), default=PlanEnum.FREE)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    analyses: Mapped[list["Analysis"]] = relationship(back_populates="owner")
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    plan = Column(String(20), default="FREE")
+    created_at = Column(DateTime, server_default=func.now())
 
 class Analysis(Base):
     __tablename__ = "analyses"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    title: Mapped[str] = mapped_column(String(255), default="Log Analysis")
-    raw_log: Mapped[str] = mapped_column(Text, default="")
-    result: Mapped[str] = mapped_column(Text, default="")
-    pdf_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-
-    owner: Mapped["User"] = relationship(back_populates="analyses")
-
-class DownloadMetric(Base):
-    __tablename__ = "download_metrics"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    month_key: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
-    count: Mapped[int] = mapped_column(Integer, default=0)
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String(255), index=True, nullable=False)
+    input_text = Column(Text, nullable=True)
+    pdf_path = Column(String(255), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
