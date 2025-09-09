@@ -159,19 +159,68 @@ except Exception:
         # fallback dev: permite seguir probando aunque falte auth
         return SimpleNamespace(email="tester@alerttrail.local")
 
-# analizar log: usar servicio si existe, si no, versión mínima inline
+# analizar log: usar servicio si existe, si no, versión con hallazgos
 try:
     from app.services.analysis_service import analyze_log as _analyze_log
+    ANALYZER_SOURCE = "service"
 except Exception:
     import re
+    ANALYZER_SOURCE = "fallback"
+    _SSH_FAIL_RE = re.compile(r"Failed password for (invalid user )?(?P<user>\S+) from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})", re.I)
+    _SSH_OK_RE   = re.compile(r"Accepted password for (?P<user>\S+) from (?P<ip>\d{1,3}(?:\.\d{1,3}){3})", re.I)
+    _SQLI_RE     = re.compile(r"('|\")\s*or\s*1=1|union\s+select|--\s", re.I)
+    _XSS_RE      = re.compile(r"<script>|onerror=|onload=", re.I)
+
     def _analyze_log(text: str):
+        lines = [ln for ln in text.splitlines() if ln.strip()]
         findings = []
-        ssh_fail = len(re.findall(r"Failed password", text))
-        ssh_ok = len(re.findall(r"Accepted password", text))
-        sqli = len(re.findall(r"union\\s+select|'\\s*or\\s*1=1|--\\s", text, flags=re.I))
-        xss = len(re.findall(r"<script>|onerror=|onload=", text, flags=re.I))
-        risk = "high" if (ssh_fail>=3 or sqli or xss) else ("medium" if ssh_fail or ssh_ok else "low")
-        return {"summary":{"total_lines":len(text.splitlines()),"ssh_failed":ssh_fail,"ssh_accepted":ssh_ok,"sqli":sqli,"xss":xss,"bruteforce_ips":1 if ssh_fail>=3 else 0,"risk":risk},"findings":[]}
+        ssh_failed = ssh_ok = sqli = xss = 0
+        fail_by_ip = {}
+
+        for ln in lines:
+            m = _SSH_FAIL_RE.search(ln)
+            if m:
+                ssh_failed += 1
+                ip = m.group("ip"); user = m.group("user")
+                fail_by_ip[ip] = fail_by_ip.get(ip, 0) + 1
+                findings.append({"severity":"medium","type":"ssh_failed_login","ip":ip,"user":user,"line":ln})
+            m = _SSH_OK_RE.search(ln)
+            if m:
+                ssh_ok += 1
+                ip = m.group("ip"); user = m.group("user")
+                sev = "high" if user.lower() == "root" else "low"
+                findings.append({"severity":sev,"type":"ssh_success","ip":ip,"user":user,"line":ln,
+                                 "note":"Acceso a root" if sev=="high" else ""})
+            if _SQLI_RE.search(ln):
+                sqli += 1
+                findings.append({"severity":"high","type":"sql_injection_pattern","line":ln})
+            if _XSS_RE.search(ln):
+                xss += 1
+                findings.append({"severity":"medium","type":"xss_pattern","line":ln})
+
+        bruteforce_ips = sum(1 for ip,c in fail_by_ip.items() if c >= 3)
+        if bruteforce_ips:
+            for ip,c in fail_by_ip.items():
+                if c >= 3:
+                    findings.append({"severity":"high","type":"ssh_bruteforce_suspected","ip":ip,"count":c,
+                                     "note":"3+ intentos fallidos desde misma IP"})
+
+        score = ssh_failed*1 + bruteforce_ips*5 + sqli*5 + xss*2 + ssh_ok*1
+        risk = "high" if score>=10 else ("medium" if score>=4 else "low")
+
+        return {
+            "summary":{
+                "total_lines": len(lines),
+                "ssh_failed": ssh_failed,
+                "ssh_accepted": ssh_ok,
+                "sqli": sqli,
+                "xss": xss,
+                "bruteforce_ips": bruteforce_ips,
+                "risk": risk,
+            },
+            "findings": findings
+        }
+        
 
 # generar pdf: usar servicio si existe, si no, simple
 try:
