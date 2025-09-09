@@ -1,17 +1,23 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app import models
-from app.security import get_current_user
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, EmailStr
+from io import BytesIO
+
+from app.services.analysis_service import analyze_log
 from app.services.pdf_service import generate_pdf
+# asumiendo que tienes dependencia get_current_user con atributo email
+from app.security import get_current_user  
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
-@router.post("/run")
-def run_simple_analysis(text: str = "Ejemplo de análisis",
-                        db: Session = Depends(get_db),
-                        user: models.User = Depends(get_current_user)):
-    pdf_path = generate_pdf({"Usuario": user.email, "Texto": text}, "analysis")
-    a = models.Analysis(user_email=user.email, input_text=text, pdf_path=pdf_path)
-    db.add(a); db.commit()
-    return {"pdf_path": pdf_path}
+class LogInput(BaseModel):
+    log_content: str
+
+@router.post("/generate_pdf")
+def generate_pdf_from_log(payload: LogInput, user=Depends(get_current_user)):
+    analysis = analyze_log(payload.log_content)
+    pdf_bytes = generate_pdf(user_email=user.email, analysis=analysis)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=analysis.pdf"}
