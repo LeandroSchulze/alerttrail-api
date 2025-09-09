@@ -11,10 +11,8 @@ class Settings(BaseSettings):
     ADMIN_PASS: str = os.getenv("ADMIN_PASS", "Cambiar123!")
     ADMIN_NAME: str = os.getenv("ADMIN_NAME", "Admin")
 
-    FREE_DAILY_LIMIT: int = int(os.getenv("FREE_DAILY_LIMIT", "10"))
-
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:////tmp/alerttrail.sqlite3")
-    REPORTS_DIR: str = os.getenv("REPORTS_DIR", "/var/data/reports")
+    REPORTS_DIR: str = os.getenv("REPORTS_DIR", "/tmp/reports")
 
     class Config:
         env_file = ".env"

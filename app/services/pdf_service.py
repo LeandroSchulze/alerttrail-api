@@ -1,54 +1,51 @@
-# app/services/pdf_service.py
-from io import BytesIO
+from pathlib import Path
+from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
-from reportlab.lib import colors
+from app.config import get_settings
 
-def generate_pdf(user_email: str, analysis: dict) -> bytes:
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    W, H = A4
-    x, y = 2*cm, H - 2*cm
+def _ensure_reports_dir() -> Path:
+    path = Path(get_settings().REPORTS_DIR)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except Exception:
+        tmp = Path("/tmp/reports")
+        tmp.mkdir(parents=True, exist_ok=True)
+        return tmp
 
-    def writeln(text, size=12, color=colors.black, dy=14):
-        nonlocal y
-        c.setFillColor(color)
-        c.setFont("Helvetica", size)
-        c.drawString(x, y, text)
-        y -= dy
+def generate_pdf(report_data: dict, filename_prefix: str = "analysis") -> str:
+    reports_dir = _ensure_reports_dir()
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{filename_prefix}_{ts}.pdf"
+    pdf_fs_path = reports_dir / filename
 
-    writeln("AlertTrail – Reporte", size=18)
-    writeln("")
-    writeln(f"Usuario: {user_email}", size=12)
-    writeln("")
+    c = canvas.Canvas(str(pdf_fs_path), pagesize=A4)
+    width, height = A4
 
-    summary = analysis.get("summary", {})
-    writeln("Resumen:", size=14)
-    writeln(f"- Líneas analizadas: {summary.get('total_lines', 0)}")
-    writeln(f"- SSH fallidos: {summary.get('ssh_failed', 0)}")
-    writeln(f"- SSH exitosos: {summary.get('ssh_accepted', 0)}")
-    writeln(f"- Fuerza bruta (IPs): {summary.get('bruteforce_ips', 0)}")
-    writeln(f"- SQLi: {summary.get('sqli', 0)}")
-    writeln(f"- XSS: {summary.get('xss', 0)}")
-    risk = summary.get("risk", "low")
-    color = colors.red if risk=="high" else (colors.orange if risk=="medium" else colors.green)
-    writeln(f"- Riesgo: {risk.upper()}", color=color)
-    writeln("")
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(2*cm, height - 2*cm, "AlertTrail – Reporte")
+    c.setFont("Helvetica", 10)
+    c.drawRightString(width - 2*cm, height - 1.5*cm, datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
 
-    writeln("Hallazgos:", size=14)
-    for f in analysis.get("findings", [])[:40]:
-        t = f.get("type", "finding"); sev = f.get("severity","low").upper()
-        ip = f.get("ip", ""); user = f.get("user", ""); note = f.get("note",""); line = f.get("line","")
-        writeln(f"* [{sev}] {t} {('(ip ' + ip + ')') if ip else ''} {('(user ' + user + ')') if user else ''}".strip())
-        if note: writeln(f"  - {note}", size=10)
-        if line:
-            snip = (line[:110] + "…") if len(line) > 110 else line
-            writeln(f"  - {snip}", size=9, color=colors.grey)
+    y = height - 4*cm
+    for k, v in report_data.items():
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(2*cm, y, f"{k}:")
+        y -= 0.6*cm
+        c.setFont("Helvetica", 10)
+        text_obj = c.beginText(2*cm, y)
+        text_obj.setLeading(14)
+        for line in str(v).split("\n"):
+            text_obj.textLine(line)
+        c.drawText(text_obj)
+        y = text_obj.getY() - 0.6*cm
         if y < 3*cm:
-            c.showPage(); y = H - 2*cm
+            c.showPage()
+            y = height - 3*cm
 
-    c.showPage(); c.save()
-    pdf = buffer.getvalue()
-    buffer.close()
-    return pdf
+    c.showPage()
+    c.save()
+
+    return f"reports/{filename}"

@@ -5,6 +5,7 @@ from app.security import get_password_hash
 
 def bootstrap():
     settings = get_settings()
+
     admin_email = (settings.ADMIN_EMAIL or "").strip().lower()
     admin_name  = (settings.ADMIN_NAME  or "Admin").strip()
     admin_pass  = (settings.ADMIN_PASS  or "Cambiar123!").strip()

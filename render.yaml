@@ -15,8 +15,6 @@ services:
         value: Cambiar123!
       - key: ADMIN_NAME
         value: Admin
-      - key: FREE_DAILY_LIMIT
-        value: "10"
       - key: DATABASE_URL
         value: sqlite:////tmp/alerttrail.sqlite3
       - key: REPORTS_DIR
