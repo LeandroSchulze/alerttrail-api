@@ -21,3 +21,4 @@ def generate_pdf_from_log(payload: LogInput, user=Depends(get_current_user)):
         BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": "inline; filename=analysis.pdf"}
+    )
