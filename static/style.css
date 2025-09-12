@@ -69,3 +69,13 @@ a:hover{text-decoration:underline}
   .nav a{margin-left:10px}
   .shell{padding:16px}
 }
+
+/* Forms */
+.form label{display:block;margin:8px 0 6px;font-weight:600}
+.form input{
+  width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--stroke);
+  background:#111; color:var(--fg); outline:none;
+}
+.form input:focus{border-color:#3a3a3a}
+.form .btn{margin-top:10px}
+.inline{display:inline}
