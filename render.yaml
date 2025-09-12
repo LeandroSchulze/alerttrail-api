@@ -1,21 +1,16 @@
 services:
-  - type: web
-    name: alerttrail-api
-    env: python
-    plan: free
-    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
-    startCommand: python -m scripts.init_db && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
-    envVars:
-      - key: SECRET_KEY
-        value: change_this_secret
-      - key: ADMIN_EMAIL
-        value: admin@tudominio.com
-      - key: ADMIN_PASS
-        value: Cambiar123!
-      - key: ADMIN_NAME
-        value: Admin
-      - key: DATABASE_URL
-        value: sqlite:////tmp/alerttrail.sqlite3
-      - key: REPORTS_DIR
-        value: /tmp/reports
+- type: web
+  name: alerttrail
+  env: python
+  buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+  startCommand: python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+  healthCheckPath: /health
+  envVars:
+  - key: PYTHON_VERSION
+    value: 3.11
+  - key: ADMIN_EMAIL
+    value: admin@example.com
+  - key: ADMIN_PASS
+    value: admin123
+  - key: ADMIN_NAME
+    value: admin
