@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-router = APIRouter(prefix='/auth')
+router = APIRouter()
 
-@router.get('/login')
+@router.get("/login")
 def login():
-    return {'msg':'login ok'}
+    return {"ok": True, "msg": "login OK (demo)"}
