@@ -7,3 +7,6 @@ mercadopago>=2.2.0
 SQLAlchemy>=2.0
 passlib[bcrypt]>=1.7
 python-jose[cryptography]>=3.3.0
+pydantic-settings>=2.2.1
+python-multipart>=0.0.9 
+pydantic>=2.5
