@@ -1,1 +1,30 @@
-<html><body><h1>AlertTrail Dashboard</h1><a href='/analysis'>Log Scanner</a> | <a href='/mail'>Mail Scanner</a></body></html>
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Dashboard - AlertTrail</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <header>
+      <h1>Dashboard</h1>
+      <p>Usuario: {{ user.name }}</p>
+      <nav>
+        <a href="/">Inicio</a> | <a href="/docs">API Docs</a>
+      </nav>
+    </header>
+
+    <section>
+      <h2>Log Scanner</h2>
+      <p>Genera un PDF de prueba:</p>
+      <a class="btn" href="/analysis/generate_pdf" target="_blank">Generar PDF</a>
+      <p>Los reportes quedan disponibles en <code>/reports</code>.</p>
+    </section>
+
+    <section>
+      <h2>Mail Scanner</h2>
+      <p>Ejecuta un escaneo rápido:</p>
+      <a class="btn" href="/mail/scan" target="_blank">Escanear Mail</a>
+    </section>
+  </body>
+</html>
