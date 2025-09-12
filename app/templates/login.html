@@ -1,27 +1,20 @@
-{% extends "base.html" %}
-{% block body %}
-<div class="card">
-  <h1>Iniciar sesión</h1>
-  <input id="email" placeholder="email" value="admin@tudominio.com"/>
-  <input id="password" placeholder="password" type="password" value="Cambiar123!"/>
-  <button id="btn">Entrar</button>
-  <p id="err" class="err" style="display:none;">Credenciales incorrectas</p>
-</div>
-<script>
-  const btn = document.querySelector('#btn');
-  const email = document.querySelector('#email');
-  const password = document.querySelector('#password');
-  const err = document.querySelector('#err');
-  btn.onclick = async () => {
-    err.style.display = 'none';
-    const res = await fetch('/auth/login', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({email: email.value, password: password.value})
-    });
-    if(!res.ok){ err.style.display = 'block'; return; }
-    const data = await res.json();
-    localStorage.setItem('token', data.access_token);
-    location.href = '/dashboard';
-  }
-</script>
-{% endblock %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Iniciar sesión · AlertTrail</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="app">
+  <main class="shell">
+    <h1>Iniciar sesión</h1>
+    <form class="card" method="post" action="/auth/login/web">
+      <label>Email<br><input name="email" type="email" required></label><br/>
+      <label>Contraseña<br><input name="password" type="password" required></label><br/>
+      <button class="btn primary" type="submit">Entrar</button>
+    </form>
+    <p class="muted">Acceso para testers. El admin puede crear usuarios.</p>
+  </main>
+</body>
+</html>
