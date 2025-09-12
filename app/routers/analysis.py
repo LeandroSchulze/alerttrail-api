@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-router = APIRouter(prefix='/analysis')
+router = APIRouter()
 
-@router.get('/generate_pdf')
+@router.get("/generate_pdf")
 def generate_pdf():
-    return {'url':'/reports/example.pdf'}
+    # TODO: lógica real de PDF
+    return {"url": "/reports/demo.pdf"}
