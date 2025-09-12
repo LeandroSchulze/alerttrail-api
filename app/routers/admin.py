@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import User
-from app.utils.security import hash_password, decode_token
+from app.security import get_password_hash, decode_token
 
 router = APIRouter()
 
