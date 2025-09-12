@@ -1,21 +1,47 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request, Form
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from app.database import get_db
-from app import models
-from app.security import get_current_user
+from app.database import SessionLocal
+from app.models import User
+from app.utils.security import hash_password, decode_token
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter()
 
-@router.get("/metrics")
-def metrics(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    if user.plan != "PRO":
-        return {"detail": "Solo Pro", "ok": False}
-    total_pdfs = db.query(models.Analysis).filter(models.Analysis.pdf_path.isnot(None)).count()
-    users_pro = db.query(models.User).filter(models.User.plan == "PRO").count()
-    per_month = (
-        db.query(func.strftime('%Y-%m', models.Analysis.created_at), func.count(models.Analysis.id))
-        .group_by(func.strftime('%Y-%m', models.Analysis.created_at))
-        .all()
-    )
-    return {"ok": True, "pdf_reports": total_pdfs, "users_pro": users_pro, "analyses_per_month": dict(per_month)}
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def require_admin(request: Request, db: Session):
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(401, "No autenticado.")
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(401, "Token inválido o expirado.")
+    me = db.query(User).filter(User.email == payload.get("sub")).first()
+    if not me or me.plan != "pro":
+        raise HTTPException(403, "Requiere permisos de administrador.")
+    return me
+
+@router.post("/create_admin", tags=["admin"])
+def create_admin(
+    request: Request,
+    email: str = Form(...),
+    name: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request, db)
+    u = db.query(User).filter(User.email == email).first()
+    if u:
+        u.name = name
+        u.password_hash = hash_password(password)
+        u.plan = "pro"
+        db.commit()
+    else:
+        u = User(email=email, name=name, password_hash=hash_password(password), plan="pro")
+        db.add(u); db.commit()
+    return RedirectResponse("/dashboard", status_code=303)
