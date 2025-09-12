@@ -9,3 +9,11 @@ engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=Tr
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Helper para inyectar sesiones en rutas/servicios
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
