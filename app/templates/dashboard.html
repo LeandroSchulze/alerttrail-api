@@ -5,26 +5,41 @@
     <title>Dashboard - AlertTrail</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
-  <body>
-    <header>
-      <h1>Dashboard</h1>
-      <p>Usuario: {{ user.name }}</p>
+  <body class="container">
+    <header class="topbar">
+      <div class="brand">AlertTrail</div>
       <nav>
-        <a href="/">Inicio</a> | <a href="/docs">API Docs</a>
+        <a href="/">Inicio</a>
+        <a href="/docs">API Docs</a>
       </nav>
     </header>
 
-    <section>
-      <h2>Log Scanner</h2>
-      <p>Genera un PDF de prueba:</p>
-      <a class="btn" href="/analysis/generate_pdf" target="_blank">Generar PDF</a>
-      <p>Los reportes quedan disponibles en <code>/reports</code>.</p>
-    </section>
+    <main class="grid">
+      <section class="card">
+        <h2>Log Scanner</h2>
+        <p>Genera un reporte PDF con el análisis básico.</p>
+        <a class="btn" href="/analysis/generate_pdf" target="_blank">Generar PDF</a>
+        <p class="muted">Los reportes quedan disponibles en <code>/reports</code>.</p>
+      </section>
 
-    <section>
-      <h2>Mail Scanner</h2>
-      <p>Ejecuta un escaneo rápido:</p>
-      <a class="btn" href="/mail/scan" target="_blank">Escanear Mail</a>
-    </section>
+      <section class="card">
+        <h2>Mail Scanner</h2>
+        <p>Escaneo de correo de prueba.</p>
+        <a class="btn" href="/mail/scan" target="_blank">Escanear Mail</a>
+      </section>
+
+      <section class="card highlight">
+        <h2>Plan PRO</h2>
+        <p>Desbloqueá funciones avanzadas y quita el trial.</p>
+        <form action="/payments/checkout" method="post">
+          <button class="btn primary" type="submit">Activar PRO</button>
+        </form>
+        <p class="muted">Pago procesado por Mercado Pago.</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <small>© {{ user.name or "Invitado" }} · AlertTrail</small>
+    </footer>
   </body>
 </html>
