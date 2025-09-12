@@ -8,7 +8,7 @@ import os
 
 from app.database import SessionLocal
 from app.models import User
-from app.utils.security import decode_token
+from app.security import decode_token
 
 app = FastAPI(
     title="AlertTrail",
