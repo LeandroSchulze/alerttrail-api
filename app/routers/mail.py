@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-router = APIRouter(prefix='/mail')
+router = APIRouter()
 
-@router.get('/scan')
+@router.get("/scan")
 def scan_mail():
-    return {'msg':'mail scanner active'}
+    # TODO: lógica real
+    return {"status": "scanned"}
