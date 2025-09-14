@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Estadísticas</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<header class="topbar">
+  <div>Estadísticas — {{ month_label }}</div>
+  <nav><a href="/dashboard">Volver</a></nav>
+</header>
+<main class="container">
+  <div class="grid">
+    <div class="tile">
+      <h2>Descargas (PDF)</h2>
+      <p>Este mes: <b>{{ downloads_month }}</b></p>
+    </div>
+    <div class="tile">
+      <h2>Usuarios por plan (activos)</h2>
+      <p>FREE: <b>{{ free }}</b></p>
+      <p>PRO: <b>{{ pro }}</b></p>
+      <p>BUSINESS: <b>{{ business }}</b></p>
+      <hr>
+      <p>Total usuarios: <b>{{ total_users }}</b></p>
+    </div>
+  </div>
+</main>
+</body></html>
