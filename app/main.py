@@ -14,7 +14,9 @@ from app.security import (
     issue_access_cookie,
     get_current_user_id,
 )
-from app.routers import mail as mail_router, billing as billing_router
+from app.routers import mail as mail_router, billing as billing_router, admin as admin_router
+from app.guards import require_pro, require_ip_allowed
+from app.utils.ip import get_client_ip
 
 app = FastAPI(title="AlertTrail")
 
@@ -61,11 +63,21 @@ async def require_login_for_html(request: Request, call_next):
             return RedirectResponse("/auth/login")
     return await call_next(request)
 
-# --- 401 -> redirección a login en vistas HTML ---
+# --- Handlers de errores: 401→/auth/login, 402→/billing, 403→ip_blocked (si aplica) ---
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
-    if exc.status_code == 401 and "text/html" in request.headers.get("accept", ""):
+    accept = request.headers.get("accept", "")
+    if exc.status_code == 401 and "text/html" in accept:
         return RedirectResponse("/auth/login")
+    if exc.status_code == 402 and "text/html" in accept:
+        return RedirectResponse("/billing")
+    if exc.status_code == 403 and "text/html" in accept:
+        ip = get_client_ip(request)
+        # si no existe el template, devolvemos JSON
+        try:
+            return templates.TemplateResponse("ip_blocked.html", {"request": request, "ip": ip}, status_code=403)
+        except Exception:
+            return HTMLResponse(f"<h1>403</h1><p>IP no autorizada: {ip}</p>", status_code=403)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 @app.get("/health")
@@ -76,21 +88,22 @@ def health():
 def index():
     return RedirectResponse("/dashboard")
 
+# ---------- Dashboard ----------
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_ip_allowed),  # chequea login + IP (si IP_ENFORCEMENT=true)
     db: Session = Depends(get_db),
 ):
     user = db.query(User).get(user_id)
     now = dt.datetime.utcnow()
-    is_pro = user.plan == "PRO" and (user.plan_expires is None or user.plan_expires > now)
-    trial_left = 0
-    if user.plan == "FREE" and user.plan_expires:
-        trial_left = max(0, (user.plan_expires - now).days)
+    is_pro = user.plan in ("PRO", "BUSINESS") and (user.plan_expires is None or user.plan_expires > now)
+    pro_left = 0
+    if is_pro and user.plan_expires:
+        pro_left = max(0, (user.plan_expires - now).days)
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "user": user, "is_pro": is_pro, "trial_left": trial_left},
+        {"request": request, "user": user, "is_pro": is_pro, "pro_left": pro_left},
     )
 
 # ---------- Auth (web) ----------
@@ -134,11 +147,12 @@ async def register(
     if exists:
         raise HTTPException(400, "Email ya registrado")
 
-    trial_days = int(os.getenv("TRIAL_DAYS", "5"))
-    plan = "FREE"
-    expires = dt.datetime.utcnow() + dt.timedelta(days=trial_days)
+    # Trial PRO por X días (configurable)
+    trial_pro_days = int(os.getenv("TRIAL_PRO_DAYS", "5"))
+    plan = "PRO"
+    expires = dt.datetime.utcnow() + dt.timedelta(days=trial_pro_days)
 
-    # PROMO: primeras N con PRO por X días
+    # PROMO: primeras N con PRO X días
     if os.getenv("PROMO_ENABLED", "false").lower() == "true":
         limit = int(os.getenv("PROMO_LIMIT", "10"))
         promo = db.query(Setting).filter(Setting.key == "promo_used").first()
@@ -167,12 +181,12 @@ async def register(
     issue_access_cookie(resp, user.id)
     return resp
 
-# ---------- Log Scanner (PDF) ----------
+# ---------- Log Scanner (PDF) — solo PRO/Business ----------
 @app.post("/analysis/generate_pdf")
 async def generate_pdf(
     request: Request,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_pro),  # requiere plan pago activo
 ):
     from reportlab.pdfgen import canvas
 
@@ -199,11 +213,23 @@ async def get_report(fname: str):
     return HTMLResponse(f"<a href='/staticdownload?f={fname}'>Descargar {fname}</a>")
 
 @app.get("/staticdownload")
-async def staticdownload(f: str):
-    return FileResponse(
-        os.path.join(REPORTS_DIR, f), media_type="application/pdf", filename=f
-    )
+async def staticdownload(
+    f: str,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_pro),  # solo PRO/Business (incluye trial activo)
+):
+    from app.models import ReportDownload
+    full = os.path.join(REPORTS_DIR, f)
+    if not os.path.exists(full):
+        raise HTTPException(404, "No encontrado")
+
+    # registrar descarga
+    db.add(ReportDownload(user_id=user_id, filename=f))
+    db.commit()
+
+    return FileResponse(full, media_type="application/pdf", filename=f)
 
 # ---------- Routers ----------
 app.include_router(mail_router.router)
 app.include_router(billing_router.router)
+app.include_router(admin_router.router)
