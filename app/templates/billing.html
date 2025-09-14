@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Cambiar plan</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<header class="topbar">
+  <div>Mi plan</div>
+  <nav><a href="/dashboard">Volver</a></nav>
+</header>
+<main class="container">
+  <div class="card">
+    <h1>Estado actual</h1>
+    <p><b>Plan:</b> {{ user.plan }}</p>
+    {% if days_left is not none %}
+      <p><b>Expira en:</b> {{ days_left }} día(s)</p>
+    {% endif %}
+  </div>
+
+  <div class="grid" style="margin-top:16px">
+    <div class="tile">
+      <h2>✅ Pasar a PRO</h2>
+      <p>Activa PRO en modo manual para demo/early access.</p>
+      <form method="post" action="/billing/upgrade">
+        <input name="coupon" placeholder="Cupón (opcional)">
+        <button type="submit">Activar PRO</button>
+      </form>
+      <p class="hint">Tip: podés definir <code>COUPON_CODE</code> y <code>COUPON_DAYS</code> en Environment.</p>
+    </div>
+
+    <div class="tile">
+      <h2>↩️ Volver a FREE</h2>
+      <p>Cancelar PRO y volver a FREE (se reestablece el trial).</p>
+      <form method="post" action="/billing/cancel">
+        <button type="submit">Volver a FREE</button>
+      </form>
+    </div>
+  </div>
+</main>
+</body></html>
