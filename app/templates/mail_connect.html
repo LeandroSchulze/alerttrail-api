@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Vincular email</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="card">
+<h1>Vincular casilla IMAP</h1>
+<form method="post" action="/mail/connect">
+<input name="imap_host" placeholder="IMAP host (p.ej. imap.gmail.com)" required>
+<input name="imap_port" type="number" placeholder="IMAP port (993)" value="993" required>
+<input name="email" placeholder="Email" required>
+<input type="password" name="password" placeholder="Contraseña o App Password" required>
+<button type="submit">Guardar y probar</button>
+</form>
+<p class="hint">Sugerencia: en Gmail usa <b>App Password</b> con 2FA.</p>
+</div>
+</body></html>
