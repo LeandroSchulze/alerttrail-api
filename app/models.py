@@ -67,3 +67,10 @@ class OrgMember(Base):
     user_id = Column(Integer, nullable=False)
     role = Column(String, default='member')  # owner | admin | member
     created_at = Column(DateTime, server_default=func.now())
+
+class ReportDownload(Base):
+    __tablename__ = 'report_downloads'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False)
+    filename = Column(String, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
