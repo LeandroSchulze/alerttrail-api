@@ -1,166 +1,207 @@
 import os
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import datetime as dt
+from fastapi import FastAPI, Request, Depends, Form, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.cors import CORSMiddleware
-from jinja2 import TemplateNotFound
+from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
-from app.models import User
-from app.security import decode_token, COOKIE_NAME
-
-# ──────────────────────────────────────────────────────────────────────────────
-# App
-# ──────────────────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="AlertTrail",
-    version="1.0.0",
-    description="AlertTrail API: Dashboard, Log Scanner (PDF) y Mail Scanner",
+from app.database import get_db, Base, get_engine
+from app.models import User, Setting
+from app.security import (
+    get_password_hash,
+    verify_password,
+    issue_access_cookie,
+    get_current_user_id,
 )
+from app.routers import mail as mail_router
 
-# CORS (amplio para pruebas)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="AlertTrail")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Directorios y montajes
-# ──────────────────────────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))     # .../app
-ROOT_DIR = os.path.dirname(BASE_DIR)                      # repo root
-
-REPORTS_DIR = os.getenv("REPORTS_DIR", os.path.join(ROOT_DIR, "reports"))
-STATIC_DIR   = os.path.join(ROOT_DIR, "static")
-TEMPLATES_DIR = os.path.join(ROOT_DIR, "templates")
-
+# --- Paths / dirs ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+REPORTS_DIR = os.getenv("REPORTS_DIR", "/var/data/reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
-app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
-app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
+# Static & templates
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
-def _current_user_from_cookie(request: Request):
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
-    payload = decode_token(token)
-    if not payload:
-        return None
-    db = SessionLocal()
-    try:
-        return db.query(User).filter(User.email == payload.get("sub")).first()
-    finally:
-        db.close()
+# Create tables if missing (engine defined in app/database.py)
+Base.metadata.create_all(bind=get_engine())
 
-def _try_include_router(import_path: str, attr: str = "router", prefix: str | None = None, tags: list[str] | None = None):
-    try:
-        module = __import__(import_path, fromlist=[attr])
-        router = getattr(module, attr, None)
-        if router is not None:
-            app.include_router(router, prefix=prefix or "", tags=tags or [])
-    except Exception:
-        # Silencioso: si el router no existe, no rompe el deploy
-        pass
+# --- Middleware: exigir login para vistas HTML ---
+PUBLIC_PREFIXES = ("/auth/login", "/auth/register", "/health", "/static")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Rutas UI
-# ──────────────────────────────────────────────────────────────────────────────
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def root(request: Request):
-    index_path = os.path.join(TEMPLATES_DIR, "index.html")
-    if os.path.exists(index_path):
-        return templates.TemplateResponse("index.html", {"request": request})
-    # Fallback si no hay template
-    html = """
-    <!doctype html><html><head><meta charset="utf-8"><title>AlertTrail</title>
-    <link rel="stylesheet" href="/static/style.css"></head><body class="app">
-    <main class="shell">
-      <h1>AlertTrail</h1>
-      <ul>
-        <li><a href="/dashboard">Ir al Dashboard</a></li>
-        <li><a href="/docs">API Docs (Swagger)</a></li>
-        <li><a href="/health">Health</a></li>
-      </ul>
-    </main></body></html>
-    """
-    return HTMLResponse(html)
 
-@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
-def login_page(request: Request):
-    # Render login.html si existe; si no, fallback mínimo
-    try:
-        return templates.TemplateResponse("login.html", {"request": request})
-    except TemplateNotFound:
-        html = """
-        <!doctype html><html><head><meta charset="utf-8"><title>Login</title>
-        <link rel="stylesheet" href="/static/style.css"></head><body class="app">
-        <main class="shell">
-          <h1>Iniciar sesión</h1>
-          <form class="card" method="post" action="/auth/login/web">
-            <label>Email<br><input name="email" type="email" required></label><br/>
-            <label>Contraseña<br><input name="password" type="password" required></label><br/>
-            <button class="btn primary" type="submit">Entrar</button>
-          </form>
-        </main></body></html>
-        """
-        return HTMLResponse(html)
+@app.middleware("http")
+async def require_login_for_html(request: Request, call_next):
+    path = request.url.path
+    accept = request.headers.get("accept", "")
+    wants_html = "text/html" in accept or "*/*" in accept  # navegadores
+    if wants_html and not any(path.startswith(p) for p in PUBLIC_PREFIXES):
+        if not request.cookies.get("access_token"):
+            return RedirectResponse("/auth/login")
+    return await call_next(request)
 
-@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-def dashboard(request: Request):
-    # Usuario (si hay cookie); si no, Invitado
-    user = _current_user_from_cookie(request)
-    ctx_user = {"name": getattr(user, "name", "Invitado")}
-    try:
-        return templates.TemplateResponse("dashboard.html", {"request": request, "user": ctx_user})
-    except TemplateNotFound:
-        # Fallback si falta templates/dashboard.html — evita 500
-        html = f"""
-        <!doctype html><html><head><meta charset="utf-8">
-        <title>Dashboard - AlertTrail</title>
-        <link rel="stylesheet" href="/static/style.css"></head>
-        <body class="app"><main class="shell">
-          <h1>Dashboard</h1>
-          <p class="muted">Usuario: {ctx_user['name']}</p>
-          <section class="grid">
-            <article class="card">
-              <h2>Log Scanner</h2>
-              <a class="btn" href="/analysis/generate_pdf" target="_blank">Generar PDF</a>
-              <a class="btn ghost" href="/reports" target="_blank">Ver reportes</a>
-            </article>
-            <article class="card">
-              <h2>Mail Scanner</h2>
-              <a class="btn" href="/mail/scan" target="_blank">Escanear Mail</a>
-            </article>
-          </section>
-        </main></body></html>
-        """
-        return HTMLResponse(html, status_code=200)
 
-@app.get("/api", include_in_schema=False)
-def api_root():
-    return RedirectResponse("/docs")
+# --- 401 -> redirección a login en vistas HTML ---
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 401 and "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/auth/login")
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-@app.get("/health", tags=["health"])
+
+@app.get("/health")
 def health():
-    return JSONResponse({"status": "ok"})
+    return {"status": "ok"}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Inclusión de routers
-# ──────────────────────────────────────────────────────────────────────────────
-_try_include_router("app.routers.auth",     prefix="/auth",     tags=["auth"])
-_try_include_router("app.routers.analysis", prefix="/analysis", tags=["analysis"])
-_try_include_router("app.routers.mail",     prefix="/mail",     tags=["mail"])
-_try_include_router("app.routers.admin",    prefix="/admin",    tags=["admin"])
-# (opcional si existen)
-_try_include_router("app.routers.profile",  prefix="/profile",  tags=["profile"])
-_try_include_router("app.routers.settings", prefix="/settings", tags=["settings"])
+
+@app.get("/")
+def index():
+    return RedirectResponse("/dashboard")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(
+    request: Request,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).get(user_id)
+    now = dt.datetime.utcnow()
+    is_pro = user.plan == "PRO" and (user.plan_expires is None or user.plan_expires > now)
+    trial_left = 0
+    if user.plan == "FREE" and user.plan_expires:
+        trial_left = max(0, (user.plan_expires - now).days)
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "user": user, "is_pro": is_pro, "trial_left": trial_left},
+    )
+
+
+# ---------- Auth (web) ----------
+@app.get("/auth/login", response_class=HTMLResponse)
+async def login_form(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.post("/auth/login")
+async def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(password, user.password_hash):
+        raise HTTPException(401, "Credenciales incorrectas")
+    resp = RedirectResponse("/dashboard", status_code=302)
+    issue_access_cookie(resp, user.id)
+    return resp
+
+
+@app.get("/auth/logout")
+async def logout():
+    resp = RedirectResponse("/auth/login")
+    resp.delete_cookie("access_token")
+    return resp
+
+
+@app.get("/auth/register", response_class=HTMLResponse)
+async def register_form(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+
+@app.post("/auth/register")
+async def register(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    exists = db.query(User).filter(User.email == email).first()
+    if exists:
+        raise HTTPException(400, "Email ya registrado")
+
+    trial_days = int(os.getenv("TRIAL_DAYS", "5"))
+    plan = "FREE"
+    expires = dt.datetime.utcnow() + dt.timedelta(days=trial_days)
+
+    # PROMO: primeras N cuentas con PRO por X días
+    if os.getenv("PROMO_ENABLED", "false").lower() == "true":
+        limit = int(os.getenv("PROMO_LIMIT", "10"))
+        promo = db.query(Setting).filter(Setting.key == "promo_used").first()
+        used = int(promo.value) if promo else 0
+        if used < limit:
+            plan = "PRO"
+            expires = dt.datetime.utcnow() + dt.timedelta(
+                days=int(os.getenv("PROMO_DURATION_DAYS", "60"))
+            )
+            if promo:
+                promo.value = str(used + 1)
+            else:
+                db.add(Setting(key="promo_used", value="1"))
+
+    user = User(
+        name=name,
+        email=email,
+        password_hash=get_password_hash(password),
+        plan=plan,
+        plan_expires=expires,
+    )
+    db.add(user)
+    db.commit()
+
+    resp = RedirectResponse("/dashboard", status_code=302)
+    issue_access_cookie(resp, user.id)
+    return resp
+
+
+# ---------- Log Scanner (PDF) ----------
+@app.post("/analysis/generate_pdf")
+async def generate_pdf(
+    request: Request,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    # Genera PDF simple de ejemplo
+    from reportlab.pdfgen import canvas
+
+    fname = f"report_{user_id}_{int(dt.datetime.utcnow().timestamp())}.pdf"
+    path = os.path.join(REPORTS_DIR, fname)
+    c = canvas.Canvas(path)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(72, 800, "AlertTrail Report")
+    c.setFont("Helvetica", 12)
+    c.drawString(72, 780, "Estado: OK")
+    c.save()
+
+    url = f"/reports/{fname}"
+    # Si es llamado vía API/JS: JSON; si viene de formulario: HTML con botón
+    if "application/json" in request.headers.get("accept", ""):
+        return {"url": url}
+    return templates.TemplateResponse("pdf_ready.html", {"request": request, "url": url})
+
+
+@app.get("/reports/{fname}", response_class=HTMLResponse)
+async def get_report(fname: str):
+    path = os.path.join(REPORTS_DIR, fname)
+    if not os.path.exists(path):
+        raise HTTPException(404, "No encontrado")
+    return HTMLResponse(f"<a href='/staticdownload?f={fname}'>Descargar {fname}</a>")
+
+
+@app.get("/staticdownload")
+async def staticdownload(f: str):
+    return FileResponse(
+        os.path.join(REPORTS_DIR, f), media_type="application/pdf", filename=f
+    )
+
+
+# ---------- Mail ----------
+app.include_router(mail_router.router)
