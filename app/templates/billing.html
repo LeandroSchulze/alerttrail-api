@@ -15,18 +15,30 @@
 
   <div class="grid" style="margin-top:16px">
     <div class="tile">
-      <h2>✅ Pasar a PRO</h2>
-      <p>Activa PRO en modo manual para demo/early access.</p>
-      <form method="post" action="/billing/upgrade">
+      <h2>PRO</h2>
+      <p><b>USD {{ '%0.2f'|format(price_month) }}/mes</b></p>
+      <p>Anual: <b>USD {{ price_year }}</b> ({{ disc_pct }}% OFF)</p>
+      <form method="post" action="/billing/upgrade_pro" style="margin-top:8px">
         <input name="coupon" placeholder="Cupón (opcional)">
         <button type="submit">Activar PRO</button>
       </form>
-      <p class="hint">Tip: podés definir <code>COUPON_CODE</code> y <code>COUPON_DAYS</code> en Environment.</p>
+      <p class="hint">Trial PRO 5 días para cuentas nuevas. Cupón opcional (ENV).</p>
+    </div>
+
+    <div class="tile">
+      <h2>Business (Empresa)</h2>
+      <p><b>USD {{ biz_price }}/mes</b> — incluye <b>{{ biz_included }}</b> cuentas.</p>
+      <p>Asiento extra: <b>USD {{ '%0.2f'|format(biz_extra) }}</b>/mes</p>
+      <p>Anual: <b>USD {{ biz_year }}</b> ({{ biz_disc }}% OFF)</p>
+      <form method="post" action="/billing/upgrade_business" style="margin-top:8px">
+        <button type="submit">Activar Business</button>
+      </form>
+      <p class="hint">Activa Business y luego agrega miembros desde soporte (v1 manual).</p>
     </div>
 
     <div class="tile">
       <h2>↩️ Volver a FREE</h2>
-      <p>Cancelar PRO y volver a FREE (se reestablece el trial).</p>
+      <p>Cancelar PRO/Business y volver a FREE (se reestablece el trial).</p>
       <form method="post" action="/billing/cancel">
         <button type="submit">Volver a FREE</button>
       </form>
