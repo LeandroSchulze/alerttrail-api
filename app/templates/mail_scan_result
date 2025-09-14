@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Resultado de escaneo</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="card">
+<h1>Resultado de escaneo</h1>
+<p>{{ summary }}</p>
+<ul>
+{% for item in items %}
+<li><b>{{ item.sender }}</b> — {{ item.subject }} → {{ item.verdict }}</li>
+{% endfor %}
+</ul>
+<p><a href="/dashboard">Volver al dashboard</a></p>
+</div>
+</body></html>
