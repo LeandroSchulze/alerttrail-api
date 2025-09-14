@@ -1,20 +1,12 @@
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Iniciar sesión · AlertTrail</title>
-  <link rel="stylesheet" href="/static/style.css" />
-</head>
-<body class="app">
-  <main class="shell">
-    <h1>Iniciar sesión</h1>
-    <form class="card" method="post" action="/auth/login/web">
-      <label>Email<br><input name="email" type="email" required></label><br/>
-      <label>Contraseña<br><input name="password" type="password" required></label><br/>
-      <button class="btn primary" type="submit">Entrar</button>
-    </form>
-    <p class="muted">Acceso para testers. El admin puede crear usuarios.</p>
-  </main>
-</body>
-</html>
+<!doctype html><html><head><meta charset="utf-8"><title>Login</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="card">
+<h1>AlertTrail</h1>
+<form method="post" action="/auth/login">
+<input name="email" placeholder="Email" required>
+<input type="password" name="password" placeholder="Contraseña" required>
+<button type="submit">Ingresar</button>
+</form>
+<p>¿Sin cuenta? <a href="/auth/register">Regístrate</a></p>
+</div>
+</body></html>
