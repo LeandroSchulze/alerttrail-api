@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from jose import jwt, JWTError
+import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -45,13 +45,11 @@ def create_access_token_from_sub(sub: str, minutes: int | None = None) -> str:
     """Azúcar sintáctico: permite pasar sólo el `sub`."""
     return create_access_token({"sub": sub}, minutes=minutes)
 
-def decode_token(token: str) -> Optional[dict]:
-    """Devuelve payload o None si inválido/expirado."""
-    settings = get_settings()
+def decode_token(token: str):
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-    except JWTError:
-        return None
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token inválido")
 
 def issue_access_cookie(response: Response, token: str) -> None:
     """Setea cookie HTTPOnly con el JWT."""
