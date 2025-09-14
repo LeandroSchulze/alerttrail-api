@@ -6,12 +6,18 @@
 </header>
 <main class="container">
   <section class="status">
-    {% if is_pro %}
-      <div class="badge pro">PLAN PRO ACTIVO</div>
+    {% if is_pro and user.plan_expires %}
+      <div class="badge pro">PLAN PRO/BUSINESS — días restantes: {{ pro_left }}</div>
+    {% elif is_pro %}
+      <div class="badge pro">PLAN PRO/BUSINESS ACTIVO</div>
     {% else %}
-      <div class="badge free">PLAN FREE — días de prueba restantes: {{ trial_left }}</div>
+      <div class="badge free">PLAN FREE — sin PRO</div>
     {% endif %}
     <p style="margin-top:8px"><a class="btn" href="/billing">Cambiar de plan</a></p>
+
+    {% if user.role == 'admin' %}
+      <p style="margin-top:8px"><a class="btn" href="/admin/stats">Ver estadísticas</a></p>
+    {% endif %}
   </section>
 
   <section class="grid">
