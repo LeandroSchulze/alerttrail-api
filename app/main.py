@@ -14,7 +14,7 @@ from app.security import (
     issue_access_cookie,
     get_current_user_id,
 )
-from app.routers import mail as mail_router
+from app.routers import mail as mail_router, billing as billing_router
 
 app = FastAPI(title="AlertTrail")
 
@@ -186,7 +186,7 @@ async def generate_pdf(
     c.save()
 
     url = f"/reports/{fname}"
-    # Si es llamado vía API/JS -> JSON; si viene de formulario -> HTML
+    # API -> JSON; formulario -> HTML
     if "application/json" in request.headers.get("accept", ""):
         return {"url": url}
     return templates.TemplateResponse("pdf_ready.html", {"request": request, "url": url})
@@ -204,5 +204,6 @@ async def staticdownload(f: str):
         os.path.join(REPORTS_DIR, f), media_type="application/pdf", filename=f
     )
 
-# ---------- Mail ----------
+# ---------- Routers ----------
 app.include_router(mail_router.router)
+app.include_router(billing_router.router)
