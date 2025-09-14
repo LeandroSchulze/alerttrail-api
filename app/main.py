@@ -18,10 +18,26 @@ from app.routers import mail as mail_router
 
 app = FastAPI(title="AlertTrail")
 
-# --- Paths / dirs ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+# --- Paths / dirs (con fallback a raíz del repo) ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # .../app
+ROOT_DIR = os.path.dirname(BASE_DIR)                    # repo root
+
+def pick_dir(*candidates):
+    for d in candidates:
+        if os.path.isdir(d):
+            return d
+    os.makedirs(candidates[0], exist_ok=True)
+    return candidates[0]
+
+TEMPLATES_DIR = pick_dir(
+    os.path.join(BASE_DIR, "templates"),
+    os.path.join(ROOT_DIR, "templates"),
+)
+STATIC_DIR = pick_dir(
+    os.path.join(BASE_DIR, "static"),
+    os.path.join(ROOT_DIR, "static"),
+)
+
 REPORTS_DIR = os.getenv("REPORTS_DIR", "/var/data/reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -29,12 +45,11 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# Create tables if missing (engine defined in app/database.py)
+# Create tables if missing
 Base.metadata.create_all(bind=get_engine())
 
 # --- Middleware: exigir login para vistas HTML ---
-PUBLIC_PREFIXES = ("/auth/login", "/auth/register", "/health", "/static")
-
+PUBLIC_PREFIXES = ("/auth/login", "/auth/register", "/health", "/static", "/staticdownload")
 
 @app.middleware("http")
 async def require_login_for_html(request: Request, call_next):
@@ -46,7 +61,6 @@ async def require_login_for_html(request: Request, call_next):
             return RedirectResponse("/auth/login")
     return await call_next(request)
 
-
 # --- 401 -> redirección a login en vistas HTML ---
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
@@ -54,16 +68,13 @@ async def http_exc_handler(request: Request, exc: HTTPException):
         return RedirectResponse("/auth/login")
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
 @app.get("/")
 def index():
     return RedirectResponse("/dashboard")
-
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
@@ -82,12 +93,10 @@ async def dashboard(
         {"request": request, "user": user, "is_pro": is_pro, "trial_left": trial_left},
     )
 
-
 # ---------- Auth (web) ----------
 @app.get("/auth/login", response_class=HTMLResponse)
 async def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
-
 
 @app.post("/auth/login")
 async def login(
@@ -103,18 +112,15 @@ async def login(
     issue_access_cookie(resp, user.id)
     return resp
 
-
 @app.get("/auth/logout")
 async def logout():
     resp = RedirectResponse("/auth/login")
     resp.delete_cookie("access_token")
     return resp
 
-
 @app.get("/auth/register", response_class=HTMLResponse)
 async def register_form(request: Request):
     return templates.TemplateResponse("register.html", {"request": request})
-
 
 @app.post("/auth/register")
 async def register(
@@ -132,7 +138,7 @@ async def register(
     plan = "FREE"
     expires = dt.datetime.utcnow() + dt.timedelta(days=trial_days)
 
-    # PROMO: primeras N cuentas con PRO por X días
+    # PROMO: primeras N con PRO por X días
     if os.getenv("PROMO_ENABLED", "false").lower() == "true":
         limit = int(os.getenv("PROMO_LIMIT", "10"))
         promo = db.query(Setting).filter(Setting.key == "promo_used").first()
@@ -161,7 +167,6 @@ async def register(
     issue_access_cookie(resp, user.id)
     return resp
 
-
 # ---------- Log Scanner (PDF) ----------
 @app.post("/analysis/generate_pdf")
 async def generate_pdf(
@@ -169,7 +174,6 @@ async def generate_pdf(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    # Genera PDF simple de ejemplo
     from reportlab.pdfgen import canvas
 
     fname = f"report_{user_id}_{int(dt.datetime.utcnow().timestamp())}.pdf"
@@ -182,11 +186,10 @@ async def generate_pdf(
     c.save()
 
     url = f"/reports/{fname}"
-    # Si es llamado vía API/JS: JSON; si viene de formulario: HTML con botón
+    # Si es llamado vía API/JS -> JSON; si viene de formulario -> HTML
     if "application/json" in request.headers.get("accept", ""):
         return {"url": url}
     return templates.TemplateResponse("pdf_ready.html", {"request": request, "url": url})
-
 
 @app.get("/reports/{fname}", response_class=HTMLResponse)
 async def get_report(fname: str):
@@ -195,13 +198,11 @@ async def get_report(fname: str):
         raise HTTPException(404, "No encontrado")
     return HTMLResponse(f"<a href='/staticdownload?f={fname}'>Descargar {fname}</a>")
 
-
 @app.get("/staticdownload")
 async def staticdownload(f: str):
     return FileResponse(
         os.path.join(REPORTS_DIR, f), media_type="application/pdf", filename=f
     )
-
 
 # ---------- Mail ----------
 app.include_router(mail_router.router)
