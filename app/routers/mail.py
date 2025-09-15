@@ -6,7 +6,7 @@ from email.header import decode_header, make_header
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -44,7 +44,7 @@ def _get_fernet() -> Fernet:
             # si no es válida, caemos al derivado
             pass
 
-    # Fallback robusto: derivado de JWT_SECRET
+    # Fallback robusto: derivado de JWT_SECRET (no se rompe)
     seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
     derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())  # 32 bytes -> 44 chars urlsafe
     return Fernet(derived)
@@ -156,83 +156,110 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
     """
     Acepta application/x-www-form-urlencoded (form) o application/json.
     Prueba la conexión IMAP y guarda credenciales cifradas.
+    Incluye mensajes claros por etapa si algo falla.
     """
     user = get_current_user_cookie(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    ctype = (request.headers.get("content-type") or "").lower()
-
-    # Leer body según content-type
-    if ctype.startswith("application/json"):
-        body = await request.json() or {}
-        email_addr  = body.get("email_addr")
-        username    = body.get("username")
-        password    = body.get("password")
-        imap_server = body.get("imap_server") or "imap.gmail.com"
-        imap_port   = int(body.get("imap_port") or 993)
-        use_ssl     = str(body.get("use_ssl") or "true").lower() in {"1","true","on","yes"}
-    else:
-        form = await request.form()
-        email_addr  = form.get("email_addr")
-        username    = form.get("username")
-        password    = form.get("password")
-        imap_server = form.get("imap_server") or "imap.gmail.com"
-        imap_port   = int(form.get("imap_port") or 993)
-        # checkbox devuelve 'on' si está marcado
-        use_ssl     = bool(form.get("use_ssl"))
-
-    # Validación mínima
-    if not email_addr or not username or not password:
-        return templates.TemplateResponse(
-            "mail_connect.html",
-            {"request": request, "error": "Faltan campos (email, usuario o contraseña)."},
-            status_code=400,
-        )
-
-    # Probar conexión IMAP
+    stage = "init"
     try:
-        if use_ssl:
-            M = imaplib.IMAP4_SSL(imap_server, imap_port)
+        # -------- 1) Leer body (form o JSON) --------
+        stage = "parse-body"
+        ctype = (request.headers.get("content-type") or "").lower()
+
+        if ctype.startswith("application/json"):
+            body = await request.json() or {}
+            email_addr  = body.get("email_addr")
+            username    = body.get("username")
+            password    = body.get("password")
+            imap_server = body.get("imap_server") or "imap.gmail.com"
+            imap_port   = int(body.get("imap_port") or 993)
+            use_ssl     = str(body.get("use_ssl") or "true").lower() in {"1","true","on","yes"}
         else:
-            M = imaplib.IMAP4(imap_server, imap_port)
-        M.login(username, password)
-        M.logout()
-    except Exception as e:
+            form = await request.form()
+            email_addr  = form.get("email_addr")
+            username    = form.get("username")
+            password    = form.get("password")
+            imap_server = form.get("imap_server") or "imap.gmail.com"
+            imap_port   = int(form.get("imap_port") or 993)
+            use_ssl     = bool(form.get("use_ssl"))
+
+        if not email_addr or not username or not password:
+            return templates.TemplateResponse(
+                "mail_connect.html",
+                {"request": request, "error": "Faltan campos (email, usuario o contraseña)."},
+                status_code=400,
+            )
+
+        # -------- 2) Probar IMAP --------
+        stage = "test-imap"
+        try:
+            if use_ssl:
+                M = imaplib.IMAP4_SSL(imap_server, imap_port)
+            else:
+                M = imaplib.IMAP4(imap_server, imap_port)
+            M.login(username, password)
+            M.logout()
+        except Exception as e:
+            return templates.TemplateResponse(
+                "mail_connect.html",
+                {"request": request, "error": f"Error de conexión IMAP: {e}"},
+                status_code=400,
+            )
+
+        # -------- 3) Cifrar credenciales --------
+        stage = "encrypt"
+        import json
+        try:
+            f = _get_fernet()  # usa MAIL_CRYPT_KEY válida o deriva de JWT_SECRET
+            blob = f.encrypt(json.dumps({"username": username, "password": password}).encode()).decode()
+        except Exception as e:
+            return templates.TemplateResponse(
+                "mail_connect.html",
+                {"request": request, "error": f"Error cifrando credenciales (MAIL_CRYPT_KEY inválida?): {e}"},
+                status_code=500,
+            )
+
+        # -------- 4) Guardar en DB --------
+        stage = "db-commit"
+        acct = db.query(MailAccount).filter(
+            MailAccount.user_id == user.id,
+            MailAccount.email == email_addr
+        ).first()
+
+        if acct is None:
+            acct = MailAccount(
+                user_id=user.id,
+                email=email_addr,
+                imap_server=imap_server,
+                imap_port=imap_port,
+                use_ssl=use_ssl,
+                enc_blob=blob,
+            )
+            db.add(acct)
+        else:
+            acct.imap_server = imap_server
+            acct.imap_port = imap_port
+            acct.use_ssl = use_ssl
+            acct.enc_blob = blob
+            db.add(acct)
+
+        db.commit()
+
         return templates.TemplateResponse(
             "mail_connect.html",
-            {"request": request, "error": f"Error de conexión: {e}"},
-            status_code=400,
+            {"request": request, "ok": True, "email_addr": email_addr},
         )
 
-    # Guardar credenciales cifradas
-    import json
-    f = _get_fernet()
-    blob = f.encrypt(json.dumps({"username": username, "password": password}).encode()).decode()
-
-    acct = db.query(MailAccount).filter(MailAccount.user_id == user.id, MailAccount.email == email_addr).first()
-    if acct is None:
-        acct = MailAccount(
-            user_id=user.id,
-            email=email_addr,
-            imap_server=imap_server,
-            imap_port=imap_port,
-            use_ssl=use_ssl,
-            enc_blob=blob,
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return templates.TemplateResponse(
+            "mail_connect.html",
+            {"request": request, "error": f"Fallo en etapa '{stage}': {e}"},
+            status_code=500,
         )
-        db.add(acct)
-    else:
-        acct.imap_server = imap_server
-        acct.imap_port = imap_port
-        acct.use_ssl = use_ssl
-        acct.enc_blob = blob
-        db.add(acct)
-    db.commit()
-
-    return templates.TemplateResponse(
-        "mail_connect.html",
-        {"request": request, "ok": True, "email_addr": email_addr},
-    )
 
 @router.get("/scanner", response_class=HTMLResponse)
 def manual_scan(request: Request, db: Session = Depends(get_db)):
@@ -302,3 +329,16 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     </body></html>
     """
     return HTMLResponse(html)
+
+
+
+
+
+
+
+
+
+
+
+
+ChatGPT puede cometer erro
