@@ -29,7 +29,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # ---------------- Cifrado ----------------
 def _get_fernet() -> Fernet:
     """
-    Usa MAIL_CRYPT_KEY si está y es válida; si no, deriva una clave de JWT_SECRET.
+    Usa MAIL_CRYPT_KEY si está y es válida; si no, la deriva de JWT_SECRET.
     MAIL_CRYPT_KEY debe ser una key Fernet válida (32 bytes urlsafe-base64).
     """
     import base64, hashlib
@@ -44,7 +44,7 @@ def _get_fernet() -> Fernet:
     derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
     return Fernet(derived)
 
-# ---------------- Modelos mínimos ----------------
+# ---------------- Modelos (locales) ----------------
 class MailAccount(Base):
     __tablename__ = "mail_accounts"
 
@@ -52,15 +52,16 @@ class MailAccount(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email = Column(String, nullable=False)
 
-    # Compatibilidad: algunos DBs viejos tienen `imap_host` NOT NULL
-    imap_host   = Column(String, nullable=False, default="imap.gmail.com")
-    # Campo "nuevo" usado por el código
-    imap_server = Column(String, nullable=False, default="imap.gmail.com")
+    # Compatibilidad con esquemas antiguos:
+    imap_host   = Column(String, nullable=False, default="imap.gmail.com")     # viejo
+    # Campo actual que usa el código:
+    imap_server = Column(String, nullable=False, default="imap.gmail.com")     # nuevo
     imap_port   = Column(Integer, nullable=False, default=993)
     use_ssl     = Column(Boolean, nullable=False, default=True)
 
     enc_blob  = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class MailAlert(Base):
     __tablename__ = "mail_alerts"
@@ -73,6 +74,8 @@ class MailAlert(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
+
+# Crear tablas si faltan (idempotente)
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
@@ -124,10 +127,14 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
         data = json.loads(f.decrypt(acct.enc_blob.encode()).decode())
     except (InvalidToken, Exception):
         raise HTTPException(status_code=500, detail="No se pudo descifrar las credenciales")
+
+    server = acct.imap_server or acct.imap_host or "imap.gmail.com"
+    port = acct.imap_port or 993
+
     if acct.use_ssl:
-        M = imaplib.IMAP4_SSL(acct.imap_server, acct.imap_port)
+        M = imaplib.IMAP4_SSL(server, port)
     else:
-        M = imaplib.IMAP4(acct.imap_server, acct.imap_port)
+        M = imaplib.IMAP4(server, port)
     M.login(data["username"], data["password"])
     return M
 
@@ -138,6 +145,12 @@ def connect_form(request: Request):
 
 @router.post("/connect", response_class=HTMLResponse)
 async def connect_submit(request: Request, db: Session = Depends(get_db)):
+    """
+    Acepta JSON o FormData:
+      JSON: {email_addr, username, password, imap_server?, imap_port?, use_ssl?}
+      Form: campos con mismos nombres (use_ssl presente => True)
+    Guarda/actualiza la cuenta seteando imap_host e imap_server.
+    """
     user = get_current_user_cookie(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -148,18 +161,18 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
         ctype = (request.headers.get("content-type") or "").lower()
         if ctype.startswith("application/json"):
             body = await request.json() or {}
-            email_addr  = body.get("email_addr")
-            username    = body.get("username")
-            password    = body.get("password")
-            imap_server = body.get("imap_server") or "imap.gmail.com"
+            email_addr  = (body.get("email_addr") or "").strip()
+            username    = (body.get("username") or "").strip()
+            password    = (body.get("password") or "").strip()
+            imap_server = (body.get("imap_server") or "imap.gmail.com").strip()
             imap_port   = int(body.get("imap_port") or 993)
             use_ssl     = str(body.get("use_ssl") or "true").lower() in {"1","true","on","yes"}
         else:
             form = await request.form()
-            email_addr  = form.get("email_addr")
-            username    = form.get("username")
-            password    = form.get("password")
-            imap_server = form.get("imap_server") or "imap.gmail.com"
+            email_addr  = (form.get("email_addr") or "").strip()
+            username    = (form.get("username") or "").strip()
+            password    = (form.get("password") or "").strip()
+            imap_server = (form.get("imap_server") or "imap.gmail.com").strip()
             imap_port   = int(form.get("imap_port") or 993)
             use_ssl     = bool(form.get("use_ssl"))
 
@@ -202,19 +215,26 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             MailAccount.user_id == user.id,
             MailAccount.email == email_addr
         ).first()
+
         if acct is None:
             acct = MailAccount(
-                user_id=user.id, email=email_addr,
-                imap_server=imap_server, imap_port=imap_port,
-                use_ssl=use_ssl, enc_blob=blob,
+                user_id=user.id,
+                email=email_addr,
+                imap_host=imap_server,      # compat legado
+                imap_server=imap_server,
+                imap_port=imap_port,
+                use_ssl=use_ssl,
+                enc_blob=blob,
             )
             db.add(acct)
         else:
+            acct.imap_host = imap_server   # compat legado
             acct.imap_server = imap_server
             acct.imap_port = imap_port
             acct.use_ssl = use_ssl
             acct.enc_blob = blob
             db.add(acct)
+
         db.commit()
 
         return templates.TemplateResponse(
