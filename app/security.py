@@ -17,16 +17,11 @@ from app import models
 # ------------------------------
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-please")
 JWT_ALG = "HS256"
-# Duración del token (cookie) – 30 días por defecto
 ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", str(30 * 24 * 60)))
-
-# Nombre de la cookie donde guardamos el JWT
 COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "access_token")
 
-# Detectar si estamos en prod para marcar cookie secure
 _IS_PROD = os.getenv("RENDER") is not None or os.getenv("ENV", "").lower() in {"prod", "production"}
 
-# Hash de contraseñas (bcrypt)
 _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -52,9 +47,6 @@ def _utcnow() -> datetime:
 
 
 def create_access_token_from_sub(sub: str, minutes: int = ACCESS_TOKEN_MINUTES, extra: Optional[Dict[str, Any]] = None) -> str:
-    """
-    Crea un JWT cuyo 'sub' es típicamente el email.
-    """
     now = _utcnow()
     payload: Dict[str, Any] = {
         "sub": sub,
@@ -79,28 +71,28 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
 # Cookies
 # ------------------------------
 def issue_access_cookie(response: Response, token: str) -> None:
-    """
-    Setea la cookie HTTPOnly con el JWT.
-    """
+    """Setea la cookie HTTPOnly con el JWT."""
     max_age = ACCESS_TOKEN_MINUTES * 60
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         max_age=max_age,
         httponly=True,
-        secure=_IS_PROD,      # en prod va Secure
+        secure=_IS_PROD,
         samesite="lax",
         path="/",
     )
+
+
+def clear_access_cookie(response: Response) -> None:
+    """Borra la cookie de sesión."""
+    response.delete_cookie(COOKIE_NAME, path="/")
 
 
 # ------------------------------
 # Current user (dependencias)
 # ------------------------------
 def _user_from_cookie(request: Request, db: Session) -> Optional[models.User]:
-    """
-    Intenta leer la cookie JWT y traer el usuario. Devuelve None si no hay sesión válida.
-    """
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         return None
@@ -123,9 +115,7 @@ def get_current_user_cookie_optional(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Optional[models.User]:
-    """
-    Versión que NO levanta 401. Útil en vistas donde querés redirigir manualmente si no hay sesión.
-    """
+    """No levanta 401; devuelve None si no hay sesión."""
     return _user_from_cookie(request, db)
 
 
@@ -133,10 +123,7 @@ def get_current_user_cookie(
     request: Request,
     db: Session = Depends(get_db),
 ) -> models.User:
-    """
-    Dependencia que valida sesión leyendo la cookie JWT. Si no hay usuario válido, levanta 401.
-    Usala en endpoints que requieren auth.
-    """
+    """Levanta 401 si no hay sesión."""
     user = _user_from_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -147,8 +134,6 @@ def get_current_user_id(
     request: Request,
     db: Session = Depends(get_db),
 ) -> int:
-    """
-    Compat para routers que esperan 'get_current_user_id'. Levanta 401 si no hay sesión.
-    """
+    """Compat para routers que esperan get_current_user_id."""
     user = get_current_user_cookie(request, db)
     return int(user.id)
