@@ -47,13 +47,19 @@ def _get_fernet() -> Fernet:
 # ---------------- Modelos mínimos ----------------
 class MailAccount(Base):
     __tablename__ = "mail_accounts"
+
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email = Column(String, nullable=False)
+
+    # Compatibilidad: algunos DBs viejos tienen `imap_host` NOT NULL
+    imap_host   = Column(String, nullable=False, default="imap.gmail.com")
+    # Campo "nuevo" usado por el código
     imap_server = Column(String, nullable=False, default="imap.gmail.com")
-    imap_port = Column(Integer, nullable=False, default=993)
-    use_ssl = Column(Boolean, nullable=False, default=True)
-    enc_blob = Column(Text, nullable=False)
+    imap_port   = Column(Integer, nullable=False, default=993)
+    use_ssl     = Column(Boolean, nullable=False, default=True)
+
+    enc_blob  = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class MailAlert(Base):
