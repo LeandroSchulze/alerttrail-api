@@ -3,28 +3,79 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AlertTrail – Dashboard</title>
+  <title>AlertTrail — Dashboard</title>
   <style>
-    body { font-family: system-ui, Arial, sans-serif; background:#f6fbff; margin:0; }
-    header { padding:16px 24px; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.06); display:flex; justify-content:space-between; align-items:center; }
-    .pill { padding:6px 10px; border-radius:999px; background:#eaf2ff; color:#1f7ae0; font-weight:600; }
-    main { padding:24px; }
-    a.btn { display:inline-block; margin-right:10px; padding:10px 14px; border-radius:10px; background:#1f7ae0; color:#fff; text-decoration:none; font-weight:600; }
+    :root {
+      --bg: #f5fbff;
+      --card: #ffffff;
+      --txt: #123;
+      --muted: #6a7a8a;
+      --primary: #1f7ae0;
+      --danger: #e24a4a;
+      --pill: #eaf2ff;
+      --shadow: 0 10px 30px rgba(0,0,0,.06);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background: var(--bg); color: var(--txt); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    header { display:flex; align-items:center; justify-content:space-between; padding:18px 22px; background:#fff; box-shadow: 0 1px 8px rgba(0,0,0,.05); }
+    header .brand { font-weight:700; letter-spacing:.2px; }
+    header .right { display:flex; gap:10px; align-items:center; }
+    .pill { padding:6px 10px; border-radius:999px; background:var(--pill); color:var(--primary); font-weight:700; font-size:.85rem; }
+    .pill.free { background:#ffecef; color:#b91c1c; }
+    .btn { appearance:none; border:0; cursor:pointer; padding:10px 14px; border-radius:12px; background:var(--primary); color:#fff; font-weight:700; text-decoration:none; display:inline-block; box-shadow: 0 4px 14px rgba(31,122,224,.18); }
+    .btn.secondary { background:#0f60b6; }
+    .btn.danger { background: var(--danger); box-shadow: 0 4px 14px rgba(226,74,74,.18); }
+    main { max-width:1100px; margin: 28px auto; padding: 0 18px; }
+    h1 { margin: 0 0 6px; }
+    .muted { color: var(--muted); }
+    .grid { display:grid; gap:22px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-top:18px; }
+    .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px; }
+    .card h2 { margin:0 0 12px; font-size: 1.15rem; }
+    .actions { margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; }
   </style>
 </head>
 <body>
   <header>
-    <div><b>AlertTrail</b></div>
-    <div class="pill">{{ user_badge }}</div>
+    <div class="brand">AlertTrail</div>
+    <div class="right">
+      <!-- Badge de plan -->
+      {% if (user_plan or '').upper() == 'PRO' %}
+        <span class="pill">PRO</span>
+      {% else %}
+        <span class="pill free">PLAN FREE — sin PRO</span>
+      {% endif %}
+      <!-- Cambiar plan -->
+      <a class="btn" href="/billing/checkout?plan=pro-monthly">Cambiar de plan</a>
+      <!-- Salir -->
+      <a class="btn danger" href="/auth/logout">Salir</a>
+    </div>
   </header>
+
   <main>
-    <h2>Hola, {{ user_name }}</h2>
-    <p>Plan actual: <b>{{ user_plan }}</b> — {{ user_email }}</p>
-    <p>
-      <a class="btn" href="/billing/checkout?plan=pro-monthly">Cambiar a PRO mensual</a>
-      <a class="btn" href="/billing/checkout?plan=pro-annual">PRO anual (-10%)</a>
-      <a class="btn" href="/auth/logout" style="background:#ef4444">Salir</a>
-    </p>
+    <h1>Hola, {{ user_name }}</h1>
+    <p class="muted">Plan actual: <b>{{ (user_plan or 'FREE')|upper }}</b> — {{ user_email }}</p>
+
+    <div class="grid">
+      <!-- Log Scanner -->
+      <section class="card">
+        <h2>Log Scanner</h2>
+        <p class="muted">Analizá tus logs y generá un informe en PDF.</p>
+        <div class="actions">
+          <a class="btn" href="/analysis/generate-pdf">Generar PDF</a>
+        </div>
+      </section>
+
+      <!-- Mail Scanner -->
+      <section class="card">
+        <h2>Mail Scanner</h2>
+        <p class="muted">Conectá tu casilla para analizar correos.</p>
+        <div class="actions">
+          <a class="btn" href="/mail/connect">Vincular casilla</a>
+          <a class="btn secondary" href="/mail/scanner">Mail Scanner</a>
+        </div>
+      </section>
+    </div>
   </main>
 </body>
 </html>
