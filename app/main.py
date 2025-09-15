@@ -54,6 +54,8 @@ _try_include("app.routers.billing")    # /billing/*
 _try_include("app.routers.admin")
 _try_include("app.routers.analysis")
 _try_include("app.routers.mail")
+_try_include("app.routers.tasks_mail")
+
 
 @app.get("/", response_class=HTMLResponse)
 def root():
