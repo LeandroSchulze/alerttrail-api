@@ -1,76 +1,96 @@
+# scripts/init_db.py
 import os
-import datetime as dt
-from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
-from app.database import Base, get_engine
-from app.models import User, Setting
+import sys
+
+from app.database import Base, engine, SessionLocal
 from app.security import get_password_hash
+from app.models import User  # asegúrate de que el modelo se llame User
 
-engine = get_engine()
+# Env vars esperadas (Render / local)
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip()
+ADMIN_PASS = os.getenv("ADMIN_PASS", "").strip()
+ADMIN_NAME = os.getenv("ADMIN_NAME", "Admin").strip()
+ADMIN_FORCE_RESET = os.getenv("ADMIN_FORCE_RESET", "false").lower() in {"1", "true", "yes"}
 
-# 1) Crear tablas base si no existen
-Base.metadata.create_all(bind=engine)
+def ensure_env():
+    missing = []
+    if not ADMIN_EMAIL:
+        missing.append("ADMIN_EMAIL")
+    if not ADMIN_PASS:
+        missing.append("ADMIN_PASS")
+    if missing:
+        print(f"[init_db] Faltan variables: {', '.join(missing)}", file=sys.stderr)
+        sys.exit(1)
 
-# 2) Migración automática de columnas nuevas en 'users'
-with engine.begin() as conn:
-    # ¿existe la tabla users?
-    exists = conn.execute(
-        text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-    ).fetchone()
+def set_if_hasattr(obj, field: str, value):
+    if hasattr(obj, field):
+        try:
+            setattr(obj, field, value)
+        except Exception:
+            pass
 
-    if exists:
-        cols_rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
-        cols = {row[1] for row in cols_rows}  # row[1] = nombre de columna
+def main():
+    ensure_env()
+    # Crea tablas si no existen
+    Base.metadata.create_all(bind=engine)
 
-        if 'role' not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR"))
-            conn.execute(text("UPDATE users SET role='user' WHERE role IS NULL"))
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == ADMIN_EMAIL).first()
 
-        if 'plan' not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN plan VARCHAR"))
-            conn.execute(text("UPDATE users SET plan='FREE' WHERE plan IS NULL"))
-
-        if 'plan_expires' not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN plan_expires DATETIME"))
-
-        if 'created_at' not in cols:
-            conn.execute(
-                text("ALTER TABLE users ADD COLUMN created_at DATETIME DEFAULT (CURRENT_TIMESTAMP)")
-            )
-
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-
-ADMIN_EMAIL = os.getenv('ADMIN_EMAIL')
-ADMIN_PASS = os.getenv('ADMIN_PASS')
-ADMIN_NAME = os.getenv('ADMIN_NAME', 'Admin')
-PROMO_ENABLED = os.getenv('PROMO_ENABLED', 'false').lower() == 'true'
-
-with SessionLocal() as db:
-    # 3) Asegurar admin
-    if ADMIN_EMAIL and ADMIN_PASS:
-        admin = db.query(User).filter(User.email == ADMIN_EMAIL).first()
-        if not admin:
-            admin = User(
+        if user is None:
+            # Crear admin nuevo (si no existía)
+            user = User(
+                name=ADMIN_NAME or "Admin",
                 email=ADMIN_EMAIL,
-                name=ADMIN_NAME,
-                password_hash=get_password_hash(ADMIN_PASS),
-                role='admin',
-                plan='PRO',
-                plan_expires=None,
+                hashed_password=get_password_hash(ADMIN_PASS),
+                plan="PRO",          # <-- Aseguramos PRO
+                is_active=True,
             )
-            db.add(admin)
-            db.commit()
-        else:
-            # Defaults por si venía de un esquema viejo
-            if not getattr(admin, 'role', None):
-                admin.role = 'admin'
-            if not getattr(admin, 'plan', None):
-                admin.plan = 'PRO'
-            db.commit()
+            # Si tu modelo tiene 'role'/'is_admin', los fijamos
+            set_if_hasattr(user, "role", "admin")
+            set_if_hasattr(user, "is_admin", True)
 
-    # 4) Ajustar settings de promo
-    if PROMO_ENABLED:
-        used = db.query(Setting).filter(Setting.key == 'promo_used').first()
-        if not used:
-            db.add(Setting(key='promo_used', value='0'))
+            db.add(user)
             db.commit()
+            print(f"[init_db] Admin creado: {ADMIN_EMAIL} (plan=PRO)")
+        else:
+            # Actualizar datos del admin existente
+            changed = False
+
+            if ADMIN_FORCE_RESET:
+                user.hashed_password = get_password_hash(ADMIN_PASS)
+                changed = True
+
+            if user.plan != "PRO":
+                user.plan = "PRO"
+                changed = True
+
+            # Fortalecer flags de admin si existen
+            if hasattr(user, "role") and getattr(user, "role") != "admin":
+                user.role = "admin"
+                changed = True
+            if hasattr(user, "is_admin") and getattr(user, "is_admin") is not True:
+                user.is_admin = True
+                changed = True
+
+            if not user.is_active:
+                user.is_active = True
+                changed = True
+
+            if ADMIN_NAME and user.name != ADMIN_NAME:
+                user.name = ADMIN_NAME
+                changed = True
+
+            if changed:
+                db.add(user)
+                db.commit()
+                print(f"[init_db] Admin actualizado: {ADMIN_EMAIL} (plan=PRO)")
+            else:
+                print(f"[init_db] Admin ya estaba OK: {ADMIN_EMAIL} (plan=PRO)")
+
+    finally:
+        db.close()
+
+if __name__ == "__main__":
+    main()
