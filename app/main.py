@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.database import get_db, Base, get_engine
+from app.database import get_db, Base, engine
 from app.models import User, Setting
 from app.security import (
     get_password_hash,
