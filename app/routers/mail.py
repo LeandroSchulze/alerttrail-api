@@ -33,20 +33,15 @@ def _get_fernet() -> Fernet:
     MAIL_CRYPT_KEY debe ser una key Fernet válida (32 bytes urlsafe-base64).
     """
     import base64, hashlib
-
     env_key = os.getenv("MAIL_CRYPT_KEY")
     if env_key:
-        # admitir str o bytes y validar formato
         key_bytes = env_key.encode() if isinstance(env_key, str) else env_key
         try:
-            return Fernet(key_bytes)  # OK si es una Fernet key válida
+            return Fernet(key_bytes)
         except Exception:
-            # si no es válida, caemos al derivado
             pass
-
-    # Fallback robusto: derivado de JWT_SECRET (no se rompe)
     seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
-    derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())  # 32 bytes -> 44 chars urlsafe
+    derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
     return Fernet(derived)
 
 # ---------------- Modelos mínimos ----------------
@@ -58,21 +53,20 @@ class MailAccount(Base):
     imap_server = Column(String, nullable=False, default="imap.gmail.com")
     imap_port = Column(Integer, nullable=False, default=993)
     use_ssl = Column(Boolean, nullable=False, default=True)
-    enc_blob = Column(Text, nullable=False)  # JSON cifrado con usuario/clave
+    enc_blob = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class MailAlert(Base):
     __tablename__ = "mail_alerts"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    msg_uid = Column(String, index=True)      # UID IMAP
+    msg_uid = Column(String, index=True)
     subject = Column(Text)
     sender = Column(String)
-    reason = Column(String)                    # motivo del riesgo
+    reason = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
-# Crear las tablas si no existen (idempotente)
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
@@ -80,10 +74,7 @@ except Exception as e:
 
 # ---------------- Utilidades ----------------
 SUS_ATTACH_EXTS = {".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"}
-SUS_SUBJECT_WORDS = {
-    "suspend", "suspendida", "password", "contraseña", "verify", "verificar",
-    "urgente", "factura", "pago", "bloqueada", "blocked"
-}
+SUS_SUBJECT_WORDS = {"suspend","suspendida","password","contraseña","verify","verificar","urgente","factura","pago","bloqueada","blocked"}
 
 def _decode_hdr(v):
     try:
@@ -92,16 +83,10 @@ def _decode_hdr(v):
         return v or ""
 
 def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
-    """Heurísticas simples de riesgo."""
     reasons: List[str] = []
-
-    # Asunto sospechoso
     subj = _decode_hdr(msg.get("Subject", ""))
-    subj_low = subj.lower()
-    if any(w in subj_low for w in SUS_SUBJECT_WORDS):
+    if any(w in subj.lower() for w in SUS_SUBJECT_WORDS):
         reasons.append("Asunto sospechoso")
-
-    # Adjuntos peligrosos
     for part in msg.walk():
         if part.get_content_disposition() == "attachment":
             fn = part.get_filename()
@@ -111,33 +96,28 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
                     if fn_d.endswith(ext):
                         reasons.append(f"Adjunto peligroso ({ext})")
                         break
-
-    # Links acortadores (si hay bs4)
     try:
-        from bs4 import BeautifulSoup  # opcional
+        from bs4 import BeautifulSoup
         for part in msg.walk():
             if part.get_content_type() == "text/html":
                 html = part.get_payload(decode=True) or b""
                 soup = BeautifulSoup(html, "html.parser")  # type: ignore
                 for a in soup.find_all("a"):
                     href = (a.get("href") or "").lower()
-                    if any(x in href for x in ("bit.ly", "tinyurl", "goo.gl")):
+                    if any(x in href for x in ("bit.ly","tinyurl","goo.gl")):
                         reasons.append("Acortador de URL")
                         break
     except Exception:
         pass
-
     return (len(reasons) > 0, reasons)
 
 def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
-    """Abre sesión IMAP con las credenciales cifradas almacenadas."""
     import json
     f = _get_fernet()
     try:
         data = json.loads(f.decrypt(acct.enc_blob.encode()).decode())
     except (InvalidToken, Exception):
         raise HTTPException(status_code=500, detail="No se pudo descifrar las credenciales")
-
     if acct.use_ssl:
         M = imaplib.IMAP4_SSL(acct.imap_server, acct.imap_port)
     else:
@@ -148,26 +128,18 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
 # ---------------- Rutas ----------------
 @router.get("/connect", response_class=HTMLResponse)
 def connect_form(request: Request):
-    """Formulario para vincular casilla vía IMAP."""
     return templates.TemplateResponse("mail_connect.html", {"request": request})
 
 @router.post("/connect", response_class=HTMLResponse)
 async def connect_submit(request: Request, db: Session = Depends(get_db)):
-    """
-    Acepta application/x-www-form-urlencoded (form) o application/json.
-    Prueba la conexión IMAP y guarda credenciales cifradas.
-    Incluye mensajes claros por etapa si algo falla.
-    """
     user = get_current_user_cookie(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
     stage = "init"
     try:
-        # -------- 1) Leer body (form o JSON) --------
         stage = "parse-body"
         ctype = (request.headers.get("content-type") or "").lower()
-
         if ctype.startswith("application/json"):
             body = await request.json() or {}
             email_addr  = body.get("email_addr")
@@ -192,7 +164,6 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
-        # -------- 2) Probar IMAP --------
         stage = "test-imap"
         try:
             if use_ssl:
@@ -208,11 +179,10 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
-        # -------- 3) Cifrar credenciales --------
         stage = "encrypt"
         import json
         try:
-            f = _get_fernet()  # usa MAIL_CRYPT_KEY válida o deriva de JWT_SECRET
+            f = _get_fernet()
             blob = f.encrypt(json.dumps({"username": username, "password": password}).encode()).decode()
         except Exception as e:
             return templates.TemplateResponse(
@@ -221,21 +191,16 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=500,
             )
 
-        # -------- 4) Guardar en DB --------
         stage = "db-commit"
         acct = db.query(MailAccount).filter(
             MailAccount.user_id == user.id,
             MailAccount.email == email_addr
         ).first()
-
         if acct is None:
             acct = MailAccount(
-                user_id=user.id,
-                email=email_addr,
-                imap_server=imap_server,
-                imap_port=imap_port,
-                use_ssl=use_ssl,
-                enc_blob=blob,
+                user_id=user.id, email=email_addr,
+                imap_server=imap_server, imap_port=imap_port,
+                use_ssl=use_ssl, enc_blob=blob,
             )
             db.add(acct)
         else:
@@ -244,7 +209,6 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             acct.use_ssl = use_ssl
             acct.enc_blob = blob
             db.add(acct)
-
         db.commit()
 
         return templates.TemplateResponse(
@@ -263,10 +227,6 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/scanner", response_class=HTMLResponse)
 def manual_scan(request: Request, db: Session = Depends(get_db)):
-    """
-    Escaneo inmediato de los últimos 30 correos en INBOX de la cuenta vinculada.
-    Guarda alertas en mail_alerts si encuentra riesgo.
-    """
     user = get_current_user_cookie(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -284,7 +244,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
         if status != "OK":
             raise RuntimeError("No pude listar correos")
 
-        uids = data[0].split()[-30:]  # últimos 30
+        uids = data[0].split()[-30:]
         for uid in reversed(uids):
             st, msg_data = M.fetch(uid, "(RFC822)")
             if st != "OK" or not msg_data:
@@ -295,21 +255,17 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
                 subject = _decode_hdr(msg.get("Subject", ""))
                 sender = _decode_hdr(msg.get("From", ""))
                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-
                 exists = db.query(MailAlert).filter(
                     MailAlert.user_id == user.id,
                     MailAlert.msg_uid == uid_str
                 ).first()
                 if not exists:
                     db.add(MailAlert(
-                        user_id=user.id,
-                        msg_uid=uid_str,
-                        subject=subject,
-                        sender=sender,
+                        user_id=user.id, msg_uid=uid_str,
+                        subject=subject, sender=sender,
                         reason="; ".join(reasons),
                     ))
                     db.commit()
-
                 findings.append((subject, sender, reasons))
         M.logout()
     except Exception as e:
@@ -329,16 +285,3 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     </body></html>
     """
     return HTMLResponse(html)
-
-
-
-
-
-
-
-
-
-
-
-
-ChatGPT puede cometer erro
