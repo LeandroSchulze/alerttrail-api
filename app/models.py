@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
+#                              -----------------^^^^^^^
 from datetime import datetime
-from app.database import Base  # el mismo Base que ya usa User
+from app.database import Base
 
 class User(Base):
     __tablename__ = "users"
