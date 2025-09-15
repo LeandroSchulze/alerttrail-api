@@ -1,7 +1,6 @@
-
-# app/models.py
-from sqlalchemy import Column, Integer, String, Boolean
-from app.database import Base
+from sqlalchemy import Column, Integer, String, DateTime
+from datetime import datetime
+from app.database import Base  # el mismo Base que ya usa User
 
 class User(Base):
     __tablename__ = "users"
@@ -16,3 +15,12 @@ class User(Base):
 
     # Nuevo: estado activo
     is_active = Column(Boolean, default=True, nullable=False)
+
+# --- AllowedIP (usado por router admin) -------------------------------------
+class AllowedIP(Base):
+    __tablename__ = "allowed_ips"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ip = Column(String(64), unique=True, nullable=False)
+    note = Column(String(255), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
