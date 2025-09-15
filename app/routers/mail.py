@@ -52,16 +52,18 @@ class MailAccount(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email = Column(String, nullable=False)
 
-    # Compatibilidad con esquemas antiguos:
-    imap_host   = Column(String, nullable=False, default="imap.gmail.com")     # viejo
-    # Campo actual que usa el código:
-    imap_server = Column(String, nullable=False, default="imap.gmail.com")     # nuevo
+    # Compat con esquemas antiguos
+    imap_host   = Column(String, nullable=False, default="imap.gmail.com")
+    # Campo “nuevo” usado por el código
+    imap_server = Column(String, nullable=False, default="imap.gmail.com")
     imap_port   = Column(Integer, nullable=False, default=993)
     use_ssl     = Column(Boolean, nullable=False, default=True)
 
-    enc_blob  = Column(Text, nullable=False, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Credenciales cifradas
+    enc_blob     = Column(Text, nullable=False, default="")  # JSON cifrado {username,password}
+    enc_password = Column(Text, nullable=False, default="")  # ← legado (algunas DB lo tienen NOT NULL)
 
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class MailAlert(Base):
     __tablename__ = "mail_alerts"
@@ -216,28 +218,30 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             MailAccount.email == email_addr
         ).first()
 
-        if acct is None:
-            acct = MailAccount(
-                user_id=user.id,
-                email=email_addr,
-                imap_host=imap_server,      # compat legado
-                imap_server=imap_server,
-                imap_port=imap_port,
-                use_ssl=use_ssl,
-                enc_blob=blob,
-            )
-            db.add(acct)
-        else:
-            acct.imap_host = imap_server   # compat legado
-            acct.imap_server = imap_server
-            acct.imap_port = imap_port
-            acct.use_ssl = use_ssl
-            acct.enc_blob = blob
-            db.add(acct)
+if acct is None:
+    acct = MailAccount(
+        user_id=user.id,
+        email=email_addr,
+        imap_host=imap_server,          # compat legado
+        imap_server=imap_server,
+        imap_port=imap_port,
+        use_ssl=use_ssl,
+        enc_blob=blob,
+        enc_password=blob,              # ← compat: satisfacemos NOT NULL
+    )
+    db.add(acct)
+else:
+    acct.imap_host = imap_server       # compat legado
+    acct.imap_server = imap_server
+    acct.imap_port = imap_port
+    acct.use_ssl = use_ssl
+    acct.enc_blob = blob
+    acct.enc_password = blob           # ← compat: satisfacemos NOT NULL
+    db.add(acct)
 
-        db.commit()
+db.commit()
 
-        return templates.TemplateResponse(
+   return templates.TemplateResponse(
             "mail_connect.html",
             {"request": request, "ok": True, "email_addr": email_addr},
         )
