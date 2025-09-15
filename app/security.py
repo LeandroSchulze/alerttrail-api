@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 
 from app.models import User
 
-# ---- Config ----
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me")  # ¡poné un secreto real en Render!
+# =========================
+# Config
+# =========================
+JWT_SECRET = os.getenv("JWT_SECRET", "change-me")  # Poné un secreto real en Render
 JWT_ALG = "HS256"
 
 COOKIE_NAME = "access_token"
@@ -22,17 +24,23 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() in {"1", "true", "yes
 COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")  # "lax" o "none"
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN")  # opcional (tu dominio)
 
-# Hash PBKDF2
+# PBKDF2
 ITERATIONS = int(os.getenv("PBKDF2_ITERATIONS", "240000"))
 SALT = os.getenv("PASSWORD_SALT", "alerttrail_salt")
 
-# ---- Password hashing helpers ----
+# =========================
+# Password helpers (PBKDF2)
+# =========================
 def _pbkdf2_sha256(password: str, salt: str, iterations: int) -> str:
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations)
     return base64.b64encode(dk).decode()
 
 def get_password_hash(password: str) -> str:
-    return f"pbkdf2_sha256${ITERATIONS}${SALT}${_pbkdf2_sha256(password, SALT, ITERATIONS)}"
+    """
+    Formato: pbkdf2_sha256$<iterations>$<salt>$<digest-b64>
+    """
+    digest = _pbkdf2_sha256(password, SALT, ITERATIONS)
+    return f"pbkdf2_sha256${ITERATIONS}${SALT}${digest}"
 
 def verify_password(password: str, hashed: str) -> bool:
     try:
@@ -44,11 +52,21 @@ def verify_password(password: str, hashed: str) -> bool:
     except Exception:
         return False
 
-# ---- JWT helpers ----
+# =========================
+# JWT helpers
+# =========================
 def create_access_token(subject: str, expires_delta: timedelta = timedelta(days=7)) -> str:
     now = datetime.now(tz=timezone.utc)
-    payload = {"sub": subject, "iat": int(now.timestamp()), "exp": int((now + expires_delta).timestamp())}
+    payload = {
+        "sub": subject,
+        "iat": int(now.timestamp()),
+        "exp": int((now + expires_delta).timestamp()),
+    }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+# Alias para compatibilidad con tu auth.py
+def create_access_token_from_sub(sub: str) -> str:
+    return create_access_token(sub)
 
 def decode_token(token: str) -> Optional[dict]:
     try:
@@ -56,7 +74,9 @@ def decode_token(token: str) -> Optional[dict]:
     except jwt.PyJWTError:
         return None
 
-# ---- Cookie helpers ----
+# =========================
+# Cookie helpers
+# =========================
 def issue_access_cookie(response: Response, token: str, max_age: int = 7 * 24 * 3600) -> None:
     response.set_cookie(
         COOKIE_NAME,
@@ -72,11 +92,12 @@ def issue_access_cookie(response: Response, token: str, max_age: int = 7 * 24 * 
 def clear_access_cookie(response: Response) -> None:
     response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
 
-# ---- Current user from cookie ----
+# =========================
+# Current user from cookie
+# =========================
 def get_current_user_cookie(request: Request, db: Session) -> Optional[User]:
     """
-    Lee el JWT de la cookie 'access_token', lo decodifica y devuelve el User.
-    Devuelve None si no hay cookie o el token es inválido/expirado.
+    Lee el JWT de la cookie y devuelve el User; None si no hay/vale.
     """
     token = request.cookies.get(COOKIE_NAME)
     if not token:
@@ -90,5 +111,4 @@ def get_current_user_cookie(request: Request, db: Session) -> Optional[User]:
     if not email:
         return None
 
-    user = db.query(User).filter(User.email == email).first()
-    return user
+    return db.query(User).filter(User.email == email).first()
