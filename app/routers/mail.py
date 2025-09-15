@@ -29,15 +29,25 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # ---------------- Cifrado ----------------
 def _get_fernet() -> Fernet:
     """
-    Usa MAIL_CRYPT_KEY si está; si no, deriva una clave de JWT_SECRET (fallback).
-    Sugerencia: setear MAIL_CRYPT_KEY (Fernet key base64 urlsafe de 32 bytes).
+    Usa MAIL_CRYPT_KEY si está y es válida; si no, deriva una clave de JWT_SECRET.
+    MAIL_CRYPT_KEY debe ser una key Fernet válida (32 bytes urlsafe-base64).
     """
-    key = os.getenv("MAIL_CRYPT_KEY")
-    if not key:
-        import base64, hashlib
-        seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
-        key = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
-    return Fernet(key)
+    import base64, hashlib
+
+    env_key = os.getenv("MAIL_CRYPT_KEY")
+    if env_key:
+        # admitir str o bytes y validar formato
+        key_bytes = env_key.encode() if isinstance(env_key, str) else env_key
+        try:
+            return Fernet(key_bytes)  # OK si es una Fernet key válida
+        except Exception:
+            # si no es válida, caemos al derivado
+            pass
+
+    # Fallback robusto: derivado de JWT_SECRET
+    seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
+    derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())  # 32 bytes -> 44 chars urlsafe
+    return Fernet(derived)
 
 # ---------------- Modelos mínimos ----------------
 class MailAccount(Base):
