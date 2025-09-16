@@ -146,3 +146,57 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
     return {"id": user.id, "email": user.email, "name": user.name, "plan": getattr(user, "plan", "FREE")}
+
+# ---------- EMERGENCIA: forzar reset de admin desde ENV ----------
+@router.post("/_force_admin_reset", include_in_schema=False)
+def _force_admin_reset(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Crea/actualiza el admin usando ENV:
+      ADMIN_EMAIL, ADMIN_PASS, ADMIN_NAME
+    Protegido por un secreto: header X-Setup-Secret debe coincidir con ADMIN_SETUP_SECRET (o JWT_SECRET).
+    Quitar este endpoint después de usarlo.
+    """
+    secret_hdr = request.headers.get("X-Setup-Secret", "")
+    setup_secret = os.getenv("ADMIN_SETUP_SECRET") or os.getenv("JWT_SECRET") or ""
+    if not setup_secret or secret_hdr != setup_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    email = os.getenv("ADMIN_EMAIL")
+    password = os.getenv("ADMIN_PASS")
+    name = os.getenv("ADMIN_NAME", "Admin")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Faltan ADMIN_EMAIL o ADMIN_PASS")
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+    pwd_hash = get_password_hash(password)
+    if user:
+        # soporta ambos nombres de campo
+        if hasattr(user, "hashed_password"):
+            user.hashed_password = pwd_hash
+        if hasattr(user, "password_hash"):
+            user.password_hash = pwd_hash
+        if hasattr(user, "is_admin"):
+            user.is_admin = True
+        if hasattr(user, "is_active"):
+            user.is_active = True
+        if not getattr(user, "name", "") and name:
+            user.name = name
+        action = "actualizado"
+    else:
+        user = models.User(email=email, name=name)
+        if hasattr(user, "hashed_password"):
+            user.hashed_password = pwd_hash
+        if hasattr(user, "password_hash"):
+            user.password_hash = pwd_hash
+        if hasattr(user, "is_admin"):
+            user.is_admin = True
+        if hasattr(user, "is_active"):
+            user.is_active = True
+        db.add(user)
+        action = "creado"
+
+    db.commit()
+    return {"ok": True, "admin": email, "action": action}
