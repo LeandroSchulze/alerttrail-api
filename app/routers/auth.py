@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import func
 
 from app.database import get_db
 from app import models
@@ -64,7 +65,15 @@ def login_page(request: Request, db: Session = Depends(get_db)):
 # =========================================================
 @router.post("/login")
 def login_json(payload: LoginIn, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    # normalizamos el email recibido
+    email_norm = payload.email.strip().lower()
+
+    # búsqueda case-insensitive
+    user = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email_norm)
+        .first()
+    )
     if not user or not verify_password(payload.password, _get_user_password_hash(user)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
 
@@ -72,7 +81,7 @@ def login_json(payload: LoginIn, db: Session = Depends(get_db)):
     resp = JSONResponse({"ok": True})
     _set_cookie(resp, token)
     return resp
-
+    
 # =========================================================
 # Login de formulario (POST desde /auth/login HTML)
 # =========================================================
@@ -120,10 +129,16 @@ def me(request: Request, db: Session = Depends(get_db)):
 # =========================================================
 @router.post("/register")
 def register(data: RegisterIn, db: Session = Depends(get_db)):
-    exists = db.query(models.User).filter(models.User.email == data.email).first()
+    email_norm = data.email.strip().lower()
+    exists = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email_norm)
+        .first()
+    )
     if exists:
         raise HTTPException(status_code=400, detail="El email ya está registrado.")
-    user = models.User(email=data.email, name=(data.name or ""), plan="FREE")
+
+    user = models.User(email=email_norm, name=(data.name or ""), plan="FREE")
     pwd = get_password_hash(data.password)
     if hasattr(user, "password_hash"):
         user.password_hash = pwd
@@ -134,7 +149,6 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
     db.refresh(user)
     return {"id": user.id, "email": user.email, "name": user.name, "plan": getattr(user, "plan", "FREE")}
 
-# =========================================================
 # EMERGENCIA: resetear admin desde ENV y luego borrar este endpoint
 # =========================================================
 @router.post("/_force_admin_reset", include_in_schema=True)
