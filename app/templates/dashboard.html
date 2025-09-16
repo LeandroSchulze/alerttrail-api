@@ -1,81 +1,178 @@
+<!-- app/templates/dashboard.html -->
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8"/>
   <title>AlertTrail — Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <style>
     :root {
-      --bg: #f5fbff;
-      --card: #ffffff;
-      --txt: #123;
-      --muted: #6a7a8a;
-      --primary: #1f7ae0;
-      --danger: #e24a4a;
-      --pill: #eaf2ff;
-      --shadow: 0 10px 30px rgba(0,0,0,.06);
-      --radius: 18px;
+      --bg:#0b1020; --card:#111827; --card2:#1f2937; --card3:#374151; --text:#e5e7eb; --muted:#9ca3af; --accent:#22d3ee;
+      --ok:#0ea5e9; --ok2:#0f766e; --ok3:#155e75; --ok4:#1e3a8a;
     }
-    * { box-sizing: border-box; }
-    body { margin:0; background: var(--bg); color: var(--txt); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    header { display:flex; align-items:center; justify-content:space-between; padding:18px 22px; background:#fff; box-shadow: 0 1px 8px rgba(0,0,0,.05); }
-    header .brand { font-weight:700; letter-spacing:.2px; }
-    header .right { display:flex; gap:10px; align-items:center; }
-    .pill { padding:6px 10px; border-radius:999px; background:var(--pill); color:var(--primary); font-weight:700; font-size:.85rem; }
-    .pill.free { background:#ffecef; color:#b91c1c; }
-    .btn { appearance:none; border:0; cursor:pointer; padding:10px 14px; border-radius:12px; background:var(--primary); color:#fff; font-weight:700; text-decoration:none; display:inline-block; box-shadow: 0 4px 14px rgba(31,122,224,.18); }
-    .btn.secondary { background:#0f60b6; }
-    .btn.danger { background: var(--danger); box-shadow: 0 4px 14px rgba(226,74,74,.18); }
-    main { max-width:1100px; margin: 28px auto; padding: 0 18px; }
-    h1 { margin: 0 0 6px; }
-    .muted { color: var(--muted); }
-    .grid { display:grid; gap:22px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-top:18px; }
-    .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px; }
-    .card h2 { margin:0 0 12px; font-size: 1.15rem; }
-    .actions { margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; }
+    html,body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:0}
+    a{color:var(--accent);text-decoration:none}
+    .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    .brand{display:flex;gap:10px;align-items:center}
+    .brand h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.3px}
+    .badge{font-size:12px;padding:2px 8px;border-radius:999px;background:#0f172a;color:#fff;border:1px solid #1e293b;text-transform:uppercase}
+    .nav a{margin-left:12px;opacity:.9}
+    .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+    .card{border-radius:14px;padding:18px;box-shadow:0 6px 20px rgba(0,0,0,.08)}
+    .card h4{margin:0 0 6px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+    .card .num{font-size:28px;font-weight:800;line-height:1.1}
+    .section{margin:18px 0 24px}
+    .panel{background:#ffffff10;border:1px solid #ffffff20;border-radius:14px;padding:16px}
+    ul{margin:0;padding-left:18px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #ffffff20;font-size:14px}
+    th{color:#fff;background:#111827;text-align:left}
+    .note{color:var(--muted);font-size:12px}
+    @media (max-width:860px){.cards{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">AlertTrail</div>
-    <div class="right">
-      <!-- Badge de plan -->
-      {% if (user_plan or '').upper() == 'PRO' %}
-        <span class="pill">PRO</span>
-      {% else %}
-        <span class="pill free">PLAN FREE — sin PRO</span>
-      {% endif %}
-      <!-- Cambiar plan -->
-      <a class="btn" href="/billing/checkout?plan=pro-monthly">Cambiar de plan</a>
-      <!-- Salir -->
-      <a class="btn danger" href="/auth/logout">Salir</a>
-    </div>
-  </header>
+  <div class="wrap">
 
-  <main>
-    <h1>Hola, {{ user_name }}</h1>
-    <p class="muted">Plan actual: <b>{{ (user_plan or 'FREE')|upper }}</b> — {{ user_email }}</p>
+    <header>
+      <div class="brand">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"/></svg>
+        <h1>AlertTrail</h1>
+        <span class="badge">{{ user_plan|upper }}</span>
+      </div>
+      <nav class="nav">
+        <a href="/analysis/generate-pdf">Generar PDF</a>
+        <a href="/mail/connect">Conectar mail</a>
+        <a href="/mail/scanner">Scanner de mail</a>
+        <a href="/auth/logout">Salir</a>
+      </nav>
+    </header>
 
-    <div class="grid">
-      <!-- Log Scanner -->
-      <section class="card">
-        <h2>Log Scanner</h2>
-        <p class="muted">Analizá tus logs y generá un informe en PDF.</p>
-        <div class="actions">
-          <a class="btn" href="/analysis/generate-pdf">Generar PDF</a>
+    <div class="section panel">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+        <div>
+          <div class="note">Bienvenido/a</div>
+          <div style="font-size:18px;font-weight:700">{{ user_name }}</div>
+          <div class="note">{{ user_email }}</div>
         </div>
-      </section>
-
-      <!-- Mail Scanner -->
-      <section class="card">
-        <h2>Mail Scanner</h2>
-        <p class="muted">Conectá tu casilla para analizar correos.</p>
-        <div class="actions">
-          <a class="btn" href="/mail/connect">Vincular casilla</a>
-          <a class="btn secondary" href="/mail/scanner">Mail Scanner</a>
-        </div>
-      </section>
+        <div class="note">Estado: <b>{{ user_plan|upper }}</b></div>
+      </div>
     </div>
-  </main>
+
+    {% if user_is_admin %}
+    <!-- MÉTRICAS BÁSICAS -->
+    <div class="section">
+      <div class="cards">
+        <div class="card" style="background:var(--card)">
+          <h4>Descargas (mes)</h4>
+          <div id="m_dl" class="num">–</div>
+        </div>
+        <div class="card" style="background:var(--card2)">
+          <h4>Usuarios FREE</h4>
+          <div id="m_free" class="num">–</div>
+        </div>
+        <div class="card" style="background:var(--card3)">
+          <h4>Usuarios PRO</h4>
+          <div id="m_pro" class="num">–</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MÉTRICAS EXTENDIDAS -->
+    <div class="section">
+      <div class="cards">
+        <div class="card" style="background:var(--ok2)">
+          <h4>Cuentas de empresa</h4>
+          <div id="m_companies" class="num">–</div>
+        </div>
+        <div class="card" style="background:var(--ok3)">
+          <h4>Usuarios nuevos (mes)</h4>
+          <div id="m_new" class="num">–</div>
+        </div>
+        <div class="card" style="background:var(--ok4)">
+          <h4>Activos (30 días)</h4>
+          <div id="m_active30" class="num">–</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOP DESCARGADORES + ALERTAS MAIL -->
+    <div class="section" style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
+      <div class="panel" style="background:#ffffff08">
+        <h3 style="margin:0 0 10px">Top descargadores (mes)</h3>
+        <ul id="m_top"><li class="note">(cargando…)</li></ul>
+      </div>
+      <div class="panel" style="background:#ffffff08">
+        <h3 style="margin:0 0 10px">Alertas de email (mes)</h3>
+        <div id="m_alerts_total" class="num" style="font-size:22px">–</div>
+        <div class="note">No leídas: <span id="m_alerts_unread">–</span></div>
+        <div class="note" style="margin-top:8px">Motivos más comunes:</div>
+        <ul id="m_alerts_reasons"></ul>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Accesos rápidos -->
+    <div class="section panel">
+      <h3 style="margin:0 0 10px">Acciones rápidas</h3>
+      <ul>
+        <li><a href="/analysis/generate-pdf">Analizar logs y generar PDF</a></li>
+        <li><a href="/mail/connect">Vincular una casilla de correo</a></li>
+        <li><a href="/mail/scanner">Ejecutar scanner de mail</a></li>
+      </ul>
+    </div>
+
+    <footer class="section" style="text-align:center" >
+      <span class="note">© {{ (now() if now else '') or '' }} AlertTrail</span>
+    </footer>
+
+  </div>
+
+  {% if user_is_admin %}
+  <script>
+  (async () => {
+    try {
+      // Básico
+      const r1 = await fetch('/admin/metrics', {credentials:'include'});
+      if (r1.ok) {
+        const m = await r1.json();
+        document.getElementById('m_dl').textContent   = m.downloads_this_month ?? 0;
+        document.getElementById('m_free').textContent = m.users_free ?? 0;
+        document.getElementById('m_pro').textContent  = m.users_pro ?? 0;
+      }
+
+      // Extendido
+      const r2 = await fetch('/admin/metrics/extended', {credentials:'include'});
+      if (r2.ok) {
+        const e = await r2.json();
+
+        // Usuarios / empresas
+        document.getElementById('m_companies').textContent = e.users?.companies_count ?? 0;
+        document.getElementById('m_new').textContent       = (e.users?.new_this_month ?? '—');
+        document.getElementById('m_active30').textContent  = e.downloads?.active_users_30d ?? 0;
+
+        // Top descargadores
+        const top = e.downloads?.top_downloaders || [];
+        const ul = document.getElementById('m_top');
+        ul.innerHTML = top.length
+          ? top.map(t => `<li>${t.email} — <b>${t.downloads}</b></li>`).join('')
+          : '<li class="note">(sin datos)</li>';
+
+        // Alertas de mail
+        document.getElementById('m_alerts_total').textContent  = e.mail_alerts?.this_month ?? 0;
+        document.getElementById('m_alerts_unread').textContent = e.mail_alerts?.unread ?? 0;
+        const reasons = e.mail_alerts?.reasons || {};
+        const reasonsUL = document.getElementById('m_alerts_reasons');
+        reasonsUL.innerHTML = Object.keys(reasons).length
+          ? Object.entries(reasons).map(([k,v]) => `<li>${k}: <b>${v}</b></li>`).join('')
+          : '<li class="note">(sin hallazgos)</li>';
+      }
+    } catch (e) {
+      console.warn('metrics error', e);
+    }
+  })();
+  </script>
+  {% endif %}
 </body>
 </html>
