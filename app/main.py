@@ -15,7 +15,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 app = FastAPI(title="AlertTrail API")
 
-# --- CORS laxo para frontend simple (ajustá orígenes si tenés dominio propio)
+# --- CORS (ajusta orígenes si tenés dominio propio)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,7 +31,7 @@ if os.path.isdir(STATIC_DIR):
 else:
     print("[main] aviso: no existe app/static, no se monta /static")
 
-# --- Inclusión de routers (a prueba de balas) -------------------------------
+# --- Inclusión de routers (a prueba de balas)
 def _include_router_safely(label: str, import_path: str):
     try:
         module = __import__(import_path, fromlist=["router"])
@@ -41,15 +41,15 @@ def _include_router_safely(label: str, import_path: str):
         print(f"[main] router {label} ERROR: {e}")
 
 # Obligatorios / existentes en tu proyecto
-_include_router_safely("auth",      "app.routers.auth")       # /auth/*
-_include_router_safely("billing",   "app.routers.billing")    # /billing/*
-_include_router_safely("admin",     "app.routers.admin")      # /admin/*
-_include_router_safely("analysis",  "app.routers.analysis")   # /analysis/*
-_include_router_safely("mail",      "app.routers.mail")       # ✅ /mail/*
-_include_router_safely("tasks_mail","app.routers.tasks_mail") # /tasks/mail/*
-_include_router_safely("alerts",    "app.routers.alerts")     # /alerts/*
+_include_router_safely("auth",       "app.routers.auth")        # /auth/*
+_include_router_safely("billing",    "app.routers.billing")     # /billing/*
+_include_router_safely("admin",      "app.routers.admin")       # /admin/*
+_include_router_safely("analysis",   "app.routers.analysis")    # /analysis/*
+_include_router_safely("mail",       "app.routers.mail")        # /mail/*
+_include_router_safely("tasks_mail", "app.routers.tasks_mail")  # /tasks/mail/*
+_include_router_safely("alerts",     "app.routers.alerts")      # /alerts/*
 
-# --- Rutas básicas HTML ------------------------------------------------------
+# --- Rutas básicas HTML
 @app.get("/", include_in_schema=False)
 def root():
     # Mandamos directo al dashboard (la vista ya maneja auth)
@@ -81,7 +81,7 @@ def dashboard(request: Request, db=Depends(get_db)):
     }
     return templates.TemplateResponse("dashboard.html", ctx)
 
-# --- Salud / util ------------------------------------------------------------
+# --- Salud / util
 @app.get("/health", tags=["meta"])
 def health():
     return {"ok": True, "service": "alerttrail-api"}
@@ -89,4 +89,4 @@ def health():
 # (Opcional) para comprobar qué routers quedaron montados
 @app.get("/_debug/routers", include_in_schema=False)
 def debug_routers():
-    return {"routes": [r.path for r in app.routes]}
+    return {"routes": [getattr(r, "path", str(r)) for r in app.routes]}
