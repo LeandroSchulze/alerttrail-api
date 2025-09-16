@@ -183,3 +183,39 @@ def _force_admin_reset(
 
     db.commit()
     return {"ok": True, "admin": email, "action": action}
+
+
+from sqlalchemy import func
+
+@router.get("/_debug_auth", include_in_schema=True)
+def _debug_auth(
+    email: EmailStr,
+    password: str,
+    secret: str = Query(..., description="ADMIN_SETUP_SECRET o JWT_SECRET"),
+    db: Session = Depends(get_db),
+):
+    setup_secret = os.getenv("ADMIN_SETUP_SECRET") or os.getenv("JWT_SECRET") or ""
+    if not setup_secret or secret != setup_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    # Trae TODOS los usuarios que matcheen case-insensitive
+    users = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email.lower())
+        .all()
+    )
+    out = []
+    for u in users:
+        hp = getattr(u, "hashed_password", None)
+        ph = getattr(u, "password_hash", None)
+        ok_h = verify_password(password, hp) if hp else None
+        ok_p = verify_password(password, ph) if ph else None
+        out.append({
+            "id": u.id,
+            "email": u.email,
+            "hashed_password_len": len(hp or "") if hp else None,
+            "password_hash_len": len(ph or "") if ph else None,
+            "verify_hashed_password": ok_h,
+            "verify_password_hash": ok_p,
+        })
+    return {"count": len(users), "results": out}
