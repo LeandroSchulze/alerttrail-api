@@ -213,35 +213,39 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             )
 
         stage = "db-commit"
-        acct = db.query(MailAccount).filter(
-            MailAccount.user_id == user.id,
-            MailAccount.email == email_addr
-        ).first()
+        # --- IMPORTANTE: todo el bloque DB va dentro del try principal ---
+        try:
+            acct = db.query(MailAccount).filter(
+                MailAccount.user_id == user.id,
+                MailAccount.email == email_addr
+            ).first()
 
-if acct is None:
-    acct = MailAccount(
-        user_id=user.id,
-        email=email_addr,
-        imap_host=imap_server,          # compat legado
-        imap_server=imap_server,
-        imap_port=imap_port,
-        use_ssl=use_ssl,
-        enc_blob=blob,
-        enc_password=blob,              # ← compat: satisfacemos NOT NULL
-    )
-    db.add(acct)
-else:
-    acct.imap_host = imap_server       # compat legado
-    acct.imap_server = imap_server
-    acct.imap_port = imap_port
-    acct.use_ssl = use_ssl
-    acct.enc_blob = blob
-    acct.enc_password = blob           # ← compat: satisfacemos NOT NULL
-    db.add(acct)
+            if acct is None:
+                acct = MailAccount(
+                    user_id=user.id,
+                    email=email_addr,
+                    imap_host=imap_server,          # compat legado
+                    imap_server=imap_server,
+                    imap_port=imap_port,
+                    use_ssl=use_ssl,
+                    enc_blob=blob,
+                    enc_password=blob,              # ← compat: satisfacemos NOT NULL
+                )
+                db.add(acct)
+            else:
+                acct.imap_host = imap_server       # compat legado
+                acct.imap_server = imap_server
+                acct.imap_port = imap_port
+                acct.use_ssl = use_ssl
+                acct.enc_blob = blob
+                acct.enc_password = blob           # ← compat: satisfacemos NOT NULL
 
-db.commit()
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
-   return templates.TemplateResponse(
+        return templates.TemplateResponse(
             "mail_connect.html",
             {"request": request, "ok": True, "email_addr": email_addr},
         )
@@ -296,7 +300,6 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
                         reason="; ".join(reasons),
                     ))
                     db.commit()
-                findings.append((subject, sender, reasons))
         M.logout()
     except Exception as e:
         return HTMLResponse(f"<h2>Error escaneando: {e}</h2>", status_code=500)
