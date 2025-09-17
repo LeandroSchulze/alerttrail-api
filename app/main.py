@@ -13,7 +13,6 @@ from app.database import SessionLocal, engine
 from app.security import (
     issue_access_cookie,
     get_current_user_cookie,
-    decode_token,
     get_password_hash,
     verify_password,
 )
