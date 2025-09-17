@@ -185,53 +185,70 @@ except Exception as e:
 
 try:
     from app.routers import analysis as analysis_router_mod
-    app.include_router(analysis_router_mod.router)      # /analysis/*
+    app.include_router(analysis_router_mod.router)
 except Exception as e:
     print("No pude cargar app.routers.analysis:", e)
 
 try:
     from app.routers import mail as mail_router_mod
-    app.include_router(mail_router_mod.router)          # /mail/*
+    app.include_router(mail_router_mod.router)
 except Exception as e:
     print("No pude cargar app.routers.mail:", e)
 
 try:
     from app.routers import admin as admin_router_mod
-    app.include_router(admin_router_mod.router)         # /stats, etc.
+    app.include_router(admin_router_mod.router)
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
-# === Alias útiles ===
+# === Fallbacks por si el router de auth no se montó ===
 def _exists(p: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == p for r in app.routes)
 
-if _exists("/analysis/generate-pdf") and not _exists("/analysis/generate_pdf"):
-    @app.get("/analysis/generate_pdf")
-    def _alias_gen_pdf():
-        return RedirectResponse(url="/analysis/generate-pdf", status_code=307)
+if not _exists("/auth/login"):
+    @app.get("/auth/login", response_class=HTMLResponse)
+    def _fb_auth_login(request: Request):
+        try:
+            return templates.TemplateResponse("login.html", {"request": request, "error": None})
+        except TemplateNotFound:
+            html = """<!doctype html><meta charset='utf-8'>
+            <form method="post" action="/auth/login/web" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+              <h2>Iniciar sesión</h2>
+              <input name="email" placeholder="Email" required>
+              <input name="password" type="password" placeholder="Contraseña" required>
+              <button>Entrar</button>
+            </form>"""
+            return HTMLResponse(html)
 
-if _exists("/stats") and not _exists("/admin/stats"):
-    @app.get("/admin/stats")
-    def _alias_admin_stats():
-        return RedirectResponse(url="/stats", status_code=307)
+if not _exists("/auth/login/web"):
+    @app.post("/auth/login/web", include_in_schema=False)
+    def _fb_auth_login_web(
+        response: Response,
+        email: str = Form(...),
+        password: str = Form(...),
+        db: Session = Depends(get_db),
+    ):
+        user = db.query(User).filter(User.email.ilike(email.strip().lower())).first()
+        hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+        if not user or not verify_password(password, hp or ""):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        issue_access_cookie(response, {"sub": str(user.id)})
+        return RedirectResponse(url="/dashboard", status_code=303)
 
-if _exists("/mail/scanner") and not _exists("/mail/scan"):
-    @app.get("/mail/scan")
-    def _alias_mail_scan():
-        return RedirectResponse(url="/mail/scanner", status_code=307)
-if _exists("/mail/scan") and not _exists("/mail/scanner"):
-    @app.get("/mail/scanner")
-    def _alias_mail_scanner():
-        return RedirectResponse(url="/mail/scan", status_code=307)
+if not _exists("/auth/logout"):
+    @app.get("/auth/logout")
+    def _fb_auth_logout():
+        r = RedirectResponse(url="/auth/login", status_code=302)
+        r.delete_cookie("access_token", path="/")
+        return r
 
-# === Handler global: 401/403 HTML -> login (evita loops) ===
-@app.exception_handler(HTTPException)
-async def http_exc_handler(request: Request, exc: HTTPException):
-    if exc.status_code in (401, 403) and "text/html" in request.headers.get("accept", ""):
-        path = request.url.path or ""
-        if not (path.startswith("/auth") or path.startswith("/static") or path.startswith("/docs")):
-            return RedirectResponse(url="/auth/login", status_code=302)
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+if not _exists("/auth/clear"):
+    @app.get("/auth/clear", include_in_schema=False)
+    def _fb_auth_clear():
+        r = HTMLResponse("ok")
+        r.delete_cookie("access_token", path="/")
+        return r
+
 
 # === Health & HEAD ===
 @app.get("/health")
