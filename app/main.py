@@ -34,7 +34,14 @@ def get_db():
     finally:
         db.close()
 
-# === OpenAPI con cookie ===
+# === Usuario opcional: NO lanza si no hay cookie ===
+def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
+    try:
+        return get_current_user_cookie(request, db)
+    except Exception:
+        return None
+
+# === OpenAPI: cookieAuth ===
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -58,9 +65,9 @@ app.openapi = custom_openapi
 # === Helpers ===
 def db_get(db: Session, model, pk):
     try:
-        return db.get(model, pk)           # SA 2.x
+        return db.get(model, pk)           # SQLAlchemy 2.x
     except Exception:
-        return db.query(model).get(pk)     # SA 1.x
+        return db.query(model).get(pk)     # SQLAlchemy 1.x
 
 def truthy(v):
     if isinstance(v, bool): return v
@@ -70,18 +77,27 @@ def truthy(v):
 
 # === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request, user=Depends(get_current_user_cookie)):
+def home(request: Request, user=Depends(get_current_user_optional)):
     if user:
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
-    return templates.TemplateResponse("landing.html", {"request": request})
+    # landing
+    try:
+        return templates.TemplateResponse("landing.html", {"request": request})
+    except TemplateNotFound:
+        html = """<!doctype html><meta charset='utf-8'>
+        <div style="font-family:system-ui;padding:24px">
+          <h1>AlertTrail</h1>
+          <p>Bienvenido. <a href="/auth/login">Iniciar sesión</a> · <a href="/register">Crear cuenta</a> · <a href="/docs">API Docs</a></p>
+        </div>"""
+        return HTMLResponse(html)
 
-# Alias clásico: que /login apunte al login visual (si preferís usar /auth/login)
-@app.get("/login", response_class=HTMLResponse)
+# Alias: unificar /login -> /auth/login
+@app.get("/login", include_in_schema=False)
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-# Post de /login (por compatibilidad con tu front antiguo)
-@app.post("/login")
+# Compatibilidad: POST /login (formulario antiguo)
+@app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == email.lower()).first()
     if not user or not verify_password(password, getattr(user, "hashed_password", "") or getattr(user, "password_hash", "")):
@@ -91,7 +107,18 @@ def login_action(response: Response, email: str = Form(...), password: str = For
 
 @app.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
-    return templates.TemplateResponse("register.html", {"request": request})
+    try:
+        return templates.TemplateResponse("register.html", {"request": request})
+    except TemplateNotFound:
+        html = """<!doctype html><meta charset='utf-8'>
+        <form method="post" action="/register" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+          <h2>Crear cuenta</h2>
+          <input name="name" placeholder="Nombre" required>
+          <input name="email" placeholder="Email" required>
+          <input name="password" type="password" placeholder="Contraseña" required>
+          <button>Registrarme</button>
+        </form>"""
+        return HTMLResponse(html)
 
 @app.post("/register")
 def register_action(
@@ -118,19 +145,23 @@ def register_action(
 @app.get("/logout")
 def logout(_response: Response):
     r = RedirectResponse(url="/")
-    r.delete_cookie("access_token")
+    r.delete_cookie("access_token", path="/")
     return r
 
 # === Dashboard protegido ===
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
+def dashboard(
+    request: Request,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_user_optional),
+):
     if not current:
         return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
 
-    user = db_get(db, User, current.id)
+    user = db_get(db, User, getattr(current, "id", None))
     if not user:
         r = RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
-        r.delete_cookie("access_token")
+        r.delete_cookie("access_token", path="/")
         return r
 
     role = (getattr(user, "role", "") or "").lower()
@@ -145,32 +176,32 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
           <p><a href="/logout">Salir</a></p></div>"""
         return HTMLResponse(html)
 
-# === Routers ===
+# === Montar routers ===
 try:
     from app.routers import auth as auth_router_mod
-    app.include_router(auth_router_mod.router)          # <- FALTABA
+    app.include_router(auth_router_mod.router)          # /auth/*
 except Exception as e:
     print("No pude cargar app.routers.auth:", e)
 
 try:
     from app.routers import analysis as analysis_router_mod
-    app.include_router(analysis_router_mod.router)
+    app.include_router(analysis_router_mod.router)      # /analysis/*
 except Exception as e:
     print("No pude cargar app.routers.analysis:", e)
 
 try:
     from app.routers import mail as mail_router_mod
-    app.include_router(mail_router_mod.router)
+    app.include_router(mail_router_mod.router)          # /mail/*
 except Exception as e:
     print("No pude cargar app.routers.mail:", e)
 
 try:
     from app.routers import admin as admin_router_mod
-    app.include_router(admin_router_mod.router)
+    app.include_router(admin_router_mod.router)         # /stats, etc.
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
-# === Alias amigables ===
+# === Alias útiles ===
 def _exists(p: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == p for r in app.routes)
 
@@ -193,15 +224,25 @@ if _exists("/mail/scan") and not _exists("/mail/scanner"):
     def _alias_mail_scanner():
         return RedirectResponse(url="/mail/scan", status_code=307)
 
-# === Handler global: 401/403 en navegador -> login
+# === Handler global: 401/403 HTML -> login (evita loops) ===
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
-    if exc.status_code in (401, 403):
-        if "text/html" in request.headers.get("accept", ""):
+    if exc.status_code in (401, 403) and "text/html" in request.headers.get("accept", ""):
+        path = request.url.path or ""
+        if not (path.startswith("/auth") or path.startswith("/static") or path.startswith("/docs")):
             return RedirectResponse(url="/auth/login", status_code=302)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-# === Log de rutas ===
+# === Health & HEAD ===
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.head("/")
+def head_root():
+    return Response(status_code=200)
+
+# === Log de rutas al iniciar ===
 @app.on_event("startup")
 def _log_routes():
     paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
