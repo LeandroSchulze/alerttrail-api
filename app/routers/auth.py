@@ -1,11 +1,14 @@
 # app/routers/auth.py
 import os
-from fastapi import APIRouter, Depends, HTTPException, Response, Form, status, Request, Query
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi import (
+    APIRouter, Depends, HTTPException, Response, Form,
+    status, Request, Query
+)
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
 from sqlalchemy import func
+from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app import models
@@ -47,18 +50,21 @@ def _set_cookie(resp: Response, token: str) -> None:
         secure=True,
         samesite="lax",
         path="/",
-        # domain="alerttrail.com",  # descomenta si API/Front van en dominios distintos
+        # domain="alerttrail.com",  # descomentar si API/Front van en dominios distintos
         max_age=60 * 60 * 24 * 7,  # 7 días
     )
 
 # =========================================================
-# Login HTML (GET) — muestra formulario
+# Login HTML (GET) — evita loops verificando en DB
 # =========================================================
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user_cookie(request, db)
-    if user:
-        return RedirectResponse(url="/dashboard", status_code=302)
+    # Puede existir una cookie vieja/inválida → verificamos en DB
+    current = get_current_user_cookie(request, db)
+    if current:
+        exists = db.query(models.User).filter(models.User.id == current.id).first()
+        if exists:
+            return RedirectResponse(url="/dashboard", status_code=302)
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 # =========================================================
@@ -105,6 +111,13 @@ def logout_get():
 @router.post("/logout")
 def logout_post():
     resp = RedirectResponse(url="/auth/login", status_code=302)
+    resp.delete_cookie("access_token", path="/")
+    return resp
+
+# Opcional: limpiar cookie rápido si alguna vez queda “sucia”
+@router.get("/clear", include_in_schema=False)
+def clear_cookie():
+    resp = PlainTextResponse("ok")
     resp.delete_cookie("access_token", path="/")
     return resp
 
