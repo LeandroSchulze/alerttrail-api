@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
@@ -20,7 +20,7 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
-# === Static & Templates (autodetecta si están en raíz o dentro de app/) ===
+# === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -34,7 +34,7 @@ def get_db():
     finally:
         db.close()
 
-# === OpenAPI: Swagger usa cookie JWT (sin “Authorize”) ===
+# === OpenAPI con cookie ===
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -55,7 +55,7 @@ def custom_openapi():
     return schema
 app.openapi = custom_openapi
 
-# === Helpers SA 1.x/2.x + admin ===
+# === Helpers ===
 def db_get(db: Session, model, pk):
     try:
         return db.get(model, pk)           # SA 2.x
@@ -68,21 +68,23 @@ def truthy(v):
     if isinstance(v, str):  return v.strip().lower() in {"1","true","yes","y","on"}
     return False
 
-# === Rutas públicas (landing/login/register/logout) ===
+# === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_cookie)):
     if user:
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse("landing.html", {"request": request})
 
+# Alias clásico: que /login apunte al login visual (si preferís usar /auth/login)
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+def login_alias():
+    return RedirectResponse(url="/auth/login", status_code=302)
 
+# Post de /login (por compatibilidad con tu front antiguo)
 @app.post("/login")
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(password, user.hashed_password):
+    user = db.query(User).filter(User.email == email.lower()).first()
+    if not user or not verify_password(password, getattr(user, "hashed_password", "") or getattr(user, "password_hash", "")):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
     issue_access_cookie(response, {"sub": str(user.id)})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
@@ -123,11 +125,11 @@ def logout(_response: Response):
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
     if not current:
-        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+        return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
 
     user = db_get(db, User, current.id)
     if not user:
-        r = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+        r = RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
         r.delete_cookie("access_token")
         return r
 
@@ -143,42 +145,45 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
           <p><a href="/logout">Salir</a></p></div>"""
         return HTMLResponse(html)
 
-# === Incluir routers reales SIN prefix extra (evita doble prefijo) ===
+# === Routers ===
+try:
+    from app.routers import auth as auth_router_mod
+    app.include_router(auth_router_mod.router)          # <- FALTABA
+except Exception as e:
+    print("No pude cargar app.routers.auth:", e)
+
 try:
     from app.routers import analysis as analysis_router_mod
-    app.include_router(analysis_router_mod.router)     # /analysis/generate-pdf
+    app.include_router(analysis_router_mod.router)
 except Exception as e:
     print("No pude cargar app.routers.analysis:", e)
 
 try:
     from app.routers import mail as mail_router_mod
-    app.include_router(mail_router_mod.router)         # /mail/connect, /mail/scanner
+    app.include_router(mail_router_mod.router)
 except Exception as e:
     print("No pude cargar app.routers.mail:", e)
 
 try:
     from app.routers import admin as admin_router_mod
-    app.include_router(admin_router_mod.router)        # /stats  (tu admin expone así)
+    app.include_router(admin_router_mod.router)
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
-# === Alias amigables (por si hay links viejos) ===
+# === Alias amigables ===
 def _exists(p: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == p for r in app.routes)
 
-# /analysis/generate_pdf  -> /analysis/generate-pdf
 if _exists("/analysis/generate-pdf") and not _exists("/analysis/generate_pdf"):
     @app.get("/analysis/generate_pdf")
     def _alias_gen_pdf():
         return RedirectResponse(url="/analysis/generate-pdf", status_code=307)
 
-# /admin/stats -> /stats
 if _exists("/stats") and not _exists("/admin/stats"):
     @app.get("/admin/stats")
     def _alias_admin_stats():
         return RedirectResponse(url="/stats", status_code=307)
 
-# /mail/scan -> /mail/scanner  (y viceversa si aplica)
 if _exists("/mail/scanner") and not _exists("/mail/scan"):
     @app.get("/mail/scan")
     def _alias_mail_scan():
@@ -188,7 +193,15 @@ if _exists("/mail/scan") and not _exists("/mail/scanner"):
     def _alias_mail_scanner():
         return RedirectResponse(url="/mail/scan", status_code=307)
 
-# === Log de rutas al iniciar (útil en Render) ===
+# === Handler global: 401/403 en navegador -> login
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    if exc.status_code in (401, 403):
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse(url="/auth/login", status_code=302)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+# === Log de rutas ===
 @app.on_event("startup")
 def _log_routes():
     paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
