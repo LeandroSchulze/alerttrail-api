@@ -1,94 +1,140 @@
-# app/main.py
-import os
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.staticfiles import StaticFiles
+from fastapi.openapi.utils import get_openapi
+from sqlalchemy.orm import Session
+from datetime import datetime
+import os
 
-from app.database import get_db
-from app.security import get_current_user_cookie
-
-APP_DIR = os.path.dirname(__file__)
-TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
-
-app = FastAPI(title="AlertTrail API")
-
-# --- CORS (ajustá allow_origins si tenés dominio propio)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# ==== Importa tu stack existente ====
+# Ajustá estos imports a tu proyecto real
+from app.database import SessionLocal, engine
+from app.security import (
+    issue_access_cookie,
+    get_current_user_cookie,
+    decode_token,
+    get_password_hash,
+    verify_password,
 )
-
-# --- Montar /static si existe
-STATIC_DIR = os.path.join(APP_DIR, "static")
-if os.path.isdir(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-else:
-    print("[main] aviso: no existe app/static, no se monta /static")
-
-# --- Montar /reports si existe el directorio de salida
-REPORTS_DIR = "/var/data/reports"
+from app.models import User  # Debe tener: id, name, email, hashed_password, role, plan, created_at
+# Routers existentes (si los tenés)
 try:
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
-except Exception as e:
-    print(f"[main] aviso montando /reports: {e}")
+    from app.routers import admin as admin_router  # el que te paso más abajo
+except Exception:
+    admin_router = None
 
-# --- Inclusión de routers con protección ante fallos de import
-def _include_router_safely(label: str, import_path: str):
+app = FastAPI(title="AlertTrail API", version="1.0.0")
+
+# Static & templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# ===== DB dependency =====
+def get_db():
+    db = SessionLocal()
     try:
-        module = __import__(import_path, fromlist=["router"])
-        app.include_router(getattr(module, "router"))
-        print(f"[main] router {label} OK")
-    except Exception as e:
-        print(f"[main] router {label} ERROR: {e}")
+        yield db
+    finally:
+        db.close()
 
-# Routers (agregá/quitá según tu proyecto)
-_include_router_safely("auth",         "app.routers.auth")          # /auth/*
-_include_router_safely("billing",      "app.routers.billing")       # /billing/*
-_include_router_safely("admin",        "app.routers.admin")         # /admin/* (si lo usás)
-_include_router_safely("analysis",     "app.routers.analysis")      # /analysis/*
-_include_router_safely("mail",         "app.routers.mail")          # /mail/*
-_include_router_safely("tasks_mail",   "app.routers.tasks_mail")    # /tasks/mail/*
-_include_router_safely("alerts",       "app.routers.alerts")        # /alerts/*
-_include_router_safely("admin_metrics","app.routers.admin_metrics") # /admin/metrics*
+# ===== OpenAPI: usar cookieAuth automáticamente en Swagger =====
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description="API de AlertTrail",
+        routes=app.routes,
+    )
+    components = openapi_schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    components["cookieAuth"] = {"type": "apiKey", "in": "cookie", "name": "access_token"}
+    # aplica cookieAuth por defecto
+    for path in openapi_schema.get("paths", {}).values():
+        for method in path.values():
+            if isinstance(method, dict):
+                method.setdefault("security", [{"cookieAuth": []}])
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
 
-# --- Rutas básicas HTML
-@app.get("/", include_in_schema=False)
-def root():
-    return RedirectResponse(url="/dashboard", status_code=302)
+app.openapi = custom_openapi
 
-@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+# ====== Rutas públicas (sin necesidad de admin) ======
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request, user=Depends(get_current_user_cookie)):
+    # Si está logueado, lo llevo al dashboard; si no, landing simple con links
+    if user:
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    return templates.TemplateResponse("landing.html", {"request": request})
+
+@app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    """Render del login HTML (el form postea a /auth/login/web)."""
     return templates.TemplateResponse("login.html", {"request": request})
 
-@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-def dashboard(request: Request, db=Depends(get_db)):
-    """Dashboard (requiere cookie)."""
-    user = get_current_user_cookie(request, db)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
+@app.post("/login")
+def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Credenciales inválidas")
+    # emitir cookie JWT HTTPOnly
+    issue_access_cookie(response, {"sub": str(user.id)})
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
-    ctx = {
-        "request": request,
-        "user_name": getattr(user, "name", "") or "Usuario",
-        "user_email": getattr(user, "email", "") or "",
-        "user_plan": (getattr(user, "plan", "") or "free").lower(),
-        "user_is_admin": bool(getattr(user, "is_admin", False)),
-    }
-    return templates.TemplateResponse("dashboard.html", ctx)
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
 
-# --- Salud / util
-@app.get("/health", tags=["meta"])
-def health():
-    return {"ok": True, "service": "alerttrail-api"}
+@app.post("/register")
+def register_action(
+    response: Response,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    # Evitar duplicados
+    exists = db.query(User).filter(User.email == email).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Ese email ya está registrado")
+    user = User(
+        name=name.strip() or "Usuario",
+        email=email.lower(),
+        hashed_password=get_password_hash(password),
+        role="user",
+        plan="FREE",
+        created_at=datetime.utcnow(),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    issue_access_cookie(response, {"sub": str(user.id)})
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
-@app.get("/_debug/routers", include_in_schema=False)
-def debug_routers():
-    return {"routes": [getattr(r, "path", str(r)) for r in app.routes]}
+@app.get("/logout")
+def logout(response: Response):
+    # Invalida la cookie eliminándola
+    response = RedirectResponse(url="/")
+    response.delete_cookie("access_token")
+    return response
+
+# ====== Dashboard protegido por cookie ======
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
+    if not current:
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+
+    # Datos básicos del usuario para la vista
+    user = db.query(User).get(current.id)
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "current_user": user,
+        },
+    )
+
+# ====== Incluye router de Admin (stats) ======
+if admin_router:
+    app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
