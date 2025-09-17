@@ -7,7 +7,6 @@
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    /* Tema oscuro clarito con “fondo de agua” */
     body {
       margin: 0;
       font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -105,9 +104,7 @@
             boxes[1].textContent = data.usuarios_free ?? '0';
             boxes[2].textContent = data.usuarios_pro ?? '0';
             document.getElementById('range').textContent = `Rango: ${data.desde?.slice(0,10)} → ${data.hasta?.slice(0,10)}`;
-          }catch(e){
-            console.error(e);
-          }
+          }catch(e){ console.error(e); }
         }
         document.getElementById('refresh').addEventListener('click', loadStats);
         loadStats();
