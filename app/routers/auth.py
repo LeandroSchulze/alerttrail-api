@@ -15,7 +15,7 @@ from app import models
 from app.security import (
     get_password_hash,
     verify_password,
-    create_access_token_from_sub,
+    issue_access_cookie,          # <- usamos la misma función que tu main
     get_current_user_cookie,
 )
 
@@ -37,29 +37,11 @@ class LoginIn(BaseModel):
     email: EmailStr
     password: str
 
-# ---------------- Helpers ----------------
-def _get_user_password_hash(u: models.User) -> str:
-    # Soporta modelos con password_hash o hashed_password
-    return getattr(u, "password_hash", None) or getattr(u, "hashed_password", "") or ""
-
-def _set_cookie(resp: Response, token: str) -> None:
-    resp.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
-        # domain="alerttrail.com",  # descomentar si API/Front van en dominios distintos
-        max_age=60 * 60 * 24 * 7,  # 7 días
-    )
-
 # =========================================================
 # Login HTML (GET) — evita loops verificando en DB
 # =========================================================
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, db: Session = Depends(get_db)):
-    # Puede existir una cookie vieja/inválida → verificamos en DB
     current = get_current_user_cookie(request, db)
     if current:
         exists = db.query(models.User).filter(models.User.id == current.id).first()
@@ -69,6 +51,7 @@ def login_page(request: Request, db: Session = Depends(get_db)):
 
 # =========================================================
 # Login JSON (POST) — para Swagger/Postman
+#   -> setea cookie JWT con sub = user.id
 # =========================================================
 @router.post("/login", response_model=dict)
 def login_json(payload: LoginIn, db: Session = Depends(get_db)):
@@ -78,25 +61,24 @@ def login_json(payload: LoginIn, db: Session = Depends(get_db)):
         .filter(func.lower(models.User.email) == email_norm)
         .first()
     )
-    if not user or not verify_password(payload.password, _get_user_password_hash(user)):
+    if not user or not verify_password(payload.password, getattr(user, "password_hash", None) or getattr(user, "hashed_password", "")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
 
-    token = create_access_token_from_sub(user.email)
     resp = JSONResponse({"ok": True})
-    _set_cookie(resp, token)
+    issue_access_cookie(resp, {"sub": str(user.id)})   # <- clave del fix
     return resp
 
 # =========================================================
 # Login desde formulario web (POST del HTML)
+#   -> setea cookie JWT con sub = user.id
 # =========================================================
 @router.post("/login/web", include_in_schema=False)
 def login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(func.lower(models.User.email) == email.lower()).first()
-    if not user or not verify_password(password, _get_user_password_hash(user)):
+    if not user or not verify_password(password, getattr(user, "password_hash", None) or getattr(user, "hashed_password", "")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
-    token = create_access_token_from_sub(user.email)
     resp = RedirectResponse(url="/dashboard", status_code=303)
-    _set_cookie(resp, token)
+    issue_access_cookie(resp, {"sub": str(user.id)})   # <- clave del fix
     return resp
 
 # =========================================================
@@ -168,11 +150,6 @@ def _force_admin_reset(
     secret: str = Query(..., description="Debe coincidir con ADMIN_SETUP_SECRET (o JWT_SECRET)"),
     db: Session = Depends(get_db),
 ):
-    """
-    Crea/actualiza el admin usando env:
-      ADMIN_EMAIL, ADMIN_PASS, ADMIN_NAME
-    Protegido por ADMIN_SETUP_SECRET (o JWT_SECRET). Eliminar luego de usar.
-    """
     setup_secret = os.getenv("ADMIN_SETUP_SECRET") or os.getenv("JWT_SECRET") or ""
     if not setup_secret or secret != setup_secret:
         raise HTTPException(status_code=403, detail="forbidden")
@@ -186,23 +163,18 @@ def _force_admin_reset(
     pwd_hash = get_password_hash(password)
     user = db.query(models.User).filter(models.User.email == email).first()
     if user:
-        if hasattr(user, "hashed_password"):
-            user.hashed_password = pwd_hash
-        if hasattr(user, "password_hash"):
-            user.password_hash = pwd_hash
-        if hasattr(user, "is_admin"):  user.is_admin = True
-        if hasattr(user, "is_active"): user.is_active = True
-        if not getattr(user, "name", "") and name:
-            user.name = name
+        if hasattr(user, "hashed_password"): user.hashed_password = pwd_hash
+        if hasattr(user, "password_hash"):   user.password_hash = pwd_hash
+        if hasattr(user, "is_admin"):        user.is_admin = True
+        if hasattr(user, "is_active"):       user.is_active = True
+        if not getattr(user, "name", "") and name: user.name = name
         action = "actualizado"
     else:
         user = models.User(email=email, name=name)
-        if hasattr(user, "hashed_password"):
-            user.hashed_password = pwd_hash
-        if hasattr(user, "password_hash"):
-            user.password_hash = pwd_hash
-        if hasattr(user, "is_admin"):  user.is_admin = True
-        if hasattr(user, "is_active"): user.is_active = True
+        if hasattr(user, "hashed_password"): user.hashed_password = pwd_hash
+        if hasattr(user, "password_hash"):   user.password_hash = pwd_hash
+        if hasattr(user, "is_admin"):        user.is_admin = True
+        if hasattr(user, "is_active"):       user.is_active = True
         db.add(user)
         action = "creado"
 
