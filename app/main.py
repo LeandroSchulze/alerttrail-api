@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from jinja2 import TemplateNotFound
 from datetime import datetime
 from pathlib import Path
@@ -34,14 +35,14 @@ def get_db():
     finally:
         db.close()
 
-# === Usuario opcional: NO lanza si no hay cookie ===
+# === Usuario opcional: NUNCA lanza excepción ===
 def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
     try:
         return get_current_user_cookie(request, db)
     except Exception:
         return None
 
-# === OpenAPI: cookieAuth ===
+# === OpenAPI con cookieAuth ===
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -80,7 +81,6 @@ def truthy(v):
 def home(request: Request, user=Depends(get_current_user_optional)):
     if user:
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
-    # landing
     try:
         return templates.TemplateResponse("landing.html", {"request": request})
     except TemplateNotFound:
@@ -91,7 +91,7 @@ def home(request: Request, user=Depends(get_current_user_optional)):
         </div>"""
         return HTMLResponse(html)
 
-# Alias: unificar /login -> /auth/login
+# Alias clásico: /login -> /auth/login
 @app.get("/login", include_in_schema=False)
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
@@ -99,8 +99,10 @@ def login_alias():
 # Compatibilidad: POST /login (formulario antiguo)
 @app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower()).first()
-    if not user or not verify_password(password, getattr(user, "hashed_password", "") or getattr(user, "password_hash", "")):
+    email_norm = email.strip().lower()
+    user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+    hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+    if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
     issue_access_cookie(response, {"sub": str(user.id)})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
@@ -114,7 +116,7 @@ def register_page(request: Request):
         <form method="post" action="/register" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
           <h2>Crear cuenta</h2>
           <input name="name" placeholder="Nombre" required>
-          <input name="email" placeholder="Email" required>
+          <input name="email" type="email" placeholder="Email" required>
           <input name="password" type="password" placeholder="Contraseña" required>
           <button>Registrarme</button>
         </form>"""
@@ -128,11 +130,12 @@ def register_action(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    if db.query(User).filter(User.email == email.lower()).first():
+    email_norm = email.strip().lower()
+    if db.query(User).filter(func.lower(User.email) == email_norm).first():
         raise HTTPException(status_code=400, detail="Ese email ya está registrado")
     user = User(
         name=(name or "").strip() or "Usuario",
-        email=email.lower(),
+        email=email_norm,
         hashed_password=get_password_hash(password),
         role="user",
         plan="FREE",
@@ -185,27 +188,35 @@ except Exception as e:
 
 try:
     from app.routers import analysis as analysis_router_mod
-    app.include_router(analysis_router_mod.router)
+    app.include_router(analysis_router_mod.router)      # /analysis/*
 except Exception as e:
     print("No pude cargar app.routers.analysis:", e)
 
 try:
     from app.routers import mail as mail_router_mod
-    app.include_router(mail_router_mod.router)
+    app.include_router(mail_router_mod.router)          # /mail/*
 except Exception as e:
     print("No pude cargar app.routers.mail:", e)
 
 try:
     from app.routers import admin as admin_router_mod
-    app.include_router(admin_router_mod.router)
+    app.include_router(admin_router_mod.router)         # /stats, etc.
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
-# === Fallbacks por si el router de auth no se montó ===
-def _exists(p: str) -> bool:
-    return any(isinstance(r, APIRoute) and r.path == p for r in app.routes)
+# === Fallbacks por si /auth/* no quedó montado ===
+def _route_exists(path: str) -> bool:
+    return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
-if not _exists("/auth/login"):
+def _route_has_method(path: str, method: str) -> bool:
+    for r in app.routes:
+        if isinstance(r, APIRoute) and r.path == path:
+            if r.methods and method.upper() in r.methods:
+                return True
+    return False
+
+# GET /auth/login
+if not _route_exists("/auth/login"):
     @app.get("/auth/login", response_class=HTMLResponse)
     def _fb_auth_login(request: Request):
         try:
@@ -214,13 +225,31 @@ if not _exists("/auth/login"):
             html = """<!doctype html><meta charset='utf-8'>
             <form method="post" action="/auth/login/web" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
               <h2>Iniciar sesión</h2>
-              <input name="email" placeholder="Email" required>
+              <input name="email" type="email" placeholder="Email" required>
               <input name="password" type="password" placeholder="Contraseña" required>
               <button>Entrar</button>
             </form>"""
             return HTMLResponse(html)
 
-if not _exists("/auth/login/web"):
+# POST /auth/login (compat formularios que apuntan aquí)
+if not _route_has_method("/auth/login", "POST"):
+    @app.post("/auth/login", include_in_schema=False)
+    def _fb_auth_login_post(
+        response: Response,
+        email: str = Form(...),
+        password: str = Form(...),
+        db: Session = Depends(get_db),
+    ):
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+        hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+        if not user or not verify_password(password, hp or ""):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        issue_access_cookie(response, {"sub": str(user.id)})
+        return RedirectResponse(url="/dashboard", status_code=303)
+
+# POST /auth/login/web (form recomendado)
+if not _route_exists("/auth/login/web"):
     @app.post("/auth/login/web", include_in_schema=False)
     def _fb_auth_login_web(
         response: Response,
@@ -228,27 +257,61 @@ if not _exists("/auth/login/web"):
         password: str = Form(...),
         db: Session = Depends(get_db),
     ):
-        user = db.query(User).filter(User.email.ilike(email.strip().lower())).first()
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(func.lower(User.email) == email_norm).first()
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
         issue_access_cookie(response, {"sub": str(user.id)})
         return RedirectResponse(url="/dashboard", status_code=303)
 
-if not _exists("/auth/logout"):
+# GET /auth/logout
+if not _route_exists("/auth/logout"):
     @app.get("/auth/logout")
     def _fb_auth_logout():
         r = RedirectResponse(url="/auth/login", status_code=302)
         r.delete_cookie("access_token", path="/")
         return r
 
-if not _exists("/auth/clear"):
+# GET /auth/clear (helper)
+if not _route_exists("/auth/clear"):
     @app.get("/auth/clear", include_in_schema=False)
     def _fb_auth_clear():
         r = HTMLResponse("ok")
         r.delete_cookie("access_token", path="/")
         return r
 
+# === Alias útiles ===
+def _exists(p: str) -> bool:
+    return any(isinstance(r, APIRoute) and r.path == p for r in app.routes)
+
+if _exists("/analysis/generate-pdf") and not _exists("/analysis/generate_pdf"):
+    @app.get("/analysis/generate_pdf")
+    def _alias_gen_pdf():
+        return RedirectResponse(url="/analysis/generate-pdf", status_code=307)
+
+if _exists("/stats") and not _exists("/admin/stats"):
+    @app.get("/admin/stats")
+    def _alias_admin_stats():
+        return RedirectResponse(url="/stats", status_code=307)
+
+if _exists("/mail/scanner") and not _exists("/mail/scan"):
+    @app.get("/mail/scan")
+    def _alias_mail_scan():
+        return RedirectResponse(url="/mail/scanner", status_code=307)
+if _exists("/mail/scan") and not _exists("/mail/scanner"):
+    @app.get("/mail/scanner")
+    def _alias_mail_scanner():
+        return RedirectResponse(url="/mail/scan", status_code=307)
+
+# === Handler global: 401/403 HTML -> login (evita loops) ===
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    if exc.status_code in (401, 403) and "text/html" in request.headers.get("accept", ""):
+        path = request.url.path or ""
+        if not (path.startswith("/auth") or path.startswith("/static") or path.startswith("/docs")):
+            return RedirectResponse(url="/auth/login", status_code=302)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 # === Health & HEAD ===
 @app.get("/health")
