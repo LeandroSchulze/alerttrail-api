@@ -34,7 +34,10 @@
     .grid { display:grid; gap:16px; }
     .grid.cols-2 { grid-template-columns: 1.2fr .8fr; }
     .muted { color:#bfe6fb; opacity:.8; }
-    .btn { display:inline-block; padding:10px 14px; border-radius:10px; background:#0ea5e9; color:#03131c; font-weight:700; text-decoration:none; }
+    .btn {
+      display:inline-block; padding:10px 14px; border-radius:10px;
+      background:#0ea5e9; color:#03131c; font-weight:700; text-decoration:none;
+    }
     .btn:hover { filter: brightness(.95); }
     ul { margin:6px 0 0 18px; }
     footer { margin-top: 32px; text-align:center; color:#8bd2f7; opacity:.7; }
@@ -52,7 +55,7 @@
         <span class="badge">PRO</span>
       {% endif %}
       <nav style="margin-left:auto">
-        <a href="/analysis/generate-pdf">Generar PDF</a>
+        <a href="/analysis/generate">Generar PDF</a>
         <a href="/mail/connect">Conectar mail</a>
         <a href="/mail/scanner">Scanner de mail</a>
         <a href="/logout">Salir</a>
@@ -70,7 +73,7 @@
       <section class="card">
         <h3 style="margin:0 0 8px">Acciones rápidas</h3>
         <ul>
-          <li><a class="btn" href="/analysis/generate-pdf">Analizar logs y generar PDF</a></li>
+          <li><a class="btn" href="/analysis/generate">Analizar logs y generar PDF</a></li>
           <li style="margin-top:8px"><a class="btn" href="/mail/connect">Vincular una casilla de correo</a></li>
           <li style="margin-top:8px"><a class="btn" href="/mail/scanner">Ejecutar scanner de mail</a></li>
         </ul>
@@ -93,7 +96,7 @@
       <script>
         async function loadStats(){
           try{
-            const r = await fetch('/stats', { credentials:'include' }); // antes era /admin/stats
+            const r = await fetch('/stats', { credentials:'include' });
             if(!r.ok) throw new Error('HTTP '+r.status);
             const data = await r.json();
             const boxes = document.querySelectorAll('#stats .stat h3');
