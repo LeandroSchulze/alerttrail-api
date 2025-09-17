@@ -5,23 +5,15 @@ from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
 from datetime import datetime
-import os
 
-# ==== Importa tu stack existente ====
-# Ajustá estos imports a tu proyecto real
-from app.database import SessionLocal, engine
+from app.database import SessionLocal
 from app.security import (
     issue_access_cookie,
     get_current_user_cookie,
     get_password_hash,
     verify_password,
 )
-from app.models import User  # Debe tener: id, name, email, hashed_password, role, plan, created_at
-# Routers existentes (si los tenés)
-try:
-    from app.routers import admin as admin_router  # el que te paso más abajo
-except Exception:
-    admin_router = None
+from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
@@ -29,7 +21,7 @@ app = FastAPI(title="AlertTrail API", version="1.0.0")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# ===== DB dependency =====
+# DB dep
 def get_db():
     db = SessionLocal()
     try:
@@ -37,33 +29,33 @@ def get_db():
     finally:
         db.close()
 
-# ===== OpenAPI: usar cookieAuth automáticamente en Swagger =====
+# OpenAPI con cookieAuth (Swagger usa la sesión)
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    openapi_schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description="API de AlertTrail",
-        routes=app.routes,
-    )
-    components = openapi_schema.setdefault("components", {}).setdefault("securitySchemes", {})
-    components["cookieAuth"] = {"type": "apiKey", "in": "cookie", "name": "access_token"}
-    # aplica cookieAuth por defecto
-    for path in openapi_schema.get("paths", {}).values():
+    schema = get_openapi(title=app.title, version=app.version, description="API de AlertTrail", routes=app.routes)
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["cookieAuth"] = {
+        "type": "apiKey", "in": "cookie", "name": "access_token"
+    }
+    for path in schema.get("paths", {}).values():
         for method in path.values():
             if isinstance(method, dict):
                 method.setdefault("security", [{"cookieAuth": []}])
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
+    app.openapi_schema = schema
+    return schema
 
 app.openapi = custom_openapi
 
-# ====== Rutas públicas (sin necesidad de admin) ======
+# Helpers compat SA 1.x/2.x
+def db_get(db: Session, model, pk):
+    try:
+        return db.get(model, pk)           # SA 2.x
+    except Exception:
+        return db.query(model).get(pk)     # SA 1.x
 
+# Rutas públicas
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_cookie)):
-    # Si está logueado, lo llevo al dashboard; si no, landing simple con links
     if user:
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse("landing.html", {"request": request})
@@ -77,7 +69,6 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
-    # emitir cookie JWT HTTPOnly
     issue_access_cookie(response, {"sub": str(user.id)})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -93,9 +84,7 @@ def register_action(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    # Evitar duplicados
-    exists = db.query(User).filter(User.email == email).first()
-    if exists:
+    if db.query(User).filter(User.email == email.lower()).first():
         raise HTTPException(status_code=400, detail="Ese email ya está registrado")
     user = User(
         name=name.strip() or "Usuario",
@@ -105,35 +94,32 @@ def register_action(
         plan="FREE",
         created_at=datetime.utcnow(),
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    db.add(user); db.commit(); db.refresh(user)
     issue_access_cookie(response, {"sub": str(user.id)})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/logout")
-def logout(response: Response):
-    # Invalida la cookie eliminándola
-    response = RedirectResponse(url="/")
-    response.delete_cookie("access_token")
-    return response
+def logout(_response: Response):
+    r = RedirectResponse(url="/")
+    r.delete_cookie("access_token")
+    return r
 
-# ====== Dashboard protegido por cookie ======
+# Dashboard protegido
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
     if not current:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    user = db_get(db, User, current.id)
+    if not user:
+        # si el token es inválido o el user no existe, limpio la cookie y mando a login
+        r = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+        r.delete_cookie("access_token")
+        return r
+    return templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user})
 
-    # Datos básicos del usuario para la vista
-    user = db.query(User).get(current.id)
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "current_user": user,
-        },
-    )
-
-# ====== Incluye router de Admin (stats) ======
-if admin_router:
+# Router Admin (stats)
+try:
+    from app.routers import admin as admin_router
     app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
+except Exception:
+    pass
