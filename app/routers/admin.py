@@ -18,7 +18,7 @@ except Exception:
         try:
             from app.models import Analysis as ReportModel
         except Exception:
-            ReportModel = None  # no hay tabla de reportes; devolvemos 0
+            ReportModel = None
 
 router = APIRouter()
 
