@@ -1,178 +1,120 @@
-<!-- app/templates/dashboard.html -->
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8"/>
+  <meta charset="utf-8">
   <title>AlertTrail — Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="/static/favicon.ico">
+  <link rel="stylesheet" href="/static/style.css">
   <style>
-    :root {
-      --bg:#0b1020; --card:#111827; --card2:#1f2937; --card3:#374151; --text:#e5e7eb; --muted:#9ca3af; --accent:#22d3ee;
-      --ok:#0ea5e9; --ok2:#0f766e; --ok3:#155e75; --ok4:#1e3a8a;
+    /* Tema oscuro clarito con “fondo de agua” */
+    body {
+      margin: 0;
+      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: #eaf2f7;
+      background: radial-gradient(1200px 600px at 20% -10%, rgba(0,140,200,.20), transparent),
+                  radial-gradient(900px 500px at 120% 10%, rgba(0,160,220,.15), transparent),
+                  #0b1620;
+      min-height: 100vh;
     }
-    html,body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,"Helvetica Neue",Arial,sans-serif;margin:0}
-    a{color:var(--accent);text-decoration:none}
-    .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
-    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
-    .brand{display:flex;gap:10px;align-items:center}
-    .brand h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.3px}
-    .badge{font-size:12px;padding:2px 8px;border-radius:999px;background:#0f172a;color:#fff;border:1px solid #1e293b;text-transform:uppercase}
-    .nav a{margin-left:12px;opacity:.9}
-    .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-    .card{border-radius:14px;padding:18px;box-shadow:0 6px 20px rgba(0,0,0,.08)}
-    .card h4{margin:0 0 6px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
-    .card .num{font-size:28px;font-weight:800;line-height:1.1}
-    .section{margin:18px 0 24px}
-    .panel{background:#ffffff10;border:1px solid #ffffff20;border-radius:14px;padding:16px}
-    ul{margin:0;padding-left:18px}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border-bottom:1px solid #ffffff20;font-size:14px}
-    th{color:#fff;background:#111827;text-align:left}
-    .note{color:var(--muted);font-size:12px}
-    @media (max-width:860px){.cards{grid-template-columns:1fr}}
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 16px 64px; }
+    .topbar { display:flex; align-items:center; gap:12px; }
+    .brand { font-weight:700; font-size: 22px; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #0ea5e9; color:#03131c; font-weight: 700;}
+    nav a { color:#7dd3fc; text-decoration:none; margin-left: 20px; }
+    nav a:hover { text-decoration: underline; }
+
+    .card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 18px 20px;
+      box-shadow: 0 8px 20px rgba(0,0,0,.25);
+      backdrop-filter: blur(4px);
+    }
+    .grid { display:grid; gap:16px; }
+    .grid.cols-2 { grid-template-columns: 1.2fr .8fr; }
+    .muted { color:#bfe6fb; opacity:.8; }
+    .btn {
+      display:inline-block; padding:10px 14px; border-radius:10px;
+      background:#0ea5e9; color:#03131c; font-weight:700; text-decoration:none;
+    }
+    .btn:hover { filter: brightness(.95); }
+    ul { margin:6px 0 0 18px; }
+    footer { margin-top: 32px; text-align:center; color:#8bd2f7; opacity:.7; }
+    .stats { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-top:8px;}
+    .stat { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px; text-align:center;}
+    .stat h3 { margin:0; font-size:28px;}
+    .stat p { margin:2px 0 0; font-size:12px; opacity:.85;}
   </style>
 </head>
 <body>
   <div class="wrap">
-
-    <header>
-      <div class="brand">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"/></svg>
-        <h1>AlertTrail</h1>
-        <span class="badge">{{ user_plan|upper }}</span>
-      </div>
-      <nav class="nav">
-        <a href="/analysis/generate-pdf">Generar PDF</a>
+    <div class="topbar">
+      <div class="brand">☰&nbsp; AlertTrail</div>
+      {% if current_user and current_user.plan == "PRO" %}
+        <span class="badge">PRO</span>
+      {% endif %}
+      <nav style="margin-left:auto">
+        <a href="/analysis/generate_pdf">Generar PDF</a>
         <a href="/mail/connect">Conectar mail</a>
-        <a href="/mail/scanner">Scanner de mail</a>
-        <a href="/auth/logout">Salir</a>
+        <a href="/mail/scan">Scanner de mail</a>
+        <a href="/logout">Salir</a>
       </nav>
-    </header>
-
-    <div class="section panel">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
-        <div>
-          <div class="note">Bienvenido/a</div>
-          <div style="font-size:18px;font-weight:700">{{ user_name }}</div>
-          <div class="note">{{ user_email }}</div>
-        </div>
-        <div class="note">Estado: <b>{{ user_plan|upper }}</b></div>
-      </div>
     </div>
 
-    {% if user_is_admin %}
-    <!-- MÉTRICAS BÁSICAS -->
-    <div class="section">
-      <div class="cards">
-        <div class="card" style="background:var(--card)">
-          <h4>Descargas (mes)</h4>
-          <div id="m_dl" class="num">–</div>
-        </div>
-        <div class="card" style="background:var(--card2)">
-          <h4>Usuarios FREE</h4>
-          <div id="m_free" class="num">–</div>
-        </div>
-        <div class="card" style="background:var(--card3)">
-          <h4>Usuarios PRO</h4>
-          <div id="m_pro" class="num">–</div>
-        </div>
-      </div>
+    <div class="grid cols-2" style="margin-top:18px">
+      <section class="card">
+        <p class="muted">Bienvenido/a</p>
+        <h2 style="margin:2px 0 6px">{{ current_user.name }}</h2>
+        <p class="muted">{{ current_user.email }}</p>
+        <p class="muted" style="margin-top:6px">Estado: <strong>{{ current_user.plan or "FREE" }}</strong></p>
+      </section>
+
+      <section class="card">
+        <h3 style="margin:0 0 8px">Acciones rápidas</h3>
+        <ul>
+          <li><a class="btn" href="/analysis/generate_pdf">Analizar logs y generar PDF</a></li>
+          <li style="margin-top:8px"><a class="btn" href="/mail/connect">Vincular una casilla de correo</a></li>
+          <li style="margin-top:8px"><a class="btn" href="/mail/scan">Ejecutar scanner de mail</a></li>
+        </ul>
+      </section>
     </div>
 
-    <!-- MÉTRICAS EXTENDIDAS -->
-    <div class="section">
-      <div class="cards">
-        <div class="card" style="background:var(--ok2)">
-          <h4>Cuentas de empresa</h4>
-          <div id="m_companies" class="num">–</div>
+    {% if current_user and current_user.role == "admin" %}
+      <section class="card" style="margin-top:16px">
+        <div style="display:flex; align-items:center; justify-content:space-between">
+          <h3 style="margin:0">Métricas (solo admin)</h3>
+          <button id="refresh" class="btn" type="button">Actualizar</button>
         </div>
-        <div class="card" style="background:var(--ok3)">
-          <h4>Usuarios nuevos (mes)</h4>
-          <div id="m_new" class="num">–</div>
+        <div class="stats" id="stats">
+          <div class="stat"><h3>—</h3><p>PDFs este mes</p></div>
+          <div class="stat"><h3>—</h3><p>Usuarios Free</p></div>
+          <div class="stat"><h3>—</h3><p>Usuarios PRO</p></div>
         </div>
-        <div class="card" style="background:var(--ok4)">
-          <h4>Activos (30 días)</h4>
-          <div id="m_active30" class="num">–</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- TOP DESCARGADORES + ALERTAS MAIL -->
-    <div class="section" style="display:grid;grid-template-columns:2fr 1fr;gap:14px">
-      <div class="panel" style="background:#ffffff08">
-        <h3 style="margin:0 0 10px">Top descargadores (mes)</h3>
-        <ul id="m_top"><li class="note">(cargando…)</li></ul>
-      </div>
-      <div class="panel" style="background:#ffffff08">
-        <h3 style="margin:0 0 10px">Alertas de email (mes)</h3>
-        <div id="m_alerts_total" class="num" style="font-size:22px">–</div>
-        <div class="note">No leídas: <span id="m_alerts_unread">–</span></div>
-        <div class="note" style="margin-top:8px">Motivos más comunes:</div>
-        <ul id="m_alerts_reasons"></ul>
-      </div>
-    </div>
+        <p id="range" class="muted" style="margin-top:8px"></p>
+      </section>
+      <script>
+        async function loadStats(){
+          try{
+            const r = await fetch('/admin/stats', { credentials:'include' });
+            if(!r.ok) throw new Error('HTTP '+r.status);
+            const data = await r.json();
+            const boxes = document.querySelectorAll('#stats .stat h3');
+            boxes[0].textContent = data.pdfs_mes ?? '0';
+            boxes[1].textContent = data.usuarios_free ?? '0';
+            boxes[2].textContent = data.usuarios_pro ?? '0';
+            document.getElementById('range').textContent = `Rango: ${data.desde?.slice(0,10)} → ${data.hasta?.slice(0,10)}`;
+          }catch(e){
+            console.error(e);
+          }
+        }
+        document.getElementById('refresh').addEventListener('click', loadStats);
+        loadStats();
+      </script>
     {% endif %}
 
-    <!-- Accesos rápidos -->
-    <div class="section panel">
-      <h3 style="margin:0 0 10px">Acciones rápidas</h3>
-      <ul>
-        <li><a href="/analysis/generate-pdf">Analizar logs y generar PDF</a></li>
-        <li><a href="/mail/connect">Vincular una casilla de correo</a></li>
-        <li><a href="/mail/scanner">Ejecutar scanner de mail</a></li>
-      </ul>
-    </div>
-
-    <footer class="section" style="text-align:center" >
-      <span class="note">© {{ (now() if now else '') or '' }} AlertTrail</span>
-    </footer>
-
+    <footer>© AlertTrail</footer>
   </div>
-
-  {% if user_is_admin %}
-  <script>
-  (async () => {
-    try {
-      // Básico
-      const r1 = await fetch('/admin/metrics', {credentials:'include'});
-      if (r1.ok) {
-        const m = await r1.json();
-        document.getElementById('m_dl').textContent   = m.downloads_this_month ?? 0;
-        document.getElementById('m_free').textContent = m.users_free ?? 0;
-        document.getElementById('m_pro').textContent  = m.users_pro ?? 0;
-      }
-
-      // Extendido
-      const r2 = await fetch('/admin/metrics/extended', {credentials:'include'});
-      if (r2.ok) {
-        const e = await r2.json();
-
-        // Usuarios / empresas
-        document.getElementById('m_companies').textContent = e.users?.companies_count ?? 0;
-        document.getElementById('m_new').textContent       = (e.users?.new_this_month ?? '—');
-        document.getElementById('m_active30').textContent  = e.downloads?.active_users_30d ?? 0;
-
-        // Top descargadores
-        const top = e.downloads?.top_downloaders || [];
-        const ul = document.getElementById('m_top');
-        ul.innerHTML = top.length
-          ? top.map(t => `<li>${t.email} — <b>${t.downloads}</b></li>`).join('')
-          : '<li class="note">(sin datos)</li>';
-
-        // Alertas de mail
-        document.getElementById('m_alerts_total').textContent  = e.mail_alerts?.this_month ?? 0;
-        document.getElementById('m_alerts_unread').textContent = e.mail_alerts?.unread ?? 0;
-        const reasons = e.mail_alerts?.reasons || {};
-        const reasonsUL = document.getElementById('m_alerts_reasons');
-        reasonsUL.innerHTML = Object.keys(reasons).length
-          ? Object.entries(reasons).map(([k,v]) => `<li>${k}: <b>${v}</b></li>`).join('')
-          : '<li class="note">(sin hallazgos)</li>';
-      }
-    } catch (e) {
-      console.warn('metrics error', e);
-    }
-  })();
-  </script>
-  {% endif %}
 </body>
 </html>
