@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
 from datetime import datetime
+from jinja2 import TemplateNotFound
 
 from app.database import SessionLocal
 from app.security import (
@@ -17,7 +18,7 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
-# Static & templates
+# static & templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -29,7 +30,7 @@ def get_db():
     finally:
         db.close()
 
-# OpenAPI con cookieAuth (Swagger usa la sesión)
+# OpenAPI con cookieAuth (Swagger usa tu cookie de sesión)
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -53,7 +54,7 @@ def db_get(db: Session, model, pk):
     except Exception:
         return db.query(model).get(pk)     # SA 1.x
 
-# Rutas públicas
+# ---------- Rutas públicas ----------
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_cookie)):
     if user:
@@ -104,20 +105,36 @@ def logout(_response: Response):
     r.delete_cookie("access_token")
     return r
 
-# Dashboard protegido
+# ---------- Dashboard protegido ----------
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
     if not current:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+
     user = db_get(db, User, current.id)
     if not user:
-        # si el token es inválido o el user no existe, limpio la cookie y mando a login
         r = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
         r.delete_cookie("access_token")
         return r
-    return templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user})
 
-# Router Admin (stats)
+    try:
+        return templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user})
+    except TemplateNotFound:
+        # Fallback para que no rompa si falta el template en el deploy
+        html = f"""
+        <!doctype html><meta charset="utf-8">
+        <title>AlertTrail — Dashboard</title>
+        <div style="font-family:system-ui;padding:24px">
+          <h1>Dashboard (fallback)</h1>
+          <p>Hola <b>{user.name}</b> ({user.email})</p>
+          <p>No se encontró <code>templates/dashboard.html</code>. Subí ese archivo
+             o verifica la ruta y el nombre de la carpeta <code>templates/</code> (sensible a mayúsculas).</p>
+          <p><a href="/logout">Salir</a></p>
+        </div>
+        """
+        return HTMLResponse(html)
+
+# ---------- Router Admin ----------
 try:
     from app.routers import admin as admin_router
     app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
