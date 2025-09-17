@@ -164,22 +164,22 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
         """
         return HTMLResponse(html)
 
-# ---------- Routers explícitos y estables (como ayer) ----------
+# ---------- Routers explícitos (sin prefix extra) ----------
 try:
     from app.routers import analysis as analysis_router_mod
-    app.include_router(analysis_router_mod.router, prefix="/analysis", tags=["Analysis"])
+    app.include_router(analysis_router_mod.router)  # <-- SIN prefix
 except Exception as e:
     print("No pude cargar app.routers.analysis:", e)
 
 try:
     from app.routers import mail as mail_router_mod
-    app.include_router(mail_router_mod.router, prefix="/mail", tags=["Mail"])
+    app.include_router(mail_router_mod.router)      # <-- SIN prefix
 except Exception as e:
     print("No pude cargar app.routers.mail:", e)
 
 try:
     from app.routers import admin as admin_router_mod
-    app.include_router(admin_router_mod.router, prefix="/admin", tags=["Admin"])
+    app.include_router(admin_router_mod.router)     # <-- SIN prefix
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
