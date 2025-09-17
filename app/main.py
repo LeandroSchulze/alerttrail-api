@@ -4,8 +4,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
-from datetime import datetime
 from jinja2 import TemplateNotFound
+from datetime import datetime
+from pathlib import Path
 
 from app.database import SessionLocal
 from app.security import (
@@ -18,10 +19,14 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
-# static & templates
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
-# DB dep
+# --- Auto-detect de rutas para static/templates (sirve si están en raíz o dentro de app/) ---
+TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
+STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+# --- DB dependency ---
 def get_db():
     db = SessionLocal()
     try:
@@ -29,13 +34,20 @@ def get_db():
     finally:
         db.close()
 
-# OpenAPI con cookieAuth (Swagger usa tu cookie de sesión)
+# --- OpenAPI: Swagger usa cookieAuth automáticamente ---
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    schema = get_openapi(title=app.title, version=app.version, description="API de AlertTrail", routes=app.routes)
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description="API de AlertTrail",
+        routes=app.routes,
+    )
     schema.setdefault("components", {}).setdefault("securitySchemes", {})["cookieAuth"] = {
-        "type": "apiKey", "in": "cookie", "name": "access_token"
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "access_token",
     }
     for path in schema.get("paths", {}).values():
         for method in path.values():
@@ -46,12 +58,12 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# Helpers compat SA 1.x/2.x
+# --- Helpers compat SA 1.x / 2.x ---
 def db_get(db: Session, model, pk):
     try:
-        return db.get(model, pk)           # SA 2.x
+        return db.get(model, pk)           # SQLAlchemy 2.x
     except Exception:
-        return db.query(model).get(pk)     # SA 1.x
+        return db.query(model).get(pk)     # SQLAlchemy 1.x
 
 # ---------- Rutas públicas ----------
 @app.get("/", response_class=HTMLResponse)
@@ -65,7 +77,12 @@ def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/login")
-def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+def login_action(
+    response: Response,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
@@ -87,7 +104,7 @@ def register_action(
     if db.query(User).filter(User.email == email.lower()).first():
         raise HTTPException(status_code=400, detail="Ese email ya está registrado")
     user = User(
-        name=name.strip() or "Usuario",
+        name=(name or "").strip() or "Usuario",
         email=email.lower(),
         hashed_password=get_password_hash(password),
         role="user",
@@ -116,24 +133,34 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
         r.delete_cookie("access_token")
         return r
 
+    # Detectar admin de forma robusta (role, is_admin, is_superuser)
+    role = (getattr(user, "role", "") or "").lower()
+    is_admin = (
+        role == "admin"
+        or bool(getattr(user, "is_admin", False))
+        or bool(getattr(user, "is_superuser", False))
+    )
+
     try:
-        return templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user})
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {"request": request, "current_user": user, "is_admin": is_admin},
+        )
     except TemplateNotFound:
-        # Fallback para que no rompa si falta el template en el deploy
+        # Fallback si faltara el template en el deploy
         html = f"""
         <!doctype html><meta charset="utf-8">
         <title>AlertTrail — Dashboard</title>
         <div style="font-family:system-ui;padding:24px">
           <h1>Dashboard (fallback)</h1>
           <p>Hola <b>{user.name}</b> ({user.email})</p>
-          <p>No se encontró <code>templates/dashboard.html</code>. Subí ese archivo
-             o verifica la ruta y el nombre de la carpeta <code>templates/</code> (sensible a mayúsculas).</p>
+          <p>No se encontró <code>{TEMPLATES_DIR}/dashboard.html</code>.</p>
           <p><a href="/logout">Salir</a></p>
         </div>
         """
         return HTMLResponse(html)
 
-# ---------- Router Admin ----------
+# ---------- Router Admin (stats) ----------
 try:
     from app.routers import admin as admin_router
     app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
