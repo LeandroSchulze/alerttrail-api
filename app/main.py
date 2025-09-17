@@ -19,9 +19,8 @@ from app.models import User
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
 # static & templates
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
 # DB dep
 def get_db():
     db = SessionLocal()
