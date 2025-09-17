@@ -159,47 +159,65 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
         </div>"""
         return HTMLResponse(html)
 
-# ---------- Routers opcionales (Analysis/Mail/Admin) ----------
-def include_router_if_exists(module_path: str, prefix: str, tag: str) -> bool:
+# ---------- Incluir routers reales (SIN prefijo extra) ----------
+def include_router_if_exists(module_path: str, tag: str) -> bool:
     try:
         mod = import_module(module_path)
         router = getattr(mod, "router", None)
         if router:
-            app.include_router(router, prefix=prefix, tags=[tag])
+            # OJO: sin prefix aquí. Respetamos el prefix que el router ya tenga.
+            app.include_router(router, tags=[tag])
             return True
     except Exception:
         pass
     return False
 
-# Analysis: intentamos varios nombres comunes
 analysis_included = any([
-    include_router_if_exists("app.routers.analysis", "/analysis", "Analysis"),
-    include_router_if_exists("app.routers.reports",  "/analysis", "Analysis"),
-    include_router_if_exists("app.routers.report",   "/analysis", "Analysis"),
-    include_router_if_exists("app.routers.pdf",      "/analysis", "Analysis"),
+    include_router_if_exists("app.routers.analysis", "Analysis"),
+    include_router_if_exists("app.routers.reports",  "Analysis"),
+    include_router_if_exists("app.routers.report",   "Analysis"),
+    include_router_if_exists("app.routers.pdf",      "Analysis"),
 ])
 
-# Mail: intentamos varios nombres comunes
 mail_included = any([
-    include_router_if_exists("app.routers.mail",         "/mail", "Mail"),
-    include_router_if_exists("app.routers.email",        "/mail", "Mail"),
-    include_router_if_exists("app.routers.mail_scanner", "/mail", "Mail"),
+    include_router_if_exists("app.routers.mail",         "Mail"),
+    include_router_if_exists("app.routers.email",        "Mail"),
+    include_router_if_exists("app.routers.mail_scanner", "Mail"),
 ])
 
-# Admin stats
-include_router_if_exists("app.routers.admin", "/admin", "Admin")
+include_router_if_exists("app.routers.admin", "Admin")
 
-# Placeholders amistosos si faltan routers (evitan 404)
-if not analysis_included:
+# ---------- Aliases si quedó doble prefijo (p.ej. /analysis/analysis/...) ----------
+def route_exists(path: str) -> bool:
+    for r in app.routes:
+        if getattr(r, "path", None) == path:
+            return True
+    return False
+
+def add_alias(expected: str, actual: str):
+    if route_exists(actual) and not route_exists(expected):
+        async def _redir():
+            return RedirectResponse(url=actual, status_code=307)
+        # Aceptamos GET/POST por si tu endpoint original usa POST
+        app.add_api_route(expected, _redir, methods=["GET", "POST"])
+
+# Posibles combinaciones que suelen quedar
+add_alias("/analysis/generate_pdf", "/analysis/analysis/generate_pdf")
+add_alias("/mail/connect",          "/mail/mail/connect")
+add_alias("/mail/scan",             "/mail/mail/scan")
+
+# ---------- Placeholders si faltan routers en este build ----------
+if not (route_exists("/analysis/generate_pdf") or route_exists("/analysis/analysis/generate_pdf")):
     @app.get("/analysis/generate_pdf")
-    def generate_pdf_placeholder():
+    def _analysis_placeholder():
         return JSONResponse({"detail": "Ruta /analysis/generate_pdf no está instalada en este build."}, status_code=501)
 
-if not mail_included:
+if not (route_exists("/mail/connect") or route_exists("/mail/mail/connect")):
     @app.get("/mail/connect")
-    def mail_connect_placeholder():
+    def _mail_connect_placeholder():
         return JSONResponse({"detail": "Ruta /mail/connect no está instalada en este build."}, status_code=501)
 
+if not (route_exists("/mail/scan") or route_exists("/mail/mail/scan")):
     @app.get("/mail/scan")
-    def mail_scan_placeholder():
+    def _mail_scan_placeholder():
         return JSONResponse({"detail": "Ruta /mail/scan no está instalada en este build."}, status_code=501)
