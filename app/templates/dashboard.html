@@ -51,7 +51,7 @@
   <div class="wrap">
     <div class="topbar">
       <div class="brand">☰&nbsp; AlertTrail</div>
-      {% if current_user and current_user.plan == "PRO" %}
+      {% if current_user and (current_user.plan or '')|upper == 'PRO' %}
         <span class="badge">PRO</span>
       {% endif %}
       <nav style="margin-left:auto">
@@ -67,7 +67,9 @@
         <p class="muted">Bienvenido/a</p>
         <h2 style="margin:2px 0 6px">{{ current_user.name }}</h2>
         <p class="muted">{{ current_user.email }}</p>
-        <p class="muted" style="margin-top:6px">Estado: <strong>{{ current_user.plan or "FREE" }}</strong></p>
+        <p class="muted" style="margin-top:6px">
+          Estado: <strong>{{ (current_user.plan or "FREE")|upper }}</strong>
+        </p>
       </section>
 
       <section class="card">
@@ -80,7 +82,7 @@
       </section>
     </div>
 
-    {% if current_user and current_user.role == "admin" %}
+    {% if is_admin %}
       <section class="card" style="margin-top:16px">
         <div style="display:flex; align-items:center; justify-content:space-between">
           <h3 style="margin:0">Métricas (solo admin)</h3>
@@ -103,7 +105,8 @@
             boxes[0].textContent = data.pdfs_mes ?? '0';
             boxes[1].textContent = data.usuarios_free ?? '0';
             boxes[2].textContent = data.usuarios_pro ?? '0';
-            document.getElementById('range').textContent = `Rango: ${data.desde?.slice(0,10)} → ${data.hasta?.slice(0,10)}`;
+            document.getElementById('range').textContent =
+              `Rango: ${data.desde?.slice(0,10)} → ${data.hasta?.slice(0,10)}`;
           }catch(e){ console.error(e); }
         }
         document.getElementById('refresh').addEventListener('click', loadStats);
