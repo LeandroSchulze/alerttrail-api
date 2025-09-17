@@ -16,7 +16,7 @@ from app.security import (
     get_current_user_cookie,
 )
 
-router = APIRouter(prefix="/auth", tags=["auth"])  # <- SIN dependencies aquí
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ---------------- Templates ----------------
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -47,11 +47,12 @@ def _set_cookie(resp: Response, token: str) -> None:
         secure=True,
         samesite="lax",
         path="/",
+        # domain="alerttrail.com",  # descomenta si API/Front van en dominios distintos
         max_age=60 * 60 * 24 * 7,  # 7 días
     )
 
 # =========================================================
-# Login HTML (form)
+# Login HTML (GET) — muestra formulario
 # =========================================================
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, db: Session = Depends(get_db)):
@@ -61,14 +62,11 @@ def login_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 # =========================================================
-# Login JSON (Swagger/Postman) — declara request body
+# Login JSON (POST) — para Swagger/Postman
 # =========================================================
-@router.post("/login")
+@router.post("/login", response_model=dict)
 def login_json(payload: LoginIn, db: Session = Depends(get_db)):
-    # normalizamos el email recibido
     email_norm = payload.email.strip().lower()
-
-    # búsqueda case-insensitive
     user = (
         db.query(models.User)
         .filter(func.lower(models.User.email) == email_norm)
@@ -81,13 +79,13 @@ def login_json(payload: LoginIn, db: Session = Depends(get_db)):
     resp = JSONResponse({"ok": True})
     _set_cookie(resp, token)
     return resp
-    
+
 # =========================================================
-# Login de formulario (POST desde /auth/login HTML)
+# Login desde formulario web (POST del HTML)
 # =========================================================
 @router.post("/login/web", include_in_schema=False)
 def login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == email).first()
+    user = db.query(models.User).filter(func.lower(models.User.email) == email.lower()).first()
     if not user or not verify_password(password, _get_user_password_hash(user)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
     token = create_access_token_from_sub(user.email)
@@ -96,7 +94,7 @@ def login_web(response: Response, email: str = Form(...), password: str = Form(.
     return resp
 
 # =========================================================
-# Logout (borra cookie)
+# Logout (borra cookie) — GET y POST
 # =========================================================
 @router.get("/logout")
 def logout_get():
@@ -125,7 +123,7 @@ def me(request: Request, db: Session = Depends(get_db)):
     }
 
 # =========================================================
-# Register (público)
+# Register API (JSON) — opcional si ya tenés /register en main
 # =========================================================
 @router.post("/register")
 def register(data: RegisterIn, db: Session = Depends(get_db)):
@@ -149,7 +147,8 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
     db.refresh(user)
     return {"id": user.id, "email": user.email, "name": user.name, "plan": getattr(user, "plan", "FREE")}
 
-# EMERGENCIA: resetear admin desde ENV y luego borrar este endpoint
+# =========================================================
+# Emergencia: resetear/crear admin desde ENV y secret
 # =========================================================
 @router.post("/_force_admin_reset", include_in_schema=True)
 def _force_admin_reset(
@@ -157,10 +156,9 @@ def _force_admin_reset(
     db: Session = Depends(get_db),
 ):
     """
-    Crea/actualiza el admin usando ENV:
+    Crea/actualiza el admin usando env:
       ADMIN_EMAIL, ADMIN_PASS, ADMIN_NAME
-    Proteger con ADMIN_SETUP_SECRET en Render.
-    Quitar este endpoint después de usarlo.
+    Protegido por ADMIN_SETUP_SECRET (o JWT_SECRET). Eliminar luego de usar.
     """
     setup_secret = os.getenv("ADMIN_SETUP_SECRET") or os.getenv("JWT_SECRET") or ""
     if not setup_secret or secret != setup_secret:
@@ -198,9 +196,9 @@ def _force_admin_reset(
     db.commit()
     return {"ok": True, "admin": email, "action": action}
 
-
-from sqlalchemy import func
-
+# =========================================================
+# Debug de autenticación (temporal)
+# =========================================================
 @router.get("/_debug_auth", include_in_schema=True)
 def _debug_auth(
     email: EmailStr,
@@ -212,7 +210,6 @@ def _debug_auth(
     if not setup_secret or secret != setup_secret:
         raise HTTPException(status_code=403, detail="forbidden")
 
-    # Trae TODOS los usuarios que matcheen case-insensitive
     users = (
         db.query(models.User)
         .filter(func.lower(models.User.email) == email.lower())
