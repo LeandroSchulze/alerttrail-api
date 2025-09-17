@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from jinja2 import TemplateNotFound
 from datetime import datetime
 from pathlib import Path
+from importlib import import_module
 
 from app.database import SessionLocal
 from app.security import (
@@ -19,7 +20,7 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
-# --- Auto-detect de rutas para static/templates (sirve si están en raíz o dentro de app/) ---
+# --- Auto-detect de rutas para static/templates ---
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 
@@ -45,9 +46,7 @@ def custom_openapi():
         routes=app.routes,
     )
     schema.setdefault("components", {}).setdefault("securitySchemes", {})["cookieAuth"] = {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "access_token",
+        "type": "apiKey", "in": "cookie", "name": "access_token"
     }
     for path in schema.get("paths", {}).values():
         for method in path.values():
@@ -64,6 +63,12 @@ def db_get(db: Session, model, pk):
         return db.get(model, pk)           # SQLAlchemy 2.x
     except Exception:
         return db.query(model).get(pk)     # SQLAlchemy 1.x
+
+def truthy(v):
+    if isinstance(v, bool): return v
+    if isinstance(v, int):  return v == 1
+    if isinstance(v, str):  return v.strip().lower() in {"1","true","yes","y","on"}
+    return False
 
 # ---------- Rutas públicas ----------
 @app.get("/", response_class=HTMLResponse)
@@ -133,13 +138,9 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
         r.delete_cookie("access_token")
         return r
 
-    # Detectar admin de forma robusta (role, is_admin, is_superuser)
+    # Detección robusta de admin
     role = (getattr(user, "role", "") or "").lower()
-    is_admin = (
-        role == "admin"
-        or bool(getattr(user, "is_admin", False))
-        or bool(getattr(user, "is_superuser", False))
-    )
+    is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
 
     try:
         return templates.TemplateResponse(
@@ -147,22 +148,58 @@ def dashboard(request: Request, db: Session = Depends(get_db), current=Depends(g
             {"request": request, "current_user": user, "is_admin": is_admin},
         )
     except TemplateNotFound:
-        # Fallback si faltara el template en el deploy
         html = f"""
-        <!doctype html><meta charset="utf-8">
+        <!doctype html><meta charset='utf-8'>
         <title>AlertTrail — Dashboard</title>
         <div style="font-family:system-ui;padding:24px">
           <h1>Dashboard (fallback)</h1>
           <p>Hola <b>{user.name}</b> ({user.email})</p>
           <p>No se encontró <code>{TEMPLATES_DIR}/dashboard.html</code>.</p>
           <p><a href="/logout">Salir</a></p>
-        </div>
-        """
+        </div>"""
         return HTMLResponse(html)
 
-# ---------- Router Admin (stats) ----------
-try:
-    from app.routers import admin as admin_router
-    app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
-except Exception:
-    pass
+# ---------- Routers opcionales (Analysis/Mail/Admin) ----------
+def include_router_if_exists(module_path: str, prefix: str, tag: str) -> bool:
+    try:
+        mod = import_module(module_path)
+        router = getattr(mod, "router", None)
+        if router:
+            app.include_router(router, prefix=prefix, tags=[tag])
+            return True
+    except Exception:
+        pass
+    return False
+
+# Analysis: intentamos varios nombres comunes
+analysis_included = any([
+    include_router_if_exists("app.routers.analysis", "/analysis", "Analysis"),
+    include_router_if_exists("app.routers.reports",  "/analysis", "Analysis"),
+    include_router_if_exists("app.routers.report",   "/analysis", "Analysis"),
+    include_router_if_exists("app.routers.pdf",      "/analysis", "Analysis"),
+])
+
+# Mail: intentamos varios nombres comunes
+mail_included = any([
+    include_router_if_exists("app.routers.mail",         "/mail", "Mail"),
+    include_router_if_exists("app.routers.email",        "/mail", "Mail"),
+    include_router_if_exists("app.routers.mail_scanner", "/mail", "Mail"),
+])
+
+# Admin stats
+include_router_if_exists("app.routers.admin", "/admin", "Admin")
+
+# Placeholders amistosos si faltan routers (evitan 404)
+if not analysis_included:
+    @app.get("/analysis/generate_pdf")
+    def generate_pdf_placeholder():
+        return JSONResponse({"detail": "Ruta /analysis/generate_pdf no está instalada en este build."}, status_code=501)
+
+if not mail_included:
+    @app.get("/mail/connect")
+    def mail_connect_placeholder():
+        return JSONResponse({"detail": "Ruta /mail/connect no está instalada en este build."}, status_code=501)
+
+    @app.get("/mail/scan")
+    def mail_scan_placeholder():
+        return JSONResponse({"detail": "Ruta /mail/scan no está instalada en este build."}, status_code=501)
