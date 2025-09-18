@@ -1,4 +1,3 @@
-# app/main.py
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,7 +26,6 @@ TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "template
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
 
-# asegurar carpetas
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -46,6 +44,7 @@ def get_db():
 # === Usuario opcional: NUNCA lanza excepción ===
 def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
     try:
+        # ahora devuelve objeto User si le pasamos db
         return get_current_user_cookie(request, db)
     except Exception:
         return None
@@ -112,7 +111,7 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
-    issue_access_cookie(response, {"sub": str(user.id)})
+    issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/register", response_class=HTMLResponse)
@@ -150,7 +149,7 @@ def register_action(
         created_at=datetime.utcnow(),
     )
     db.add(user); db.commit(); db.refresh(user)
-    issue_access_cookie(response, {"sub": str(user.id)})
+    issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/logout")
@@ -169,18 +168,10 @@ def dashboard(
     if not current:
         return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
 
-    # current puede ser dict con 'sub' o un objeto con 'id'
-    uid = (int(current.get("sub")) if isinstance(current, dict) and current.get("sub") else getattr(current, "id", None))
-    user = db_get(db, User, uid)
-    if not user:
-        r = RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
-        r.delete_cookie("access_token", path="/")
-        return r
-
-    role = (getattr(user, "role", "") or "").lower()
-    is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
-
+    user = current  # get_current_user_cookie(request, db) ya devuelve User
     try:
+        role = (getattr(user, "role", "") or "").lower()
+        is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
         return templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "is_admin": is_admin})
     except TemplateNotFound:
         html = f"""<!doctype html><meta charset='utf-8'><div style="font-family:system-ui;padding:24px">
@@ -190,13 +181,6 @@ def dashboard(
         return HTMLResponse(html)
 
 # === Montar routers ===
-# Nuevo: API de login real (POST /auth/login)
-try:
-    from app.routers import auth as auth_router_mod
-    app.include_router(auth_router_mod.router)          # /auth/*
-except Exception as e:
-    print("No pude cargar app.routers.auth:", e)
-
 try:
     from app.routers import auth as auth_router_mod
     app.include_router(auth_router_mod.router)          # /auth/*
@@ -232,7 +216,7 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# POST /auth/login (compat formularios que apuntan aquí)
+# Fallbacks mínimos
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
     def _fb_auth_login_post(
@@ -246,10 +230,9 @@ if not _route_has_method("/auth/login", "POST"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-        issue_access_cookie(response, {"sub": str(user.id)})
+        issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return RedirectResponse(url="/dashboard", status_code=303)
 
-# POST /auth/login/web (form recomendado)
 if not _route_exists("/auth/login/web"):
     @app.post("/auth/login/web", include_in_schema=False)
     def _fb_auth_login_web(
@@ -263,32 +246,8 @@ if not _route_exists("/auth/login/web"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-        issue_access_cookie(response, {"sub": str(user.id)})
+        issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return RedirectResponse(url="/dashboard", status_code=303)
-
-# GET /auth/logout
-if not _route_exists("/auth/logout"):
-    @app.get("/auth/logout")
-    def _fb_auth_logout():
-        r = RedirectResponse(url="/auth/login", status_code=302)
-        r.delete_cookie("access_token", path="/")
-        return r
-
-# GET /auth/login (crear solo si NO hay GET ya registrado en esa ruta)
-if not _route_has_method("/auth/login", "GET"):
-    @app.get("/auth/login", response_class=HTMLResponse)
-    def _fb_auth_login(request: Request):
-        try:
-            return templates.TemplateResponse("login.html", {"request": request, "error": None})
-        except TemplateNotFound:
-            html = """<!doctype html><meta charset='utf-8'>
-            <form method="post" action="/auth/login/web" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
-              <h2>Iniciar sesión</h2>
-              <input name="email" type="email" placeholder="Email" required>
-              <input name="password" type="password" placeholder="Contraseña" required>
-              <button>Entrar</button>
-            </form>"""
-            return HTMLResponse(html)
 
 # === Alias útiles ===
 def _exists(p: str) -> bool:
@@ -327,12 +286,10 @@ def _alias_tasks_mail_poll(secret: str, db: _AliasSession = _AliasDepends(get_db
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
     if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
-        # Evita loops: no redirijas si ya estás en /auth/*
         path = request.url.path or ""
         if not path.startswith("/auth"):
             return RedirectResponse(url="/auth/login", status_code=302)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
 
 from fastapi.responses import HTMLResponse
 
@@ -342,7 +299,6 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
     if "text/html" in (request.headers.get("accept") or ""):
         return HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
     return JSONResponse({"detail": repr(exc)}, status_code=500)
-
 
 # === Health & HEAD ===
 @app.get("/health")
