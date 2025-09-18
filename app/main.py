@@ -328,11 +328,15 @@ if _exists("/mail/scan") and not _exists("/mail/scanner"):
         return RedirectResponse(url="/mail/scan", status_code=307)
 
 # === Handler global: 401/403 HTML -> login (evita loops) ===
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import HTTPException, Request
+
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
-    if exc.status_code in (401, 403) and "text/html" in request.headers.get("accept", ""):
+    if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
+        # Evita loops: no redirijas si ya estás en /auth/*
         path = request.url.path or ""
-        if not (path.startswith("/auth") or path.startswith("/static") or path.startswith("/docs")):
+        if not path.startswith("/auth"):
             return RedirectResponse(url="/auth/login", status_code=302)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
