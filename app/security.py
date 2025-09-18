@@ -43,20 +43,41 @@ def get_password_hash(password: str) -> str:
         base64.urlsafe_b64encode(dk).decode().rstrip("="),
     )
 
+# app/security.py  (solo esta función)
+import base64, hmac, hashlib
+
 def verify_password(password: str, stored: str) -> bool:
+    """
+    Soporta:
+    - PBKDF2:  pbkdf2$<iters>$<salt_b64>$<hash_b64>
+    - bcrypt ($2a$ / $2b$) si el paquete está instalado; si no, devuelve False.
+    """
     try:
-        scheme, iters_s, salt_b64, dk_b64 = stored.split("$", 3)
-        if scheme != "pbkdf2":
+        if not stored:
             return False
-        iters = int(iters_s)
-        # normalizar padding base64
-        def _unb64(s: str) -> bytes:
-            pad = "=" * (-len(s) % 4)
-            return base64.urlsafe_b64decode(s + pad)
-        salt = _unb64(salt_b64)
-        expected = _unb64(dk_b64)
-        test = _pbkdf2_hash(password, salt, iters)
-        return hmac.compare_digest(expected, test)
+
+        # bcrypt (opcional)
+        if stored.startswith("$2b$") or stored.startswith("$2a$"):
+            try:
+                import bcrypt
+                return bcrypt.checkpw(password.encode("utf-8"), stored.encode("utf-8"))
+            except Exception:
+                return False
+
+        # PBKDF2
+        parts = stored.split("$")
+        if len(parts) == 4 and parts[0] == "pbkdf2":
+            _, iters_s, salt_b64, dk_b64 = parts
+            def _unb64(s: str) -> bytes:
+                pad = "=" * (-len(s) % 4)
+                return base64.urlsafe_b64decode(s + pad)
+            iters = int(iters_s)
+            salt = _unb64(salt_b64)
+            expected = _unb64(dk_b64)
+            test = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iters)
+            return hmac.compare_digest(expected, test)
+
+        return False
     except Exception:
         return False
 
