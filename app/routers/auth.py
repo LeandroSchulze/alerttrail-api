@@ -55,16 +55,43 @@ def _hash_from_user(u: models.User) -> str:
         or ""
     )
 
-# --- LOGIN WEB (form) ---
+# --- helper para elegir el hash correcto del usuario ---
+def _hash_from_user(u: models.User) -> str:
+    return (
+        getattr(u, "hashed_password", None)
+        or getattr(u, "password_hash", None)
+        or getattr(u, "password", None)
+        or ""
+    )
+
+# --- POST /auth/login/web SIN Form(...) ---
 @router.post("/login/web", include_in_schema=False)
-def login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def login_web(request: Request, response: Response, db: Session = Depends(get_db)):
     try:
-        email_norm = (email or "").strip().lower()
+        print("[auth] handling /auth/login/web (auth.py, no Form)")
+
+        # Acepta form-url-encoded, multipart o JSON (por si tu template usa fetch)
+        ctype = (request.headers.get("content-type") or "").lower()
+        email = password = None
+
+        if ctype.startswith("application/json"):
+            body = await request.json()
+            if isinstance(body, dict):
+                email = body.get("email")
+                password = body.get("password")
+        else:
+            form = await request.form()  # para x-www-form-urlencoded y multipart
+            email = form.get("email")
+            password = form.get("password")
+
+        if not email or not password:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Faltan email/password.")
+
+        email_norm = email.strip().lower()
         user = db.query(models.User).filter(func.lower(models.User.email) == email_norm).first()
         if not user or not verify_password(password, _hash_from_user(user)):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
 
-        # ok -> set cookie y redirigir
         resp = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(resp, {"sub": str(user.id)})
         return resp
@@ -72,9 +99,13 @@ def login_web(response: Response, email: str = Form(...), password: str = Form(.
     except HTTPException:
         raise
     except Exception as e:
-        # log bien explícito + mensaje visible mientras debuggeamos
         import traceback; traceback.print_exc()
         return HTMLResponse(f"<pre>Login error: {e!r}</pre>", status_code=500)
+
+# GET /auth/login/web -> redirigir siempre al form
+@router.get("/login/web", include_in_schema=False)
+def login_web_get():
+    return RedirectResponse(url="/auth/login", status_code=302)
 
 
 # ----------------------- Páginas -----------------------
