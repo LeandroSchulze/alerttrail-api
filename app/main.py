@@ -169,7 +169,9 @@ def dashboard(
     if not current:
         return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
 
-    user = db_get(db, User, getattr(current, "id", None))
+    # current puede ser dict con 'sub' o un objeto con 'id'
+    uid = (int(current.get("sub")) if isinstance(current, dict) and current.get("sub") else getattr(current, "id", None))
+    user = db_get(db, User, uid)
     if not user:
         r = RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
         r.delete_cookie("access_token", path="/")
@@ -229,22 +231,6 @@ def _route_has_method(path: str, method: str) -> bool:
             if r.methods and method.upper() in r.methods:
                 return True
     return False
-
-# GET /auth/login
-if not _route_exists("/auth/login"):
-    @app.get("/auth/login", response_class=HTMLResponse)
-    def _fb_auth_login(request: Request):
-        try:
-            return templates.TemplateResponse("login.html", {"request": request, "error": None})
-        except TemplateNotFound:
-            html = """<!doctype html><meta charset='utf-8'>
-            <form method="post" action="/auth/login/web" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
-              <h2>Iniciar sesión</h2>
-              <input name="email" type="email" placeholder="Email" required>
-              <input name="password" type="password" placeholder="Contraseña" required>
-              <button>Entrar</button>
-            </form>"""
-            return HTMLResponse(html)
 
 # POST /auth/login (compat formularios que apuntan aquí)
 if not _route_has_method("/auth/login", "POST"):
@@ -327,10 +313,17 @@ if _exists("/mail/scan") and not _exists("/mail/scanner"):
     def _alias_mail_scanner():
         return RedirectResponse(url="/mail/scan", status_code=307)
 
-# === Handler global: 401/403 HTML -> login (evita loops) ===
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi import HTTPException, Request
+# Alias compat: /tasks/mail/poll -> /mail/poll (para cron viejo)
+from sqlalchemy.orm import Session as _AliasSession
+from fastapi import Depends as _AliasDepends
 
+@app.get("/tasks/mail/poll", include_in_schema=False)
+@app.post("/tasks/mail/poll", include_in_schema=False)
+def _alias_tasks_mail_poll(secret: str, db: _AliasSession = _AliasDepends(get_db)):
+    from app.routers.mail import mail_poll as _mail_poll
+    return _mail_poll(secret, db)
+
+# === Handler global: 401/403 HTML -> login (evita loops) ===
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
     if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
