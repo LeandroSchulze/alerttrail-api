@@ -76,7 +76,6 @@ class MailAlert(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
-
 # Crear tablas si faltan (idempotente)
 try:
     Base.metadata.create_all(bind=engine)
@@ -213,7 +212,6 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             )
 
         stage = "db-commit"
-        # --- IMPORTANTE: todo el bloque DB va dentro del try principal ---
         try:
             acct = db.query(MailAccount).filter(
                 MailAccount.user_id == user.id,
@@ -229,16 +227,16 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                     imap_port=imap_port,
                     use_ssl=use_ssl,
                     enc_blob=blob,
-                    enc_password=blob,              # ← compat: satisfacemos NOT NULL
+                    enc_password=blob,              # compat: NOT NULL legado
                 )
                 db.add(acct)
             else:
-                acct.imap_host = imap_server       # compat legado
+                acct.imap_host   = imap_server      # compat legado
                 acct.imap_server = imap_server
-                acct.imap_port = imap_port
-                acct.use_ssl = use_ssl
-                acct.enc_blob = blob
-                acct.enc_password = blob           # ← compat: satisfacemos NOT NULL
+                acct.imap_port   = imap_port
+                acct.use_ssl     = use_ssl
+                acct.enc_blob    = blob
+                acct.enc_password= blob             # compat legado
 
             db.commit()
         except Exception:
@@ -319,17 +317,13 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     """
     return HTMLResponse(html)
 
-# --- ADD: helpers para reusar el escaneo en cron y en manual ---
+# --- Helpers para cron / API ---
 import json
-from sqlalchemy import select
+from sqlalchemy import select  # (puede quedar aunque no lo uses mucho)
 
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
 
 def _scan_account(db: Session, acct: MailAccount) -> dict:
-    """
-    Reusa tu lógica de manual_scan pero para 1 cuenta específica (sin UI).
-    Guarda MailAlert por cada hallazgo.
-    """
     scans = 0
     alerts = 0
     errors = 0
@@ -370,11 +364,7 @@ def _scan_account(db: Session, acct: MailAccount) -> dict:
         errors += 1
     return {"scans": scans, "alerts": alerts, "errors": errors}
 
-
 def _run_scan_all_accounts(db: Session) -> dict:
-    """
-    Escanea TODAS las cuentas registradas (para el cron).
-    """
     total = {"scans": 0, "alerts": 0, "errors": 0}
     accounts = db.query(MailAccount).all()
     for acct in accounts:
@@ -383,11 +373,11 @@ def _run_scan_all_accounts(db: Session) -> dict:
         total["alerts"] += r["alerts"]
         total["errors"] += r["errors"]
     return total
-python
-Copiar código
-# --- ADD: endpoint cron seguro ---
+
+# --- Endpoint cron seguro ---
 @router.get("/poll")
 def mail_poll(secret: str, db: Session = Depends(get_db)):
+    print("[mail_poll] hit /mail/poll")
     if not MAIL_CRON_SECRET:
         raise HTTPException(status_code=503, detail="MAIL_CRON_SECRET no configurado")
     if secret != MAIL_CRON_SECRET:
@@ -395,15 +385,10 @@ def mail_poll(secret: str, db: Session = Depends(get_db)):
     result = _run_scan_all_accounts(db)
     return {"status": "ok", "source": "cron", **result}
 
-
-# --- ADD: endpoint API manual sin UI (útil para Postman/cURL) ---
+# --- Endpoint API manual sin UI ---
 @router.post("/scan")
 @router.get("/scan")
 def mail_scan_api(request: Request, db: Session = Depends(get_db)):
-    """
-    Dispara escaneo solo para el usuario logueado (no toda la base).
-    Reusa la lógica de _scan_account para tu cuenta más reciente.
-    """
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
