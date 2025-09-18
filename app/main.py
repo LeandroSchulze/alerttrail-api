@@ -192,10 +192,10 @@ def dashboard(
 # === Montar routers ===
 # Nuevo: API de login real (POST /auth/login)
 try:
-    from app.routers import auth_login as auth_login_router
-    app.include_router(auth_login_router.router)   # /auth/*
+    from app.routers import auth as auth_router_mod
+    app.include_router(auth_router_mod.router)          # /auth/*
 except Exception as e:
-    print("No pude cargar app.routers.auth_login:", e)
+    print("No pude cargar app.routers.auth:", e)
 
 try:
     from app.routers import auth as auth_router_mod
