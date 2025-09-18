@@ -46,6 +46,37 @@ def _hash_from_user(u: models.User) -> str:
         or ""
     )
 
+# utils arriba del archivo
+def _hash_from_user(u: models.User) -> str:
+    return (
+        getattr(u, "hashed_password", None)
+        or getattr(u, "password_hash", None)
+        or getattr(u, "password", None)
+        or ""
+    )
+
+# --- LOGIN WEB (form) ---
+@router.post("/login/web", include_in_schema=False)
+def login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    try:
+        email_norm = (email or "").strip().lower()
+        user = db.query(models.User).filter(func.lower(models.User.email) == email_norm).first()
+        if not user or not verify_password(password, _hash_from_user(user)):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
+
+        # ok -> set cookie y redirigir
+        resp = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(resp, {"sub": str(user.id)})
+        return resp
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # log bien explícito + mensaje visible mientras debuggeamos
+        import traceback; traceback.print_exc()
+        return HTMLResponse(f"<pre>Login error: {e!r}</pre>", status_code=500)
+
+
 # ----------------------- Páginas -----------------------
 # LOGIN HTML: SIEMPRE 200, SIN REDIRECCIÓN
 @router.get("/login", response_class=HTMLResponse)
