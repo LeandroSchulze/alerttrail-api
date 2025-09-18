@@ -318,3 +318,99 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     </body></html>
     """
     return HTMLResponse(html)
+
+# --- ADD: helpers para reusar el escaneo en cron y en manual ---
+import json
+from sqlalchemy import select
+
+MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
+
+def _scan_account(db: Session, acct: MailAccount) -> dict:
+    """
+    Reusa tu lógica de manual_scan pero para 1 cuenta específica (sin UI).
+    Guarda MailAlert por cada hallazgo.
+    """
+    scans = 0
+    alerts = 0
+    errors = 0
+    try:
+        M = _imap_login(acct)
+        M.select("INBOX")
+        since = (datetime.utcnow() - timedelta(days=30)).strftime("%d-%b-%Y")
+        status, data = M.search(None, f'(SINCE {since})')
+        if status != "OK":
+            raise RuntimeError("No pude listar correos")
+
+        uids = data[0].split()[-30:]
+        for uid in reversed(uids):
+            st, msg_data = M.fetch(uid, "(RFC822)")
+            if st != "OK" or not msg_data:
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            risky, reasons = _risky(msg)
+            scans += 1
+            if risky:
+                subject = _decode_hdr(msg.get("Subject", ""))
+                sender = _decode_hdr(msg.get("From", ""))
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                exists = db.query(MailAlert).filter(
+                    MailAlert.user_id == acct.user_id,
+                    MailAlert.msg_uid == uid_str
+                ).first()
+                if not exists:
+                    db.add(MailAlert(
+                        user_id=acct.user_id, msg_uid=uid_str,
+                        subject=subject, sender=sender,
+                        reason="; ".join(reasons),
+                    ))
+                    db.commit()
+                alerts += 1
+        M.logout()
+    except Exception:
+        errors += 1
+    return {"scans": scans, "alerts": alerts, "errors": errors}
+
+
+def _run_scan_all_accounts(db: Session) -> dict:
+    """
+    Escanea TODAS las cuentas registradas (para el cron).
+    """
+    total = {"scans": 0, "alerts": 0, "errors": 0}
+    accounts = db.query(MailAccount).all()
+    for acct in accounts:
+        r = _scan_account(db, acct)
+        total["scans"] += r["scans"]
+        total["alerts"] += r["alerts"]
+        total["errors"] += r["errors"]
+    return total
+python
+Copiar código
+# --- ADD: endpoint cron seguro ---
+@router.get("/poll")
+def mail_poll(secret: str, db: Session = Depends(get_db)):
+    if not MAIL_CRON_SECRET:
+        raise HTTPException(status_code=503, detail="MAIL_CRON_SECRET no configurado")
+    if secret != MAIL_CRON_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    result = _run_scan_all_accounts(db)
+    return {"status": "ok", "source": "cron", **result}
+
+
+# --- ADD: endpoint API manual sin UI (útil para Postman/cURL) ---
+@router.post("/scan")
+@router.get("/scan")
+def mail_scan_api(request: Request, db: Session = Depends(get_db)):
+    """
+    Dispara escaneo solo para el usuario logueado (no toda la base).
+    Reusa la lógica de _scan_account para tu cuenta más reciente.
+    """
+    user = get_current_user_cookie(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    acct = db.query(MailAccount).filter(MailAccount.user_id == user.id).order_by(MailAccount.id.desc()).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="No hay casillas vinculadas")
+
+    result = _scan_account(db, acct)
+    return {"status": "ok", "source": "manual", **result}
