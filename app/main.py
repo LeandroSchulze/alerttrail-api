@@ -288,13 +288,21 @@ if not _route_exists("/auth/logout"):
         r.delete_cookie("access_token", path="/")
         return r
 
-# GET /auth/clear (helper)
-if not _route_exists("/auth/clear"):
-    @app.get("/auth/clear", include_in_schema=False)
-    def _fb_auth_clear():
-        r = HTMLResponse("ok")
-        r.delete_cookie("access_token", path="/")
-        return r
+# GET /auth/login (crear solo si NO hay GET ya registrado en esa ruta)
+if not _route_has_method("/auth/login", "GET"):
+    @app.get("/auth/login", response_class=HTMLResponse)
+    def _fb_auth_login(request: Request):
+        try:
+            return templates.TemplateResponse("login.html", {"request": request, "error": None})
+        except TemplateNotFound:
+            html = """<!doctype html><meta charset='utf-8'>
+            <form method="post" action="/auth/login/web" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+              <h2>Iniciar sesión</h2>
+              <input name="email" type="email" placeholder="Email" required>
+              <input name="password" type="password" placeholder="Contraseña" required>
+              <button>Entrar</button>
+            </form>"""
+            return HTMLResponse(html)
 
 # === Alias útiles ===
 def _exists(p: str) -> bool:
