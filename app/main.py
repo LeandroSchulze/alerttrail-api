@@ -333,6 +333,17 @@ async def http_exc_handler(request: Request, exc: HTTPException):
             return RedirectResponse(url="/auth/login", status_code=302)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
+
+from fastapi.responses import HTMLResponse
+
+@app.exception_handler(Exception)
+async def unhandled_exc_handler(request: Request, exc: Exception):
+    import traceback; traceback.print_exc()
+    if "text/html" in (request.headers.get("accept") or ""):
+        return HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
+    return JSONResponse({"detail": repr(exc)}, status_code=500)
+
+
 # === Health & HEAD ===
 @app.get("/health")
 def health():
