@@ -1,4 +1,3 @@
-# app/routers/auth.py
 import os
 from fastapi import (
     APIRouter, Depends, HTTPException, Response, status,
@@ -69,7 +68,7 @@ def login_json(payload: LoginIn, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, hp):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
     resp = JSONResponse({"ok": True})
-    issue_access_cookie(resp, {"sub": str(user.id)})
+    issue_access_cookie(resp, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return resp
 
 # GET /auth/login/web -> redirige al form (evita 500 en GET)
@@ -106,7 +105,7 @@ async def login_web(request: Request, response: Response, db: Session = Depends(
             raise HTTPException(status_code=401, detail="Credenciales incorrectas.")
 
         resp = RedirectResponse(url="/dashboard", status_code=303)
-        issue_access_cookie(resp, {"sub": str(user.id)})
+        issue_access_cookie(resp, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return resp
 
     except HTTPException:
@@ -134,12 +133,10 @@ def clear_cookie():
     resp.delete_cookie("access_token", path="/")
     return resp
 
-# ME
+# ME (devuelve datos del usuario autenticado)
 @router.get("/me")
 def me(request: Request, db: Session = Depends(get_db)):
-    current = get_current_user_cookie(request, db)
-    if not current:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    current = get_current_user_cookie(request, db)  # ahora devuelve objeto User
     return {
         "name": getattr(current, "name", ""),
         "email": getattr(current, "email", ""),
