@@ -1,4 +1,3 @@
-# app/security.py
 import os
 import hmac
 import base64
@@ -23,6 +22,7 @@ COOKIE_PATH = "/"
 COOKIE_SECURE = True           # En HTTPS True. En localhost podés poner False.
 COOKIE_HTTPONLY = True
 COOKIE_SAMESITE = "lax"
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip()  # ej: ".alerttrail.com" para compartir entre www y root
 
 # ================== Password Hash (PBKDF2) ==================
 # Formato: pbkdf2$<iterations>$<salt_b64>$<hash_b64>
@@ -42,9 +42,6 @@ def get_password_hash(password: str) -> str:
         base64.urlsafe_b64encode(salt).decode().rstrip("="),
         base64.urlsafe_b64encode(dk).decode().rstrip("="),
     )
-
-# app/security.py  (solo esta función)
-import base64, hmac, hashlib
 
 def verify_password(password: str, stored: str) -> bool:
     """
@@ -99,9 +96,10 @@ def decode_token(token: str) -> Dict[str, Any]:
 
 # ================== Cookie helpers ==================
 def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
+    # Generamos token (con o sin exp)
     if SESSION_ONLY_COOKIES:
         token = create_access_token(user_claims, expires_minutes=None)
-        response.set_cookie(
+        cookie_kwargs = dict(
             key=COOKIE_NAME,
             value=token,
             path=COOKIE_PATH,
@@ -109,11 +107,14 @@ def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
             httponly=COOKIE_HTTPONLY,
             samesite=COOKIE_SAMESITE,
         )
+        if COOKIE_DOMAIN:
+            cookie_kwargs["domain"] = COOKIE_DOMAIN
+        response.set_cookie(**cookie_kwargs)
     else:
         token = create_access_token(user_claims, expires_minutes=ACCESS_TOKEN_TTL_MIN)
         max_age = ACCESS_TOKEN_TTL_MIN * 60
         expire_dt = datetime.now(timezone.utc) + timedelta(seconds=max_age)
-        response.set_cookie(
+        cookie_kwargs = dict(
             key=COOKIE_NAME,
             value=token,
             path=COOKIE_PATH,
@@ -123,36 +124,70 @@ def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
             max_age=max_age,
             expires=int(expire_dt.timestamp()),
         )
+        if COOKIE_DOMAIN:
+            cookie_kwargs["domain"] = COOKIE_DOMAIN
+        response.set_cookie(**cookie_kwargs)
     return token
 
 def clear_access_cookie(response: Response) -> None:
-    response.delete_cookie(
+    kwargs = dict(
         key=COOKIE_NAME,
         path=COOKIE_PATH,
         samesite=COOKIE_SAMESITE,
         secure=COOKIE_SECURE,
         httponly=COOKIE_HTTPONLY,
     )
+    if COOKIE_DOMAIN:
+        kwargs["domain"] = COOKIE_DOMAIN
+    response.delete_cookie(**kwargs)
 
-# ================== Auth dependency (compatible) ==================
+# ================== Auth dependency ==================
 def get_current_user_cookie(
     request: Optional[Request] = None,
-    db=None,  # compat con firmas previas; no se usa aquí
+    db=None,  # si viene, devolvemos el objeto User
     access_token: Optional[str] = Cookie(default=None, alias=COOKIE_NAME),
-) -> Dict[str, Any]:
+):
     """
-    Compatibilidad:
-    - Puede ser llamada como get_current_user_cookie(request, db)
-    - O como dependencia con Cookie('access_token')
+    Si se pasa 'db', devuelve el objeto User.
+    Si no, devuelve el dict de claims.
+    Acepta claims 'sub' | 'user_id' | 'uid'.
     """
     token = access_token
     if (not token) and request is not None:
-        # fallback por si alguien la llama pasándole request manualmente
         token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
-    return decode_token(token)
+
+    claims = decode_token(token)
+
+    # si no hay db, devolvemos claims (compat antigua)
+    if db is None:
+        return claims
+
+    # con db: devolvemos el usuario
+    uid = claims.get("sub") or claims.get("user_id") or claims.get("uid")
+    try:
+        uid_int = int(uid)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
+
+    try:
+        from app import models
+        user = db.get(models.User, uid_int)  # SQLAlchemy 2.x
+    except Exception:
+        user = db.query(models.User).get(uid_int)  # SQLAlchemy 1.x
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+    return user
 
 def issue_access_cookie_for_user(response: Response, user_id: int, email: str, is_admin: bool, plan: str = "FREE") -> str:
-    claims = {"sub": str(user_id), "email": email, "admin": is_admin, "plan": plan}
+    claims = {
+        "sub": str(user_id),
+        "user_id": user_id,
+        "uid": user_id,
+        "email": email,
+        "admin": is_admin,
+        "plan": plan,
+    }
     return issue_access_cookie(response, claims)
