@@ -1,3 +1,4 @@
+# app/main.py
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,7 +25,14 @@ app = FastAPI(title="AlertTrail API", version="1.0.0")
 # === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
+
+# asegurar carpetas
+Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
+Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
+
+app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
+app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # === DB dep ===
@@ -180,6 +188,13 @@ def dashboard(
         return HTMLResponse(html)
 
 # === Montar routers ===
+# Nuevo: API de login real (POST /auth/login)
+try:
+    from app.routers import auth_login as auth_login_router
+    app.include_router(auth_login_router.router)   # /auth/*
+except Exception as e:
+    print("No pude cargar app.routers.auth_login:", e)
+
 try:
     from app.routers import auth as auth_router_mod
     app.include_router(auth_router_mod.router)          # /auth/*
