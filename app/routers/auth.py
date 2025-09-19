@@ -267,3 +267,17 @@ def _debug_auth(
             "verify_password_hash": ok_p
         })
     return {"count": len(users), "results": out}
+
+
+@router.get("/_debug_cookies", include_in_schema=False)
+def _debug_cookies(request: Request):
+    # cuidado de no imprimir el token; solo nombres
+    return {
+        "host": request.headers.get("host"),
+        "has_cookie_header": bool(request.headers.get("cookie")),
+        "cookie_header_len": len(request.headers.get("cookie") or ""),
+        "cookies_keys": list(request.cookies.keys()),
+        "scheme": request.url.scheme,
+        "path": request.url.path,
+        "cookie_domain_env": os.getenv("COOKIE_DOMAIN", ""),
+    }
