@@ -1,4 +1,8 @@
 # app/main.py
+import os, re
+from datetime import datetime
+from pathlib import Path
+
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,8 +12,6 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-from datetime import datetime
-from pathlib import Path
 
 from app.database import SessionLocal
 from app.security import (
@@ -23,13 +25,9 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
-
-import os, re
-from starlette.responses import RedirectResponse
-
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
 
-# (ya tienes force_www; lo dejamos) — este middleware SOLO loguea si DEBUG_AUTH=1
+# -------- Middleware debug auth: log de cookies en /auth y /dashboard --------
 @app.middleware("http")
 async def _auth_debug_mw(request: Request, call_next):
     if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/dashboard"):
@@ -50,7 +48,9 @@ async def _auth_debug_mw(request: Request, call_next):
         else:
             print("[auth][debug][out]", f"path={request.url.path}", "set-cookie=<NONE>")
     return resp
-    
+# -----------------------------------------------------------------------------
+
+
 # ========= Middleware: forzar www.alerttrail.com =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
@@ -252,7 +252,27 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# Fallbacks mínimos
+# Fallback GET /auth/login (evita 405 si el router auth no montó su GET)
+if not _route_has_method("/auth/login", "GET"):
+    @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
+    def _fb_auth_login_get(request: Request):
+        try:
+            resp = templates.TemplateResponse("login.html", {"request": request})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        except TemplateNotFound:
+            html = """<!doctype html><meta charset='utf-8'>
+            <title>Login — AlertTrail</title>
+            <form method="post" action="/auth/login/web"
+                  style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+              <h2>Iniciar sesión</h2>
+              <input name="email" type="email" placeholder="Email" required>
+              <input name="password" type="password" placeholder="Contraseña" required>
+              <button>Entrar</button>
+            </form>"""
+            return HTMLResponse(html)
+
+# Fallbacks mínimos para login POST
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
     def _fb_auth_login_post(
