@@ -1,3 +1,4 @@
+# app/main.py
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,9 +14,10 @@ from pathlib import Path
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie,
-    get_current_user_cookie,
+    get_current_user_cookie,   # <- usamos esto directo en /dashboard
     get_password_hash,
     verify_password,
+    clear_access_cookie,       # <- para /logout
 )
 from app.models import User
 
@@ -152,10 +154,11 @@ def register_action(
     issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
+# Logout con borrado correcto de cookie
 @app.get("/logout")
 def logout(_response: Response):
     r = RedirectResponse(url="/")
-    r.delete_cookie("access_token", path="/")
+    clear_access_cookie(r)   # <-- borra cookie con mismo nombre/dominio/path
     return r
 
 # === Dashboard protegido ===
@@ -163,22 +166,16 @@ def logout(_response: Response):
 def dashboard(
     request: Request,
     db: Session = Depends(get_db),
-    current=Depends(get_current_user_optional),
 ):
-    if not current:
-        return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
+    # Si no hay cookie válida, esta dependencia levanta 401
+    user = get_current_user_cookie(request, db)
 
-    user = current  # get_current_user_cookie(request, db) ya devuelve User
-    try:
-        role = (getattr(user, "role", "") or "").lower()
-        is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
-        return templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "is_admin": is_admin})
-    except TemplateNotFound:
-        html = f"""<!doctype html><meta charset='utf-8'><div style="font-family:system-ui;padding:24px">
-          <h1>Dashboard (fallback)</h1><p>Hola <b>{user.name}</b> ({user.email})</p>
-          <p>Falta <code>{TEMPLATES_DIR}/dashboard.html</code>.</p>
-          <p><a href="/logout">Salir</a></p></div>"""
-        return HTMLResponse(html)
+    role = (getattr(user, "role", "") or "").lower()
+    is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
+
+    resp = templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "is_admin": is_admin})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 # === Montar routers ===
 try:
@@ -291,13 +288,13 @@ async def http_exc_handler(request: Request, exc: HTTPException):
             return RedirectResponse(url="/auth/login", status_code=302)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse as _HTMLResponse
 
 @app.exception_handler(Exception)
 async def unhandled_exc_handler(request: Request, exc: Exception):
     import traceback; traceback.print_exc()
     if "text/html" in (request.headers.get("accept") or ""):
-        return HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
+        return _HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
     return JSONResponse({"detail": repr(exc)}, status_code=500)
 
 # === Health & HEAD ===
