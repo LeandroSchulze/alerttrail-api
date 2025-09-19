@@ -11,20 +11,23 @@ from fastapi import Cookie, HTTPException, status, Request
 from fastapi.responses import Response
 
 # ================== Config ==================
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
+JWT_SECRET = (os.getenv("JWT_SECRET") or "change-me")
 JWT_ALG = "HS256"
+
+# Activa logs de diagnóstico si DEBUG_AUTH=1/true/on
+DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
 # Cookies de sesión (expiran al cerrar el navegador si True)
 SESSION_ONLY_COOKIES = True
 ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "60"))  # usado si SESSION_ONLY_COOKIES=False
 
-# Debe coincidir con auth.py
+# Debe coincidir con lo que use tu app
 COOKIE_NAME   = os.getenv("COOKIE_NAME", "access_token")
 COOKIE_PATH   = "/"
-COOKIE_SECURE = True            # En HTTPS True. En localhost podés poner False.
+COOKIE_SECURE = True            # En HTTPS True (Render va con HTTPS)
 COOKIE_HTTPONLY = True
 COOKIE_SAMESITE = "lax"
-# Si usás apex + www, poné .alerttrail.com; si usás SIEMPRE www, podés dejar vacío
+# Si usás SIEMPRE www, conviene dejarlo vacío (host-only). Si querés compartir entre apex y www: ".alerttrail.com"
 COOKIE_DOMAIN = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
 
 # ================== Password Hash (PBKDF2) ==================
@@ -37,7 +40,6 @@ def _pbkdf2_hash(password: str, salt: bytes, iterations: int) -> bytes:
     return hashlib.pbkdf2_hmac(PBKDF2_ALG, password.encode("utf-8"), salt, iterations)
 
 def get_password_hash(password: str) -> str:
-    """API usada por scripts/init_db.py y register/login."""
     salt = os.urandom(PBKDF2_SALT_BYTES)
     dk = _pbkdf2_hash(password, salt, PBKDF2_ITER)
     return "pbkdf2${}${}${}".format(
@@ -47,38 +49,28 @@ def get_password_hash(password: str) -> str:
     )
 
 def verify_password(password: str, stored: str) -> bool:
-    """
-    Soporta:
-    - PBKDF2:  pbkdf2$<iters>$<salt_b64>$<hash_b64>
-    - bcrypt ($2a$ / $2b$) si el paquete está instalado; si no, devuelve False.
-    """
     try:
         if not stored:
             return False
-
-        # bcrypt (opcional)
+        # bcrypt (si tu DB tuviera hashes viejos)
         if stored.startswith("$2b$") or stored.startswith("$2a$"):
             try:
                 import bcrypt
                 return bcrypt.checkpw(password.encode("utf-8"), stored.encode("utf-8"))
             except Exception:
                 return False
-
         # PBKDF2
         parts = stored.split("$")
         if len(parts) == 4 and parts[0] == "pbkdf2":
             _, iters_s, salt_b64, dk_b64 = parts
-
             def _unb64(s: str) -> bytes:
                 pad = "=" * (-len(s) % 4)
                 return base64.urlsafe_b64decode(s + pad)
-
             iters = int(iters_s)
             salt = _unb64(salt_b64)
             expected = _unb64(dk_b64)
             test = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iters)
             return hmac.compare_digest(expected, test)
-
         return False
     except Exception:
         return False
@@ -94,19 +86,20 @@ def create_access_token(data: Dict[str, Any], expires_minutes: Optional[int] = N
 def decode_token(token: str) -> Dict[str, Any]:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-    except jwt.ExpiredSignatureError:
+    except jwt.ExpiredSignatureError as e:
+        if DEBUG_AUTH: print("[auth][debug] decode: expired:", repr(e))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expirado")
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        if DEBUG_AUTH: print("[auth][debug] decode: invalid:", repr(e))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
-# Alias por si en algún módulo llaman decode_access_token
+# Alias por si algún módulo llama decode_access_token
 decode_access_token = decode_token
 
 # ================== Cookie helpers ==================
 def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
     """
     Genera un JWT y lo setea en la MISMA response.
-    Si SESSION_ONLY_COOKIES=True => sin expiración (session cookie).
     """
     if SESSION_ONLY_COOKIES:
         token = create_access_token(user_claims, expires_minutes=None)
@@ -138,6 +131,10 @@ def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
         if COOKIE_DOMAIN:
             cookie_kwargs["domain"] = COOKIE_DOMAIN
         response.set_cookie(**cookie_kwargs)
+
+    if DEBUG_AUTH:
+        print("[auth][debug] issue_cookie: domain=", COOKIE_DOMAIN or "<host-only>")
+
     return token
 
 def clear_access_cookie(response: Response) -> None:
@@ -163,15 +160,20 @@ def get_current_user_cookie(
     Si no, devuelve el dict de claims.
     Acepta claims 'sub' | 'user_id' | 'uid'.
     """
-    token = access_token
-    if (not token) and request is not None:
-        token = request.cookies.get(COOKIE_NAME)
+    token = access_token or (request.cookies.get(COOKIE_NAME) if request is not None else None)
     if not token:
+        if DEBUG_AUTH: print("[auth][debug] no-cookie")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+    if DEBUG_AUTH:
+        print("[auth][debug] token-len:", len(token))
 
     claims = decode_token(token)
 
-    # sin DB: devolvemos claims (compat antigüa)
+    if DEBUG_AUTH:
+        print("[auth][debug] claims:", {k: claims.get(k) for k in ("sub", "user_id", "uid", "email")})
+
+    # sin DB: devolvemos claims
     if db is None:
         return claims
 
@@ -180,6 +182,7 @@ def get_current_user_cookie(
     try:
         uid_int = int(uid)
     except Exception:
+        if DEBUG_AUTH: print("[auth][debug] invalid uid:", repr(uid))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
     try:
@@ -189,7 +192,12 @@ def get_current_user_cookie(
         user = db.query(models.User).get(uid_int)  # SQLAlchemy 1.x fallback
 
     if not user:
+        if DEBUG_AUTH: print("[auth][debug] user-not-found:", uid_int)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+
+    if DEBUG_AUTH:
+        print("[auth][debug] user-ok:", user.id, getattr(user, "email", None))
+
     return user
 
 def issue_access_cookie_for_user(response: Response, user_id: int, email: str, is_admin: bool, plan: str = "FREE") -> str:
