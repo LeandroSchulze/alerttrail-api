@@ -1,3 +1,4 @@
+# app/security.py
 import os
 import hmac
 import base64
@@ -13,16 +14,18 @@ from fastapi.responses import Response
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
 JWT_ALG = "HS256"
 
-# Cookies de sesión (expiran al cerrar el navegador)
+# Cookies de sesión (expiran al cerrar el navegador si True)
 SESSION_ONLY_COOKIES = True
 ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "60"))  # usado si SESSION_ONLY_COOKIES=False
 
-COOKIE_NAME = "access_token"
-COOKIE_PATH = "/"
-COOKIE_SECURE = True           # En HTTPS True. En localhost podés poner False.
+# Debe coincidir con auth.py
+COOKIE_NAME   = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_PATH   = "/"
+COOKIE_SECURE = True            # En HTTPS True. En localhost podés poner False.
 COOKIE_HTTPONLY = True
 COOKIE_SAMESITE = "lax"
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip()  # ej: ".alerttrail.com" para compartir entre www y root
+# Si usás apex + www, poné .alerttrail.com; si usás SIEMPRE www, podés dejar vacío
+COOKIE_DOMAIN = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
 
 # ================== Password Hash (PBKDF2) ==================
 # Formato: pbkdf2$<iterations>$<salt_b64>$<hash_b64>
@@ -34,7 +37,7 @@ def _pbkdf2_hash(password: str, salt: bytes, iterations: int) -> bytes:
     return hashlib.pbkdf2_hmac(PBKDF2_ALG, password.encode("utf-8"), salt, iterations)
 
 def get_password_hash(password: str) -> str:
-    """API usada por scripts/init_db.py"""
+    """API usada por scripts/init_db.py y register/login."""
     salt = os.urandom(PBKDF2_SALT_BYTES)
     dk = _pbkdf2_hash(password, salt, PBKDF2_ITER)
     return "pbkdf2${}${}${}".format(
@@ -65,9 +68,11 @@ def verify_password(password: str, stored: str) -> bool:
         parts = stored.split("$")
         if len(parts) == 4 and parts[0] == "pbkdf2":
             _, iters_s, salt_b64, dk_b64 = parts
+
             def _unb64(s: str) -> bytes:
                 pad = "=" * (-len(s) % 4)
                 return base64.urlsafe_b64decode(s + pad)
+
             iters = int(iters_s)
             salt = _unb64(salt_b64)
             expected = _unb64(dk_b64)
@@ -94,9 +99,15 @@ def decode_token(token: str) -> Dict[str, Any]:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
+# Alias por si en algún módulo llaman decode_access_token
+decode_access_token = decode_token
+
 # ================== Cookie helpers ==================
 def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
-    # Generamos token (con o sin exp)
+    """
+    Genera un JWT y lo setea en la MISMA response.
+    Si SESSION_ONLY_COOKIES=True => sin expiración (session cookie).
+    """
     if SESSION_ONLY_COOKIES:
         token = create_access_token(user_claims, expires_minutes=None)
         cookie_kwargs = dict(
@@ -160,11 +171,11 @@ def get_current_user_cookie(
 
     claims = decode_token(token)
 
-    # si no hay db, devolvemos claims (compat antigua)
+    # sin DB: devolvemos claims (compat antigüa)
     if db is None:
         return claims
 
-    # con db: devolvemos el usuario
+    # con DB: devolvemos el usuario
     uid = claims.get("sub") or claims.get("user_id") or claims.get("uid")
     try:
         uid_int = int(uid)
@@ -175,7 +186,7 @@ def get_current_user_cookie(
         from app import models
         user = db.get(models.User, uid_int)  # SQLAlchemy 2.x
     except Exception:
-        user = db.query(models.User).get(uid_int)  # SQLAlchemy 1.x
+        user = db.query(models.User).get(uid_int)  # SQLAlchemy 1.x fallback
 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
