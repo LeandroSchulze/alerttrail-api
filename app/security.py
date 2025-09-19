@@ -7,31 +7,29 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 import jwt
-from fastapi import Cookie, HTTPException, status, Request
+from fastapi import HTTPException, status, Request
 from fastapi.responses import Response
 
 # ================== Config ==================
 JWT_SECRET = (os.getenv("JWT_SECRET") or "change-me")
 JWT_ALG = "HS256"
 
-# Activa logs de diagnóstico si DEBUG_AUTH=1/true/on
+# Logs de diagnóstico si DEBUG_AUTH=1/true/on
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
-# Cookies de sesión (expiran al cerrar el navegador si True)
+# Cookies
 SESSION_ONLY_COOKIES = True
-ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "60"))  # usado si SESSION_ONLY_COOKIES=False
+ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "60"))  # si SESSION_ONLY_COOKIES=False
 
-# Debe coincidir con lo que use tu app
-COOKIE_NAME   = os.getenv("COOKIE_NAME", "access_token")
-COOKIE_PATH   = "/"
-COOKIE_SECURE = True            # En HTTPS True (Render va con HTTPS)
+COOKIE_NAME    = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_PATH    = "/"
+COOKIE_SECURE  = True           # HTTPS en Render
 COOKIE_HTTPONLY = True
 COOKIE_SAMESITE = "lax"
-# Si usás SIEMPRE www, conviene dejarlo vacío (host-only). Si querés compartir entre apex y www: ".alerttrail.com"
-COOKIE_DOMAIN = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
+# Si usás SIEMPRE www, podés dejarlo vacío (host-only). Para compartir apex/www: ".alerttrail.com"
+COOKIE_DOMAIN  = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
 
 # ================== Password Hash (PBKDF2) ==================
-# Formato: pbkdf2$<iterations>$<salt_b64>$<hash_b64>
 PBKDF2_ITER = int(os.getenv("PBKDF2_ITER", "260000"))
 PBKDF2_ALG = "sha256"
 PBKDF2_SALT_BYTES = 16
@@ -52,7 +50,7 @@ def verify_password(password: str, stored: str) -> bool:
     try:
         if not stored:
             return False
-        # bcrypt (si tu DB tuviera hashes viejos)
+        # bcrypt (por si hay hashes viejos)
         if stored.startswith("$2b$") or stored.startswith("$2a$"):
             try:
                 import bcrypt
@@ -93,14 +91,11 @@ def decode_token(token: str) -> Dict[str, Any]:
         if DEBUG_AUTH: print("[auth][debug] decode: invalid:", repr(e))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
-# Alias por si algún módulo llama decode_access_token
-decode_access_token = decode_token
+decode_access_token = decode_token  # alias
 
 # ================== Cookie helpers ==================
 def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
-    """
-    Genera un JWT y lo setea en la MISMA response.
-    """
+    """Genera un JWT y lo setea en la MISMA response."""
     if SESSION_ONLY_COOKIES:
         token = create_access_token(user_claims, expires_minutes=None)
         cookie_kwargs = dict(
@@ -151,33 +146,33 @@ def clear_access_cookie(response: Response) -> None:
 
 # ================== Auth dependency ==================
 def get_current_user_cookie(
-    request: Optional[Request] = None,
-    db=None,  # si viene, devolvemos el objeto User
-    access_token: Optional[str] = Cookie(default=None, alias=COOKIE_NAME),
+    request: Request,
+    db=None,                     # si viene, devolvemos el objeto User
 ):
     """
-    Si se pasa 'db', devuelve el objeto User.
-    Si no, devuelve el dict de claims.
-    Acepta claims 'sub' | 'user_id' | 'uid'.
+    Lee el JWT desde la cookie y devuelve:
+      - el objeto User si se pasa 'db'
+      - o los claims si no se pasa 'db'
     """
-    token = access_token or (request.cookies.get(COOKIE_NAME) if request is not None else None)
+    token = request.cookies.get(COOKIE_NAME)
     if not token:
         if DEBUG_AUTH: print("[auth][debug] no-cookie")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
 
     if DEBUG_AUTH:
-        print("[auth][debug] token-len:", len(token))
+        try:
+            print("[auth][debug] token-len:", len(token))
+        except Exception:
+            print("[auth][debug] token present (non-str)")
 
     claims = decode_token(token)
 
     if DEBUG_AUTH:
         print("[auth][debug] claims:", {k: claims.get(k) for k in ("sub", "user_id", "uid", "email")})
 
-    # sin DB: devolvemos claims
     if db is None:
         return claims
 
-    # con DB: devolvemos el usuario
     uid = claims.get("sub") or claims.get("user_id") or claims.get("uid")
     try:
         uid_int = int(uid)
@@ -189,7 +184,7 @@ def get_current_user_cookie(
         from app import models
         user = db.get(models.User, uid_int)  # SQLAlchemy 2.x
     except Exception:
-        user = db.query(models.User).get(uid_int)  # SQLAlchemy 1.x fallback
+        user = db.query(models.User).get(uid_int)  # SQLAlchemy 1.x
 
     if not user:
         if DEBUG_AUTH: print("[auth][debug] user-not-found:", uid_int)
