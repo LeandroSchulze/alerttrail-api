@@ -23,6 +23,34 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
+
+import os, re
+from starlette.responses import RedirectResponse
+
+DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
+
+# (ya tienes force_www; lo dejamos) — este middleware SOLO loguea si DEBUG_AUTH=1
+@app.middleware("http")
+async def _auth_debug_mw(request: Request, call_next):
+    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/dashboard"):
+        ck = request.headers.get("cookie")
+        print(
+            "[auth][debug][in]",
+            f"path={request.url.path}",
+            f"host={request.headers.get('host')}",
+            f"has_cookie={bool(ck)}",
+            f"cookie_len={len(ck or '')}",
+        )
+    resp = await call_next(request)
+    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login"):
+        sc = resp.headers.get("set-cookie", "")
+        masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
+        if sc:
+            print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked}")
+        else:
+            print("[auth][debug][out]", f"path={request.url.path}", "set-cookie=<NONE>")
+    return resp
+    
 # ========= Middleware: forzar www.alerttrail.com =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
