@@ -48,6 +48,27 @@ async def _auth_debug_mw(request: Request, call_next):
 # -----------------------------------------------------------------------------
 
 
+# ---- Debug: ver claims del JWT actual ----
+@app.get("/_cookie_decode", include_in_schema=False)
+def _cookie_decode(request: Request):
+    from app.security import COOKIE_NAME, decode_token
+    tok = request.cookies.get(COOKIE_NAME)
+    out = {"has_cookie": bool(tok), "len": len(tok or "")}
+    try:
+        out["claims"] = decode_token(tok) if tok else None
+    except Exception as e:
+        out["error"] = repr(e)
+    return out
+
+# ---- Debug: borrar cookie de acceso ----
+@app.get("/_cookie_clear", include_in_schema=False)
+def _cookie_clear():
+    r = RedirectResponse(url="/auth/login", status_code=303)
+    from app.security import clear_access_cookie
+    clear_access_cookie(r)
+    return r
+    
+
 # ========= Middleware: forzar www.alerttrail.com (usa 308 para conservar POST) =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
