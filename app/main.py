@@ -30,7 +30,7 @@ DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
 # -------- Middleware debug auth: log de cookies en /auth y /dashboard --------
 @app.middleware("http")
 async def _auth_debug_mw(request: Request, call_next):
-    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/dashboard"):
+    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/dashboard", "/_cookie_test_set"):
         ck = request.headers.get("cookie")
         print(
             "[auth][debug][in]",
@@ -40,7 +40,7 @@ async def _auth_debug_mw(request: Request, call_next):
             f"cookie_len={len(ck or '')}",
         )
     resp = await call_next(request)
-    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/login", "/register"):
+    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/login", "/register", "/_cookie_test_set"):
         sc = resp.headers.get("set-cookie", "")
         masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
         print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked or '<NONE>'}")
@@ -48,15 +48,16 @@ async def _auth_debug_mw(request: Request, call_next):
 # -----------------------------------------------------------------------------
 
 
-# ========= Middleware: forzar www.alerttrail.com =========
+# ========= Middleware: forzar www.alerttrail.com (usa 308 para conservar POST) =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
     if host == "alerttrail.com":  # apex -> www
         url = request.url.replace(netloc="www.alerttrail.com")
-        return RedirectResponse(str(url), status_code=301)
+        # 308 Permanent Redirect preserva método y body (POST no se convierte en GET)
+        return RedirectResponse(str(url), status_code=308)
     return await call_next(request)
-# =========================================================
+# =======================================================================================
 
 # === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
@@ -139,7 +140,7 @@ def home(request: Request, user=Depends(get_current_user_optional)):
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-# Compatibilidad: POST /login (formulario antiguo)  **FIX cookie en el redirect**
+# Compatibilidad: POST /login (formulario antiguo)  **cookie en el mismo redirect**
 @app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email_norm = email.strip().lower()
@@ -166,7 +167,7 @@ def register_page(request: Request):
         </form>"""
         return HTMLResponse(html)
 
-# **FIX cookie en el redirect**
+# **cookie en el mismo redirect**
 @app.post("/register")
 def register_action(
     response: Response,
@@ -211,6 +212,32 @@ def dashboard(
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
+# === Endpoints de diagnóstico de cookie ===
+@app.get("/_cookie_test_set", include_in_schema=False)
+def _cookie_test_set():
+    r = RedirectResponse(url="/_cookie_test_get", status_code=303)
+    # setea una cookie simple de prueba (sin JWT)
+    from app.security import COOKIE_NAME
+    r.set_cookie(
+        key=COOKIE_NAME,
+        value="test-cookie",
+        path="/",
+        secure=True,          # Render usa HTTPS
+        httponly=True,
+        samesite="lax",
+        domain=(os.getenv("COOKIE_DOMAIN") or None),  # host-only si no hay env
+    )
+    return r
+
+@app.get("/_cookie_test_get", include_in_schema=False)
+def _cookie_test_get(request: Request):
+    return {
+        "host": request.headers.get("host"),
+        "has_cookie_header": bool(request.headers.get("cookie")),
+        "cookies": list(request.cookies.keys()),
+        "cookie_value_sample": (request.cookies.get("access_token") or "")[:16]
+    }
+
 # === Montar routers ===
 try:
     from app.routers import auth as auth_router_mod
@@ -247,7 +274,7 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# Fallback GET /auth/login (evita 405 si el router auth no montó su GET)
+# Fallback GET /auth/login
 if not _route_has_method("/auth/login", "GET"):
     @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
     def _fb_auth_login_get(request: Request):
@@ -267,7 +294,7 @@ if not _route_has_method("/auth/login", "GET"):
             </form>"""
             return HTMLResponse(html)
 
-# Fallbacks mínimos para login POST  **FIX cookie en el redirect**
+# Fallbacks mínimos para login POST  **cookie en el mismo redirect**
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
     def _fb_auth_login_post(
