@@ -130,6 +130,19 @@ async def login_web(request: Request, db: Session = Depends(get_db)):
         import traceback; traceback.print_exc()
         return HTMLResponse(f"<pre>Login error: {e!r}</pre>", status_code=500)
 
+import re
+
+# ... ya creaste resp = RedirectResponse(...); y llamaste a issue_access_cookie(resp, claims)
+if os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"):
+    sc = resp.headers.get("set-cookie", "")
+    masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
+    print(
+        "[auth][debug] POST /auth/login/web:",
+        f"host={request.headers.get('host')}",
+        f"cookie-domain={os.getenv('COOKIE_DOMAIN','') or '(host-only)'}",
+        f"set-cookie={masked}",
+    )
+
 
 # LOGOUT (GET/POST) -> borra cookie con el MISMO nombre/dominio/path
 @router.get("/logout")
