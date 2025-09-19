@@ -23,6 +23,17 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
+# ========= Middleware: forzar www.alerttrail.com =========
+@app.middleware("http")
+async def force_www(request: Request, call_next):
+    # Host puede venir con puerto; nos quedamos con el nombre
+    host = (request.headers.get("host") or "").split(":", 1)[0].lower()
+    if host == "alerttrail.com":  # apex -> www
+        url = request.url.replace(netloc="www.alerttrail.com")
+        return RedirectResponse(str(url), status_code=301)
+    return await call_next(request)
+# =========================================================
+
 # === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
