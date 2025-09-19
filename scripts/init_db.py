@@ -1,16 +1,34 @@
 # scripts/init_db.py
 import os
+from datetime import datetime
 from sqlalchemy import text, inspect
+
 from app.database import engine, SessionLocal
 from app.models import Base, User  # Modelos base requeridos
 
 # Si estos modelos existen en tu repo, el import no debe romper el script
-try:  # opcional (solo para asegurar metadata completa si existen)
+try:  # opcional (sólo para asegurar metadata completa si existen)
     from app.models import AllowedIP, ReportDownload  # noqa: F401
 except Exception:
     pass
 
-from app.security import get_password_hash
+# get_password_hash puede estar en app.security o en app.utils.security
+try:
+    from app.security import get_password_hash
+except Exception:
+    from app.utils.security import get_password_hash  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Utilidades
+# ---------------------------------------------------------------------------
+def masked(s: str) -> str:
+    if not s:
+        return ""
+    if "@" in s:
+        name, dom = s.split("@", 1)
+        return name[:2] + "***@" + dom
+    return s[:2] + "***"
 
 
 # ---------------------------------------------------------------------------
@@ -19,6 +37,7 @@ from app.security import get_password_hash
 def ensure_tables():
     """Crea todas las tablas declaradas en app.models si no existen."""
     Base.metadata.create_all(bind=engine)
+    print("[init_db] create_all OK")
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +55,7 @@ def ensure_users_columns():
         cols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
         # Si la tabla no existe aún, la crea create_all y no hay que migrar nada
+        print("[init_db] Tabla users no existe aún (será creada por create_all)")
         return
 
     with engine.begin() as conn:
@@ -44,16 +64,19 @@ def ensure_users_columns():
                 "ALTER TABLE users "
                 "ADD COLUMN is_active BOOLEAN DEFAULT 1 NOT NULL"
             ))
+            print("[init_db] users.is_active agregado")
         if "plan" not in cols:
             conn.execute(text(
                 "ALTER TABLE users "
                 "ADD COLUMN plan VARCHAR(20) DEFAULT 'free' NOT NULL"
             ))
+            print("[init_db] users.plan agregado")
         if "updated_at" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
             conn.execute(text(
                 "UPDATE users SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
             ))
+            print("[init_db] users.updated_at agregado y backfilled")
 
 
 # ---------------------------------------------------------------------------
@@ -82,23 +105,28 @@ def ensure_mail_accounts_columns():
                 "ALTER TABLE mail_accounts "
                 "ADD COLUMN imap_server VARCHAR(255) DEFAULT 'imap.gmail.com' NOT NULL"
             ))
+            print("[init_db] mail_accounts.imap_server agregado")
         if "imap_port" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
                 "ADD COLUMN imap_port INTEGER DEFAULT 993 NOT NULL"
             ))
+            print("[init_db] mail_accounts.imap_port agregado")
         if "use_ssl" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
                 "ADD COLUMN use_ssl BOOLEAN DEFAULT 1 NOT NULL"
             ))
+            print("[init_db] mail_accounts.use_ssl agregado")
         if "enc_blob" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
                 "ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
             ))
+            print("[init_db] mail_accounts.enc_blob agregado")
         if "created_at" not in cols:
             conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
+            print("[init_db] mail_accounts.created_at agregado")
 
         # Backfill por si quedaron NULL en filas existentes
         conn.execute(text(
@@ -116,6 +144,7 @@ def ensure_mail_accounts_columns():
         conn.execute(text(
             "UPDATE mail_accounts SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
         ))
+        print("[init_db] mail_accounts backfill OK")
 
 
 # ---------------------------------------------------------------------------
@@ -124,43 +153,75 @@ def ensure_mail_accounts_columns():
 def seed_admin():
     """
     Crea o actualiza el usuario admin.
-    ENV soportadas:
+
+    ENV soportadas (con alias):
       ADMIN_EMAIL (def: admin@tuempresa.com)
-      ADMIN_PASSWORD (def: Admin05112013!)
+      ADMIN_PASS | ADMIN_PASSWORD (def: Admin05112013!)
       ADMIN_NAME (def: Admin)
       ADMIN_PLAN (def: pro)   -> free|pro
-      ADMIN_RESET_PASSWORD=1  -> fuerza regenerar el hash
+      ADMIN_FORCE_RESET | ADMIN_RESET_PASSWORD = 1  -> fuerza regenerar el hash
     """
     email = os.getenv("ADMIN_EMAIL", "admin@tuempresa.com").strip().lower()
-    password = os.getenv("ADMIN_PASSWORD", "Admin05112013!")
+    # Acepta ambos nombres de variable para compatibilidad
+    password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "Admin05112013!"
     name = os.getenv("ADMIN_NAME", "Admin")
     plan = (os.getenv("ADMIN_PLAN", "pro") or "pro").lower()
-    force_reset = os.getenv("ADMIN_RESET_PASSWORD") == "1"
+    force_reset = (
+        os.getenv("ADMIN_FORCE_RESET") == "1" or
+        os.getenv("ADMIN_RESET_PASSWORD") == "1"
+    )
 
     db = SessionLocal()
     try:
         u = db.query(User).filter(User.email == email).first()
+
+        def set_password(user, raw):
+            """Setea el hash respetando el nombre del campo del modelo."""
+            if hasattr(user, "password_hash"):
+                user.password_hash = get_password_hash(raw)
+            elif hasattr(user, "hashed_password"):
+                user.hashed_password = get_password_hash(raw)
+            else:
+                raise RuntimeError("El modelo User no tiene 'password_hash' ni 'hashed_password'.")
+
         if u:
-            if not u.name:
+            # Flags y datos básicos
+            if hasattr(u, "is_admin") and not u.is_admin:
+                u.is_admin = True
+            if hasattr(u, "is_active"):
+                u.is_active = True
+            if hasattr(u, "plan"):
+                u.plan = plan
+            if not getattr(u, "name", None):
                 u.name = name
-            u.plan = plan
-            u.is_active = True
-            if force_reset or not u.password_hash:
-                u.password_hash = get_password_hash(password)
+
+            # Reset si se solicita o si falta hash
+            has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
+            if force_reset or not has_hash:
+                set_password(u, password)
+
             db.add(u)
             db.commit()
-            print(f"[init_db] admin actualizado: {email} (plan={plan})")
+            print(f"[init_db] admin actualizado: {masked(email)} (plan={plan}) "
+                  f"{'[password RESET]' if (force_reset or not has_hash) else ''}")
         else:
+            # Crear usuario admin
             u = User(
                 email=email,
                 name=name,
-                password_hash=get_password_hash(password),
-                plan=plan,
-                is_active=True,
             )
+            if hasattr(u, "plan"):
+                u.plan = plan
+            if hasattr(u, "is_active"):
+                u.is_active = True
+            if hasattr(u, "is_admin"):
+                u.is_admin = True
+
+            set_password(u, password)
+
             db.add(u)
             db.commit()
-            print(f"[init_db] admin creado: {email} (plan={plan})")
+            print(f"[init_db] admin creado: {masked(email)} (plan={plan}) [password SET]")
     finally:
         db.close()
 
