@@ -20,14 +20,17 @@ from app.security import (
     get_password_hash,
     verify_password,
     clear_access_cookie,
+    decode_token,
+    COOKIE_NAME,
 )
+
 from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
 
-# -------- Middleware debug auth: log de cookies en /auth y /dashboard --------
+# -------- Middleware debug auth: log de cookies --------
 @app.middleware("http")
 async def _auth_debug_mw(request: Request, call_next):
     if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/dashboard", "/_cookie_test_set"):
@@ -45,40 +48,17 @@ async def _auth_debug_mw(request: Request, call_next):
         masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
         print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked or '<NONE>'}")
     return resp
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------
 
-
-# ---- Debug: ver claims del JWT actual ----
-@app.get("/_cookie_decode", include_in_schema=False)
-def _cookie_decode(request: Request):
-    from app.security import COOKIE_NAME, decode_token
-    tok = request.cookies.get(COOKIE_NAME)
-    out = {"has_cookie": bool(tok), "len": len(tok or "")}
-    try:
-        out["claims"] = decode_token(tok) if tok else None
-    except Exception as e:
-        out["error"] = repr(e)
-    return out
-
-# ---- Debug: borrar cookie de acceso ----
-@app.get("/_cookie_clear", include_in_schema=False)
-def _cookie_clear():
-    r = RedirectResponse(url="/auth/login", status_code=303)
-    from app.security import clear_access_cookie
-    clear_access_cookie(r)
-    return r
-    
-
-# ========= Middleware: forzar www.alerttrail.com (usa 308 para conservar POST) =========
+# ========= Forzar www.alerttrail.com (308 preserva POST) =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
     if host == "alerttrail.com":  # apex -> www
         url = request.url.replace(netloc="www.alerttrail.com")
-        # 308 Permanent Redirect preserva método y body (POST no se convierte en GET)
         return RedirectResponse(str(url), status_code=308)
     return await call_next(request)
-# =======================================================================================
+# ================================================================
 
 # === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
@@ -161,7 +141,7 @@ def home(request: Request, user=Depends(get_current_user_optional)):
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-# Compatibilidad: POST /login (formulario antiguo)  **cookie en el mismo redirect**
+# Compat: POST /login (form antiguo) — setea cookie en el MISMO redirect
 @app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email_norm = email.strip().lower()
@@ -188,7 +168,7 @@ def register_page(request: Request):
         </form>"""
         return HTMLResponse(html)
 
-# **cookie en el mismo redirect**
+# Reg: setea cookie en el MISMO redirect
 @app.post("/register")
 def register_action(
     response: Response,
@@ -213,7 +193,7 @@ def register_action(
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return r
 
-# Logout con borrado correcto de cookie
+# Logout
 @app.get("/logout")
 def logout(_response: Response):
     r = RedirectResponse(url="/")
@@ -233,20 +213,18 @@ def dashboard(
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
-# === Endpoints de diagnóstico de cookie ===
+# === Endpoints de diagnóstico de cookie (opcionales) ===
 @app.get("/_cookie_test_set", include_in_schema=False)
 def _cookie_test_set():
     r = RedirectResponse(url="/_cookie_test_get", status_code=303)
-    # setea una cookie simple de prueba (sin JWT)
-    from app.security import COOKIE_NAME
     r.set_cookie(
         key=COOKIE_NAME,
         value="test-cookie",
         path="/",
-        secure=True,          # Render usa HTTPS
+        secure=True,
         httponly=True,
         samesite="lax",
-        domain=(os.getenv("COOKIE_DOMAIN") or None),  # host-only si no hay env
+        domain=(os.getenv("COOKIE_DOMAIN") or None),
     )
     return r
 
@@ -256,10 +234,25 @@ def _cookie_test_get(request: Request):
         "host": request.headers.get("host"),
         "has_cookie_header": bool(request.headers.get("cookie")),
         "cookies": list(request.cookies.keys()),
-        "cookie_value_sample": (request.cookies.get("access_token") or "")[:16]
+        "cookie_value_sample": (request.cookies.get(COOKIE_NAME) or "")[:16],
     }
 
-# === Montar routers ===
+@app.get("/_cookie_decode", include_in_schema=False)
+def _cookie_decode(request: Request):
+    raw = request.cookies.get(COOKIE_NAME)
+    tok = raw if isinstance(raw, str) else (raw.value if hasattr(raw, "value") else (str(raw) if raw is not None else None))
+    out = {"has_cookie": tok is not None}
+    try:
+        out["len"] = len(tok) if isinstance(tok, str) else None
+    except Exception:
+        out["len"] = None
+    try:
+        out["claims"] = decode_token(tok) if tok else None
+    except Exception as e:
+        out["error"] = repr(e)
+    return out
+
+# === Montar routers (si fallan, quedan los fallbacks) ===
 try:
     from app.routers import auth as auth_router_mod
     app.include_router(auth_router_mod.router)          # /auth/*
@@ -295,7 +288,7 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# Fallback GET /auth/login
+# GET /auth/login (evita 405 si router auth no está)
 if not _route_has_method("/auth/login", "GET"):
     @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
     def _fb_auth_login_get(request: Request):
@@ -315,7 +308,7 @@ if not _route_has_method("/auth/login", "GET"):
             </form>"""
             return HTMLResponse(html)
 
-# Fallbacks mínimos para login POST  **cookie en el mismo redirect**
+# POST fallbacks — setean cookie en el MISMO redirect
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
     def _fb_auth_login_post(
@@ -349,39 +342,6 @@ if not _route_exists("/auth/login/web"):
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
-
-# === Alias útiles ===
-def _exists(p: str) -> bool:
-    return any(isinstance(r, APIRoute) and r.path == p for r in app.routes)
-
-if _exists("/analysis/generate-pdf") and not _exists("/analysis/generate_pdf"):
-    @app.get("/analysis/generate_pdf")
-    def _alias_gen_pdf():
-        return RedirectResponse(url="/analysis/generate-pdf", status_code=307)
-
-if _exists("/stats") and not _exists("/admin/stats"):
-    @app.get("/admin/stats")
-    def _alias_admin_stats():
-        return RedirectResponse(url="/stats", status_code=307)
-
-if _exists("/mail/scanner") and not _exists("/mail/scan"):
-    @app.get("/mail/scan")
-    def _alias_mail_scan():
-        return RedirectResponse(url="/mail/scanner", status_code=307)
-if _exists("/mail/scan") and not _exists("/mail/scanner"):
-    @app.get("/mail/scanner")
-    def _alias_mail_scanner():
-        return RedirectResponse(url="/mail/scan", status_code=307)
-
-# Alias compat: /tasks/mail/poll -> /mail/poll (para cron viejo)
-from sqlalchemy.orm import Session as _AliasSession
-from fastapi import Depends as _AliasDepends
-
-@app.get("/tasks/mail/poll", include_in_schema=False)
-@app.post("/tasks/mail/poll", include_in_schema=False)
-def _alias_tasks_mail_poll(secret: str, db: _AliasSession = _AliasDepends(get_db)):
-    from app.routers.mail import mail_poll as _mail_poll
-    return _mail_poll(secret, db)
 
 # === Handler global: 401/403 HTML -> login (evita loops) ===
 @app.exception_handler(HTTPException)
