@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>AlertTrail — Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store" />
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
   <style>
@@ -58,16 +59,16 @@
         <a href="/analysis/generate">Generar PDF</a>
         <a href="/mail/connect">Conectar mail</a>
         <a href="/mail/scanner">Scanner de mail</a>
-        <a href="/logout">Salir</a>
+        <a href="/auth/logout">Salir</a>
       </nav>
     </div>
 
     <div class="grid cols-2" style="margin-top:18px">
       <section class="card">
         <p class="muted">Bienvenido/a</p>
-        <h2 style="margin:2px 0 6px">{{ current_user.name }}</h2>
-        <p class="muted">{{ current_user.email }}</p>
-        <p class="muted" style="margin-top:6px">Estado: <strong>{{ (current_user.plan or "FREE")|upper }}</strong></p>
+        <h2 style="margin:2px 0 6px">{{ (current_user.name or 'Usuario') if current_user else 'Usuario' }}</h2>
+        <p class="muted">{{ (current_user.email or '') if current_user else '' }}</p>
+        <p class="muted" style="margin-top:6px">Estado: <strong>{{ ((current_user.plan or "FREE") if current_user else "FREE")|upper }}</strong></p>
       </section>
 
       <section class="card">
@@ -107,7 +108,7 @@
               `Rango: ${data.desde?.slice(0,10)} → ${data.hasta?.slice(0,10)}`;
           }catch(e){ console.error(e); }
         }
-        document.getElementById('refresh').addEventListener('click', loadStats);
+        document.getElementById('refresh')?.addEventListener('click', loadStats);
         loadStats();
       </script>
     {% endif %}
