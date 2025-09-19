@@ -16,10 +16,10 @@ from jinja2 import TemplateNotFound
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie,
-    get_current_user_cookie,   # <- usamos esto directo en /dashboard
+    get_current_user_cookie,
     get_password_hash,
     verify_password,
-    clear_access_cookie,       # <- para /logout
+    clear_access_cookie,
 )
 from app.models import User
 
@@ -40,13 +40,10 @@ async def _auth_debug_mw(request: Request, call_next):
             f"cookie_len={len(ck or '')}",
         )
     resp = await call_next(request)
-    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login"):
+    if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/login", "/register"):
         sc = resp.headers.get("set-cookie", "")
         masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
-        if sc:
-            print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked}")
-        else:
-            print("[auth][debug][out]", f"path={request.url.path}", "set-cookie=<NONE>")
+        print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked or '<NONE>'}")
     return resp
 # -----------------------------------------------------------------------------
 
@@ -54,7 +51,6 @@ async def _auth_debug_mw(request: Request, call_next):
 # ========= Middleware: forzar www.alerttrail.com =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
-    # Host puede venir con puerto; nos quedamos con el nombre
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
     if host == "alerttrail.com":  # apex -> www
         url = request.url.replace(netloc="www.alerttrail.com")
@@ -85,7 +81,6 @@ def get_db():
 # === Usuario opcional: NUNCA lanza excepción ===
 def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
     try:
-        # ahora devuelve objeto User si le pasamos db
         return get_current_user_cookie(request, db)
     except Exception:
         return None
@@ -114,9 +109,9 @@ app.openapi = custom_openapi
 # === Helpers ===
 def db_get(db: Session, model, pk):
     try:
-        return db.get(model, pk)           # SQLAlchemy 2.x
+        return db.get(model, pk)
     except Exception:
-        return db.query(model).get(pk)     # SQLAlchemy 1.x
+        return db.query(model).get(pk)
 
 def truthy(v):
     if isinstance(v, bool): return v
@@ -144,7 +139,7 @@ def home(request: Request, user=Depends(get_current_user_optional)):
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-# Compatibilidad: POST /login (formulario antiguo)
+# Compatibilidad: POST /login (formulario antiguo)  **FIX cookie en el redirect**
 @app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email_norm = email.strip().lower()
@@ -152,8 +147,9 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
-    issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
-    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    return r
 
 @app.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
@@ -170,6 +166,7 @@ def register_page(request: Request):
         </form>"""
         return HTMLResponse(html)
 
+# **FIX cookie en el redirect**
 @app.post("/register")
 def register_action(
     response: Response,
@@ -190,14 +187,15 @@ def register_action(
         created_at=datetime.utcnow(),
     )
     db.add(user); db.commit(); db.refresh(user)
-    issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
-    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    return r
 
 # Logout con borrado correcto de cookie
 @app.get("/logout")
 def logout(_response: Response):
     r = RedirectResponse(url="/")
-    clear_access_cookie(r)   # <-- borra cookie con mismo nombre/dominio/path
+    clear_access_cookie(r)
     return r
 
 # === Dashboard protegido ===
@@ -206,12 +204,9 @@ def dashboard(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    # Si no hay cookie válida, esta dependencia levanta 401
     user = get_current_user_cookie(request, db)
-
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
-
     resp = templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "is_admin": is_admin})
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -272,7 +267,7 @@ if not _route_has_method("/auth/login", "GET"):
             </form>"""
             return HTMLResponse(html)
 
-# Fallbacks mínimos para login POST
+# Fallbacks mínimos para login POST  **FIX cookie en el redirect**
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
     def _fb_auth_login_post(
@@ -286,8 +281,9 @@ if not _route_has_method("/auth/login", "POST"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-        issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
-        return RedirectResponse(url="/dashboard", status_code=303)
+        r = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
 
 if not _route_exists("/auth/login/web"):
     @app.post("/auth/login/web", include_in_schema=False)
@@ -302,8 +298,9 @@ if not _route_exists("/auth/login/web"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-        issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
-        return RedirectResponse(url="/dashboard", status_code=303)
+        r = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
 
 # === Alias útiles ===
 def _exists(p: str) -> bool:
