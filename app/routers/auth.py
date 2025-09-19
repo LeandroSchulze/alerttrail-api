@@ -1,7 +1,7 @@
+# app/routers/auth.py
 import os
 from fastapi import (
-    APIRouter, Depends, HTTPException, Response, status,
-    Request, Query
+    APIRouter, Depends, HTTPException, Response, status, Request, Query
 )
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -14,12 +14,18 @@ from app import models
 from app.security import (
     get_password_hash,
     verify_password,
-    issue_access_cookie,
-    get_current_user_cookie,
+    issue_access_cookie,        # >>> debe setear la cookie en ESTA response
+    get_current_user_cookie,    # >>> tu dependencia que lee cookie y devuelve User
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# --- Config cookies (debe coincidir con app.security) ---
+COOKIE_NAME   = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_DOMAIN = (os.getenv("COOKIE_DOMAIN", "") or "").strip()  # ej: ".alerttrail.com" o vacío
+COOKIE_PATH   = "/"
+
+# --- Templates ---
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
@@ -54,12 +60,15 @@ def _pwd_hash_from_user(u) -> str:
 
 # ====== Rutas ======
 
-# LOGIN HTML (siempre 200, sin redirecciones raras)
+# LOGIN HTML (200 y sin redirecciones). Evita caché para no “pegarse” en el form.
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    resp = templates.TemplateResponse("login.html", {"request": request, "error": None})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
-# LOGIN JSON (setea cookie con sub=user.id)
+
+# LOGIN JSON (API). Setea cookie en la MISMA respuesta.
 @router.post("/login", response_model=dict)
 def login_json(payload: LoginIn, db: Session = Depends(get_db)):
     email_norm = payload.email.strip().lower()
@@ -67,18 +76,22 @@ def login_json(payload: LoginIn, db: Session = Depends(get_db)):
     hp = _pwd_hash_from_user(user)
     if not user or not verify_password(payload.password, hp):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas.")
+
     resp = JSONResponse({"ok": True})
-    issue_access_cookie(resp, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    # payload mínimo estándar JWT: sub + email
+    issue_access_cookie(resp, {"sub": str(user.id), "email": user.email})
     return resp
 
-# GET /auth/login/web -> redirige al form (evita 500 en GET)
+
+# GET /auth/login/web -> manda al form (comodín para GET)
 @router.get("/login/web", include_in_schema=False)
 def login_web_get():
-    return RedirectResponse(url="/auth/login", status_code=302)
+    return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
 
-# POST /auth/login/web (form o JSON) robusto y con logs
+
+# POST /auth/login/web (form o JSON). **El redirect que vuelve al dashboard ya lleva la cookie.**
 @router.post("/login/web", include_in_schema=False)
-async def login_web(request: Request, response: Response, db: Session = Depends(get_db)):
+async def login_web(request: Request, db: Session = Depends(get_db)):
     try:
         print("[auth] handling /auth/login/web (auth.py)")
         ctype = (request.headers.get("content-type") or "").lower()
@@ -90,8 +103,7 @@ async def login_web(request: Request, response: Response, db: Session = Depends(
                 email = body.get("email")
                 password = body.get("password")
         else:
-            # soporta application/x-www-form-urlencoded y multipart/form-data
-            form = await request.form()
+            form = await request.form()  # x-www-form-urlencoded o multipart/form-data
             email = form.get("email")
             password = form.get("password")
 
@@ -102,10 +114,14 @@ async def login_web(request: Request, response: Response, db: Session = Depends(
         user = db.query(models.User).filter(func.lower(models.User.email) == email_norm).first()
         hp = _pwd_hash_from_user(user)
         if not user or not verify_password(password, hp):
-            raise HTTPException(status_code=401, detail="Credenciales incorrectas.")
+            # Volver al login con querystring de error (opcional)
+            return RedirectResponse(url="/auth/login?err=cred", status_code=status.HTTP_303_SEE_OTHER)
 
-        resp = RedirectResponse(url="/dashboard", status_code=303)
-        issue_access_cookie(resp, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        # Redirige al dashboard y **setea la cookie en ESTA response**
+        resp = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+        issue_access_cookie(resp, {"sub": str(user.id), "email": user.email})
+        # Evita que el navegador guarde cache de la respuesta del login
+        resp.headers["Cache-Control"] = "no-store"
         return resp
 
     except HTTPException:
@@ -114,36 +130,52 @@ async def login_web(request: Request, response: Response, db: Session = Depends(
         import traceback; traceback.print_exc()
         return HTMLResponse(f"<pre>Login error: {e!r}</pre>", status_code=500)
 
-# LOGOUT + CLEAR
+
+# LOGOUT (GET/POST) -> borra cookie con el MISMO nombre/dominio/path
 @router.get("/logout")
 def logout_get():
-    resp = RedirectResponse(url="/auth/login", status_code=302)
-    resp.delete_cookie("access_token", path="/")
+    resp = RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
+    if COOKIE_DOMAIN:
+        resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH, domain=COOKIE_DOMAIN)
+    else:
+        resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 @router.post("/logout")
 def logout_post():
-    resp = RedirectResponse(url="/auth/login", status_code=302)
-    resp.delete_cookie("access_token", path="/")
+    resp = RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
+    if COOKIE_DOMAIN:
+        resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH, domain=COOKIE_DOMAIN)
+    else:
+        resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
+
+# Limpieza manual (debug)
 @router.get("/clear", include_in_schema=False)
 def clear_cookie():
     resp = PlainTextResponse("ok")
-    resp.delete_cookie("access_token", path="/")
+    if COOKIE_DOMAIN:
+        resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH, domain=COOKIE_DOMAIN)
+    else:
+        resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
     return resp
+
 
 # ME (devuelve datos del usuario autenticado)
 @router.get("/me")
 def me(request: Request, db: Session = Depends(get_db)):
-    current = get_current_user_cookie(request, db)  # ahora devuelve objeto User
+    current = get_current_user_cookie(request, db)  # debe devolver objeto User
     return {
         "name": getattr(current, "name", ""),
         "email": getattr(current, "email", ""),
         "plan": getattr(current, "plan", "FREE"),
     }
 
-# REGISTER JSON (opcional si usás /register en main)
+
+# REGISTER JSON
 @router.post("/register")
 def register(data: RegisterIn, db: Session = Depends(get_db)):
     email_norm = data.email.strip().lower()
@@ -159,15 +191,23 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
     db.add(user); db.commit(); db.refresh(user)
     return {"id": user.id, "email": user.email, "name": user.name, "plan": getattr(user, "plan", "FREE")}
 
-# Reset admin por ENV (temporal)
+
+# Reset admin por ENV (temporal, borralo cuando ya no lo necesites)
 @router.post("/_force_admin_reset", include_in_schema=True)
-def _force_admin_reset(secret: str = Query(..., description="ADMIN_SETUP_SECRET o JWT_SECRET"), db: Session = Depends(get_db)):
+def _force_admin_reset(
+    secret: str = Query(..., description="ADMIN_SETUP_SECRET o JWT_SECRET"),
+    db: Session = Depends(get_db)
+):
     setup_secret = os.getenv("ADMIN_SETUP_SECRET") or os.getenv("JWT_SECRET") or ""
     if not setup_secret or secret != setup_secret:
         raise HTTPException(status_code=403, detail="forbidden")
-    email = os.getenv("ADMIN_EMAIL"); password = os.getenv("ADMIN_PASS"); name = os.getenv("ADMIN_NAME", "Admin")
+
+    email = os.getenv("ADMIN_EMAIL")
+    password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD")
+    name = os.getenv("ADMIN_NAME", "Admin")
     if not email or not password:
         raise HTTPException(status_code=400, detail="Faltan ADMIN_EMAIL o ADMIN_PASS")
+
     pwd_hash = get_password_hash(password)
     user = db.query(models.User).filter(models.User.email == email).first()
     if user:
@@ -187,9 +227,15 @@ def _force_admin_reset(secret: str = Query(..., description="ADMIN_SETUP_SECRET 
     db.commit()
     return {"ok": True, "admin": email, "action": action}
 
-# Debug temporal
+
+# Debug temporal (verifica hash vs password)
 @router.get("/_debug_auth", include_in_schema=True)
-def _debug_auth(email: EmailStr, password: str, secret: str = Query(..., description="ADMIN_SETUP_SECRET o JWT_SECRET"), db: Session = Depends(get_db)):
+def _debug_auth(
+    email: EmailStr,
+    password: str,
+    secret: str = Query(..., description="ADMIN_SETUP_SECRET o JWT_SECRET"),
+    db: Session = Depends(get_db)
+):
     setup_secret = os.getenv("ADMIN_SETUP_SECRET") or os.getenv("JWT_SECRET") or ""
     if not setup_secret or secret != setup_secret:
         raise HTTPException(status_code=403, detail="forbidden")
