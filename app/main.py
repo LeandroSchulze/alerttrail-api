@@ -209,7 +209,23 @@ def dashboard(
     user = get_current_user_cookie(request, db)
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
-    resp = templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "is_admin": is_admin})
+
+    # Contexto 'user' adicional para el template (sin romper compatibilidad con 'current_user')
+    user_ctx = {
+        "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
+        "email": getattr(user, "email", ""),
+        "plan": (getattr(user, "plan", None) or "FREE").upper(),
+    }
+
+    resp = templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "current_user": user,   # se mantiene
+            "user": user_ctx,       # agregado para el template
+            "is_admin": is_admin,
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
