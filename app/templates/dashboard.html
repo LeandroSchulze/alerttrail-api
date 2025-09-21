@@ -8,47 +8,91 @@
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    body {
-      margin: 0;
-      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      color: #eaf2f7;
-      background: radial-gradient(1200px 600px at 20% -10%, rgba(0,140,200,.20), transparent),
-                  radial-gradient(900px 500px at 120% 10%, rgba(0,160,220,.15), transparent),
-                  #0b1620;
-      min-height: 100vh;
+    :root{
+      --bg-top:#0f2740;      /* más claro que antes */
+      --bg-bot:#0b1d2a;
+      --ink:#eaf2f7;
+      --muted:#bfe6fb;
+      --accent:#0ea5e9;
+      --card-bg:rgba(255,255,255,.06);
+      --card-br:rgba(255,255,255,.1);
+      --shadow:0 10px 24px rgba(0,0,0,.25);
     }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 16px 64px; }
-    .topbar { display:flex; align-items:center; gap:12px; }
-    .brand { font-weight:700; font-size: 22px; }
-    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #0ea5e9; color:#03131c; font-weight: 700;}
-    nav a { color:#7dd3fc; text-decoration:none; margin-left: 20px; }
-    nav a:hover { text-decoration: underline; }
 
-    .card {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px;
-      padding: 18px 20px;
-      box-shadow: 0 8px 20px rgba(0,0,0,.25);
-      backdrop-filter: blur(4px);
+    /* ====== Layout / Fondo ====== */
+    body{
+      margin:0; color:var(--ink);
+      font-family:system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background:
+        radial-gradient(800px 400px at 15% -10%, rgba(124,207,255,.18), transparent 60%),
+        radial-gradient(600px 360px at 110% 0%, rgba(124,207,255,.12), transparent 60%),
+        linear-gradient(180deg, var(--bg-top), var(--bg-bot));
+      min-height:100vh;
     }
-    .grid { display:grid; gap:16px; }
-    .grid.cols-2 { grid-template-columns: 1.2fr .8fr; }
-    .muted { color:#bfe6fb; opacity:.8; }
-    .btn {
-      display:inline-block; padding:10px 14px; border-radius:10px;
-      background:#0ea5e9; color:#03131c; font-weight:700; text-decoration:none;
+    .wrap{ max-width:1100px; margin:0 auto; padding:28px 16px 64px; }
+
+    /* ====== Topbar ====== */
+    .topbar{ display:flex; align-items:center; gap:12px; }
+    .brand{ font-weight:700; font-size:22px; letter-spacing:.2px }
+    .badge{
+      font-size:12px; padding:2px 8px; border-radius:999px;
+      background:#22c55e; color:#06241f; font-weight:800;
+      box-shadow:0 4px 14px rgba(34,197,94,.35);
     }
-    .btn:hover { filter: brightness(.95); }
-    .btn.disabled { pointer-events:none; opacity:.6; }
-    .btn.upgrade { background:#fbbf24; color:#3a2a00; }
-    ul { margin:6px 0 0 18px; }
-    footer { margin-top: 32px; text-align:center; color:#8bd2f7; opacity:.7; }
-    .stats { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-top:8px;}
-    .stat { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px; text-align:center;}
-    .stat h3 { margin:0; font-size:28px;}
-    .stat p { margin:2px 0 0; font-size:12px; opacity:.85;}
-    .hint { font-size:12px; color:#bfe6fb; opacity:.9; margin-top:6px }
+    nav a{
+      color:#a5e6ff; text-decoration:none; margin-left:20px;
+      position:relative; transition:filter .15s ease, opacity .15s ease;
+    }
+    nav a:hover{ filter:brightness(.95) }
+    nav a::after{
+      content:""; position:absolute; left:0; bottom:-6px; width:0; height:2px;
+      background:linear-gradient(90deg,#7dd3fc,#38bdf8);
+      transition:width .18s ease;
+    }
+    nav a:hover::after{ width:100% }
+
+    /* ====== Cards ====== */
+    .card{
+      background:var(--card-bg);
+      border:1px solid var(--card-br);
+      border-radius:16px; padding:18px 20px;
+      box-shadow:var(--shadow); backdrop-filter:blur(4px);
+    }
+    .grid{ display:grid; gap:16px }
+    .grid.cols-2{ grid-template-columns:1.2fr .8fr }
+    .muted{ color:var(--muted); opacity:.9 }
+
+    /* ====== Botones ====== */
+    .btn{
+      display:inline-block; padding:10px 14px; border-radius:12px;
+      background:var(--accent); color:#03131c; font-weight:800; text-decoration:none;
+      transition:transform .12s ease, filter .12s ease, box-shadow .12s ease;
+      box-shadow:0 6px 18px rgba(14,165,233,.28);
+    }
+    .btn:hover{ transform:translateY(-1px); filter:brightness(.96) }
+
+    .btn.disabled{ pointer-events:none; opacity:.6; box-shadow:none }
+    .btn.upgrade{
+      /* nuevo estilo “más lindo” */
+      background:linear-gradient(180deg,#f8c24b,#f59e0b);
+      color:#2b1d00; box-shadow:0 10px 26px rgba(251,191,36,.35), inset 0 -1px 0 rgba(0,0,0,.15);
+      position:relative;
+    }
+    .btn.upgrade::before{
+      content:"★"; font-size:12px; margin-right:6px; display:inline-block; transform:translateY(-1px);
+    }
+    .btn.upgrade:hover{ transform:translateY(-1.5px); filter:brightness(.98) }
+    .btn.upgrade:active{ transform:translateY(0) }
+
+    ul{ margin:6px 0 0 18px }
+    footer{ margin-top:32px; text-align:center; color:#8bd2f7; opacity:.7 }
+
+    .stats{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:8px }
+    .stat{ background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:14px; text-align:center }
+    .stat h3{ margin:0; font-size:28px }
+    .stat p{ margin:2px 0 0; font-size:12px; opacity:.85 }
+
+    .hint{ font-size:12px; color:var(--muted); opacity:.95; margin-top:6px }
   </style>
 </head>
 <body>
@@ -56,19 +100,16 @@
     {% set is_pro = (current_user and (current_user.is_pro or (current_user.plan or 'free')|lower == 'pro')) %}
     <div class="topbar">
       <div class="brand">☰&nbsp; AlertTrail</div>
-      {% if is_pro %}
-        <span class="badge">PRO</span>
-      {% endif %}
+      {% if is_pro %}<span class="badge">PRO</span>{% endif %}
       <nav style="margin-left:auto">
         <a href="/analysis/generate">Generar PDF</a>
 
-        {# --- Mail solo para PRO --- #}
         {% if is_pro %}
           <a href="/mail/connect">Conectar mail</a>
           <a href="/mail/scanner">Scanner de mail</a>
         {% else %}
-          <a href="/billing" title="Disponible solo en PRO" style="opacity:.6;">Conectar mail</a>
-          <a href="/billing" title="Disponible solo en PRO" style="opacity:.6;">Scanner de mail</a>
+          <a href="/billing" title="Disponible solo en PRO" style="opacity:.7">Conectar mail</a>
+          <a href="/billing" title="Disponible solo en PRO" style="opacity:.7">Scanner de mail</a>
         {% endif %}
 
         <a href="/billing">Plan</a>
@@ -83,9 +124,7 @@
         <p class="muted">{{ (current_user.email or '') if current_user else '' }}</p>
         <p class="muted" style="margin-top:6px">
           Estado: <strong>{{ ((current_user.plan or "FREE") if current_user else "FREE")|upper }}</strong>
-          {% if not is_pro %}
-            <span class="muted" style="margin-left:8px;">• FREE incluye 5 escaneos/semana</span>
-          {% endif %}
+          {% if not is_pro %}<span class="muted" style="margin-left:8px;">• FREE incluye 5 escaneos/semana</span>{% endif %}
         </p>
       </section>
 
@@ -163,12 +202,8 @@
         if (quotaHint) quotaHint.textContent = 'PRO: sin límites de escaneos.';
         return;
       }
-
-      // Texto por defecto (si no hay endpoint de cuota aún)
       if (quotaHint) quotaHint.textContent = 'FREE: 5 escaneos de logs por semana.';
 
-      // Intentar leer cuota desde el backend si existe.
-      // Respuesta esperada (ejemplo): { "limit": 5, "used": 2, "remaining": 3, "period": "week" }
       fetch('/analysis/quota', { credentials: 'include' })
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .then(q => {
@@ -176,9 +211,7 @@
           const used = Number(q.used ?? (limit - (q.remaining ?? 0)));
           const remaining = Number(q.remaining ?? Math.max(0, limit - used));
 
-          if (quotaHint) {
-            quotaHint.textContent = `Gratis esta semana: ${used}/${limit} usados · Te quedan ${remaining}`;
-          }
+          if (quotaHint) quotaHint.textContent = `Gratis esta semana: ${used}/${limit} usados · Te quedan ${remaining}`;
 
           if (remaining <= 0 && btnLogs) {
             btnLogs.classList.add('disabled');
@@ -186,9 +219,7 @@
             btnLogs.textContent = 'Límite alcanzado — Mejorar a PRO';
           }
         })
-        .catch(() => {
-          // Si el endpoint no existe todavía, mantenemos el texto por defecto y dejamos que el backend haga el enforcement.
-        });
+        .catch(()=>{});
     })();
   </script>
 </body>
