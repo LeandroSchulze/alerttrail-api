@@ -5,7 +5,7 @@ from typing import Optional
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response, Form, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import TemplateNotFound
 from sqlalchemy.orm import Session
@@ -18,29 +18,26 @@ from app.security import (
     verify_password,
     get_password_hash,
     create_access_token,
-    issue_access_cookie,
     get_current_user_cookie,
-    # Constantes de cookie para evitar desincronización
+    # Constantes para cookies (usamos las mismas que al setear/borrar)
     COOKIE_NAME, COOKIE_PATH, COOKIE_HTTPONLY, COOKIE_SECURE, COOKIE_SAMESITE,
 )
 
-# COOKIE_DOMAIN puede no existir en algunas versiones -> fallback suave
+# COOKIE_DOMAIN puede no existir en algunas versiones -> fallback
 try:
     from app.security import COOKIE_DOMAIN  # type: ignore
 except Exception:
     COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "")
 
-# ---------- Templates: apuntar SIEMPRE a app/templates ----------
-APP_DIR = Path(__file__).resolve().parent.parent       # .../app
-TEMPLATES_DIR = APP_DIR / "templates"                  # .../app/templates
+# Templates en app/templates
+APP_DIR = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = APP_DIR / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 # ---------------- Helpers ----------------
 def _get_user_pwd(u: models.User) -> str:
-    """Devuelve el hash de password sin importar el nombre del campo del modelo."""
     return getattr(u, "hashed_password", None) or getattr(u, "password_hash", "") or ""
 
 def _set_user_pwd(u: models.User, pwd_hash: str) -> None:
@@ -53,7 +50,6 @@ def _set_user_pwd(u: models.User, pwd_hash: str) -> None:
 
 def _norm_email(e: str) -> str:
     return (e or "").strip().lower()
-
 
 # ---------------- Schemas ----------------
 class LoginJSON(BaseModel):
@@ -69,31 +65,25 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-
 # ---------------- Vistas HTML ----------------
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: Optional[str] = Query(default="/dashboard")):
-    """Renderiza el login HTML; si falta el template, entrega un fallback mínimo."""
     try:
         return templates.TemplateResponse("login.html", {"request": request, "next": next})
     except TemplateNotFound:
         inline = f"""
-        <!doctype html><html lang="es"><meta charset="utf-8">
-        <title>Login | AlertTrail</title>
-        <body style="font-family:system-ui;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#f6f7fb;margin:0">
+        <!doctype html><html lang="es"><meta charset="utf-8"><title>Login | AlertTrail</title>
+        <body style="font-family:system-ui;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#0b2133;margin:0">
           <form method="post" action="/auth/login/web" style="background:#fff;max-width:420px;width:100%;padding:28px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.06)">
-            <h1 style="font-size:20px;margin:0 0 14px">Ingresar a AlertTrail</h1>
-            <label for="email" style="display:block;font-size:14px;margin:10px 0 6px">Email</label>
-            <input id="email" name="email" type="email" required style="width:100%;padding:12px 14px;border:1px solid #dfe3ea;border-radius:10px;font-size:15px">
-            <label for="password" style="display:block;font-size:14px;margin:10px 0 6px">Contraseña</label>
-            <input id="password" name="password" type="password" required style="width:100%;padding:12px 14px;border:1px solid #dfe3ea;border-radius:10px;font-size:15px">
-            <input type="hidden" name="next" value="{next or '/dashboard'}">
-            <button type="submit" style="margin-top:16px;width:100%;padding:12px 14px;border:0;border-radius:12px;background:#0ea5e9;color:#fff;font-weight:600;font-size:15px;cursor:pointer">Entrar</button>
+            <h1 style="font-size:20px;margin:0 0 14px">Ingresar</h1>
+            <label>Email</label><input name="email" type="email" required style="width:100%;padding:10px;margin:6px 0">
+            <label>Contraseña</label><input name="password" type="password" required style="width:100%;padding:10px;margin:6px 0">
+            <input type="hidden" name="next_url" value="{next or '/dashboard'}">
+            <button type="submit" style="margin-top:12px;padding:10px 14px">Entrar</button>
           </form>
         </body></html>
         """
         return HTMLResponse(inline, status_code=200)
-
 
 # ---------------- JSON APIs ----------------
 @router.post("/register", response_model=dict)
@@ -107,15 +97,11 @@ def register(payload: RegisterJSON, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
     user = models.User(email=email, name=(payload.name or email.split("@")[0]))
-    pwd_hash = get_password_hash(payload.password)
-    _set_user_pwd(user, pwd_hash)
-
+    _set_user_pwd(user, get_password_hash(payload.password))
     db.add(user)
     db.commit()
     db.refresh(user)
-
     return {"id": user.id, "email": user.email, "name": getattr(user, "name", None)}
-
 
 @router.post("/login", response_model=TokenOut)
 def login_json(payload: LoginJSON, db: Session = Depends(get_db)):
@@ -123,12 +109,10 @@ def login_json(payload: LoginJSON, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(func.lower(models.User.email) == email).first()
     if not user or not verify_password(payload.password, _get_user_pwd(user)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
-
     token = create_access_token({"sub": str(user.id)})
     return TokenOut(access_token=token)
 
-
-# ---------------- Login Web (set-cookie + redirect) ----------------
+# ---------------- Login Web (cookie directa + 303) ----------------
 @router.post("/login/web")
 def login_web(
     request: Request,
@@ -151,13 +135,9 @@ def login_web(
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = create_access_token({"sub": str(user.id)})
+    resp = RedirectResponse(url=(next_url or "/dashboard"), status_code=303)
 
-    # Redirección con 303 para no perder el Set-Cookie
-    redirect_to = next_url or "/dashboard"
-    resp = RedirectResponse(url=redirect_to, status_code=303)
-
-    # >>> Seteamos la cookie directamente, sin helpers <<<
-    # Importante: usar los mismos parámetros que en el login
+    # Seteamos la cookie directamente (evita errores de helpers)
     cookie_kwargs = dict(
         key=COOKIE_NAME,
         value=token,
@@ -183,17 +163,15 @@ def me(current_user=Depends(get_current_user_cookie)):
         "email": getattr(current_user, "email", None),
         "name": getattr(current_user, "name", None),
         "is_pro": getattr(current_user, "is_pro", False),
+        "plan": (getattr(current_user, "plan", "free") or "free"),
         "role": getattr(current_user, "role", "user"),
     }
 
-
-# ---------------- Logout (UNIFICADO GET/POST) ----------------
+# ---------------- Logout (GET/POST, doble borrado) ----------------
 @router.api_route("/logout", methods=["GET", "POST"])
 def logout():
-    # 303 garantiza que el navegador haga GET y respete Set-Cookie
     resp = RedirectResponse(url="/auth/login", status_code=303)
-
-    # Borra cookie host-only (sin Domain)
+    # sin domain
     resp.delete_cookie(
         key=COOKIE_NAME,
         path=COOKIE_PATH,
@@ -201,8 +179,7 @@ def logout():
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
     )
-
-    # Y también la variante con Domain, si aplica
+    # con domain (si aplica)
     if COOKIE_DOMAIN:
         resp.delete_cookie(
             key=COOKIE_NAME,
@@ -212,19 +189,16 @@ def logout():
             secure=COOKIE_SECURE,
             samesite=COOKIE_SAMESITE,
         )
-
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
-
-# ---------------- Debug opcional ----------------
+# ---------------- Debug & Rescate ----------------
 @router.get("/_debug_templates")
 def _debug_templates():
-    files = []
     try:
         files = [f.name for f in (TEMPLATES_DIR).glob("*.html")]
     except Exception:
-        pass
+        files = []
     return {"templates_dir": str(TEMPLATES_DIR), "exists": Path(TEMPLATES_DIR).exists(), "files": files}
 
 @router.get("/_debug_cookies")
@@ -232,18 +206,14 @@ def _debug_cookies(request: Request):
     keys = []
     if "cookie" in request.headers:
         raw = request.headers.get("cookie", "")
-        parts = [p.strip() for p in raw.split(";") if p.strip()]
-        for p in parts:
+        for p in [p.strip() for p in raw.split(";") if p.strip()]:
             k = p.split("=", 1)[0].strip()
             if k and k not in keys:
                 keys.append(k)
     return {"cookies_presentes": keys}
 
-
-# ====== ENDPOINTS DE RESCATE (usar solo con secreto) ======
 @router.post("/_force_admin_reset")
 def _force_admin_reset(secret: str = Query(...), db: Session = Depends(get_db)):
-    """Crea/actualiza el admin usando ENV (ADMIN_EMAIL/ADMIN_PASS). Requiere ADMIN_SETUP_SECRET."""
     setup_secret = os.getenv("ADMIN_SETUP_SECRET", "")
     if not setup_secret or secret != setup_secret:
         raise HTTPException(status_code=403, detail="forbidden")
@@ -269,10 +239,8 @@ def _force_admin_reset(secret: str = Query(...), db: Session = Depends(get_db)):
         action = "creado"
     return {"ok": True, "admin": user.email, "action": action}
 
-
 @router.get("/_debug_auth")
 def _debug_auth(email: str, password: str, secret: str, db: Session = Depends(get_db)):
-    """Verifica si la password dada matchea el hash guardado (protegido por ADMIN_SETUP_SECRET)."""
     setup_secret = os.getenv("ADMIN_SETUP_SECRET", "")
     if not setup_secret or secret != setup_secret:
         raise HTTPException(status_code=403, detail="forbidden")
