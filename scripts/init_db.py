@@ -1,7 +1,7 @@
 # scripts/init_db.py
 import os
 from datetime import datetime
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, func
 
 from app.database import engine, SessionLocal
 from app.models import Base, User  # Modelos base requeridos
@@ -29,6 +29,12 @@ def masked(s: str) -> str:
         name, dom = s.split("@", 1)
         return name[:2] + "***@" + dom
     return s[:2] + "***"
+
+def truthy(v: str) -> bool:
+    return str(v or "").strip().lower() in ("1", "true", "yes", "on")
+
+def _norm_email(e: str) -> str:
+    return (e or "").strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +154,7 @@ def ensure_mail_accounts_columns():
 
 
 # ---------------------------------------------------------------------------
-# Seed / actualización de admin
+# Seed / actualización de admin (idempotente y robusto)
 # ---------------------------------------------------------------------------
 def seed_admin():
     """
@@ -156,24 +162,22 @@ def seed_admin():
 
     ENV soportadas (con alias):
       ADMIN_EMAIL (def: admin@tuempresa.com)
-      ADMIN_PASS | ADMIN_PASSWORD (def: Admin05112013!)
+      ADMIN_PASS | ADMIN_PASSWORD
       ADMIN_NAME (def: Admin)
       ADMIN_PLAN (def: pro)   -> free|pro
-      ADMIN_FORCE_RESET | ADMIN_RESET_PASSWORD = 1  -> fuerza regenerar el hash
+      ADMIN_FORCE_RESET | ADMIN_RESET_PASSWORD -> 1/true/yes/on fuerza reset del hash
     """
-    email = os.getenv("ADMIN_EMAIL", "admin@tuempresa.com").strip().lower()
+    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@tuempresa.com"))
     # Acepta ambos nombres de variable para compatibilidad
     password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "Admin05112013!"
     name = os.getenv("ADMIN_NAME", "Admin")
     plan = (os.getenv("ADMIN_PLAN", "pro") or "pro").lower()
-    force_reset = (
-        os.getenv("ADMIN_FORCE_RESET") == "1" or
-        os.getenv("ADMIN_RESET_PASSWORD") == "1"
-    )
+    force_reset = truthy(os.getenv("ADMIN_FORCE_RESET")) or truthy(os.getenv("ADMIN_RESET_PASSWORD"))
 
     db = SessionLocal()
     try:
-        u = db.query(User).filter(User.email == email).first()
+        # 🔸 Match case-insensitive para evitar problemas de capitalización
+        u = db.query(User).filter(func.lower(User.email) == email).first()
 
         def set_password(user, raw):
             """Setea el hash respetando el nombre del campo del modelo."""
@@ -185,25 +189,34 @@ def seed_admin():
                 raise RuntimeError("El modelo User no tiene 'password_hash' ni 'hashed_password'.")
 
         if u:
+            changed = False
             # Flags y datos básicos
-            if hasattr(u, "is_admin") and not u.is_admin:
+            if hasattr(u, "is_admin") and not getattr(u, "is_admin"):
                 u.is_admin = True
-            if hasattr(u, "is_active"):
+                changed = True
+            if hasattr(u, "is_active") and not getattr(u, "is_active"):
                 u.is_active = True
-            if hasattr(u, "plan"):
+                changed = True
+            if hasattr(u, "plan") and getattr(u, "plan") != plan:
                 u.plan = plan
+                changed = True
             if not getattr(u, "name", None):
                 u.name = name
+                changed = True
 
             # Reset si se solicita o si falta hash
             has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
             if force_reset or not has_hash:
                 set_password(u, password)
+                changed = True
 
-            db.add(u)
-            db.commit()
-            print(f"[init_db] admin actualizado: {masked(email)} (plan={plan}) "
-                  f"{'[password RESET]' if (force_reset or not has_hash) else ''}")
+            if changed:
+                db.add(u)
+                db.commit()
+                print(f"[init_db] admin actualizado: {masked(email)} (plan={plan}) "
+                      f"{'[password RESET]' if (force_reset or not has_hash) else ''}")
+            else:
+                print(f"[init_db] admin existe sin cambios: {masked(email)} (plan={plan})")
         else:
             # Crear usuario admin
             u = User(
@@ -222,6 +235,10 @@ def seed_admin():
             db.add(u)
             db.commit()
             print(f"[init_db] admin creado: {masked(email)} (plan={plan}) [password SET]")
+    except Exception as e:
+        db.rollback()
+        print(f"[init_db][ERROR] {e}")
+        raise
     finally:
         db.close()
 
