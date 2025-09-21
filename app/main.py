@@ -277,6 +277,14 @@ try:
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
+# 👇 Billing (AGREGADO)
+try:
+    from app.routers import billing as billing_router_mod
+    app.include_router(billing_router_mod.router)       # /billing/*
+except Exception as e:
+    print("No pude cargar app.routers.billing:", e)
+# 👆 Billing
+
 # === Fallbacks por si /auth/* no quedó montado ===
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
