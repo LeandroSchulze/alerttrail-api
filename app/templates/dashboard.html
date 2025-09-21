@@ -8,106 +8,155 @@
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    body {
-      margin: 0;
+    :root{
+      --brand:#0a3d62;
+      --accent:#38ada9;
+      --accent-2:#82ccdd;
+      --gold-1:#e58e26;
+      --gold-2:#f6b93b;
+      --text:#222;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
       font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      background: linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.85)), 
+      color:var(--text);
+      background: linear-gradient(rgba(255,255,255,.88), rgba(255,255,255,.88)),
                   url('/static/water-bg.jpg') no-repeat center center fixed;
       background-size: cover;
-      color: #222;
     }
-
-    header {
-      background: #0a3d62;
-      color: #fff;
-      padding: 1rem 2rem;
-      text-align: center;
-      font-size: 1.5rem;
-      font-weight: bold;
-      letter-spacing: 1px;
+    header{
+      background:var(--brand);
+      color:#fff;
+      padding:1rem 2rem;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:1rem;
     }
-
-    .container {
-      max-width: 1000px;
-      margin: 2rem auto;
-      padding: 2rem;
-      background: rgba(255, 255, 255, 0.9);
-      border-radius: 1rem;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    header .title{
+      font-weight:800;
+      letter-spacing:.5px;
     }
-
-    h2 {
-      margin-top: 0;
-      color: #0a3d62;
+    header .actions a{
+      color:#fff;
+      text-decoration:none;
+      font-weight:600;
+      padding:.5rem .85rem;
+      border:1px solid rgba(255,255,255,.35);
+      border-radius:.6rem;
+      transition:.2s ease;
     }
-
-    .actions {
-      display: flex;
-      gap: 1rem;
-      flex-wrap: wrap;
-      margin-top: 1.5rem;
+    header .actions a:hover{background:rgba(255,255,255,.12)}
+    .container{
+      max-width:1000px;
+      margin:2rem auto;
+      padding:2rem;
+      background:rgba(255,255,255,.95);
+      border-radius:1rem;
+      box-shadow:0 4px 12px rgba(0,0,0,.12);
     }
-
-    .btn {
-      flex: 1;
-      min-width: 200px;
-      padding: 1rem;
-      text-align: center;
-      border-radius: 12px;
-      text-decoration: none;
-      font-weight: 600;
-      box-shadow: 0 3px 6px rgba(0,0,0,0.2);
-      transition: all 0.3s ease;
+    h2{margin:.2rem 0 0;color:var(--brand)}
+    .muted{color:#555;margin:.35rem 0 0}
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px,1fr));
+      gap:1rem;
+      margin-top:1.25rem;
     }
-
-    .btn:hover {
-      transform: translateY(-3px);
+    .card{
+      padding:1.1rem;
+      border-radius:14px;
+      background:#fff;
+      box-shadow:0 2px 8px rgba(0,0,0,.08);
     }
-
-    .btn-logs {
-      background: #38ada9;
-      color: #fff;
+    .btn{
+      display:block;
+      text-align:center;
+      padding:1rem 1.1rem;
+      border-radius:12px;
+      text-decoration:none;
+      font-weight:700;
+      box-shadow:0 3px 6px rgba(0,0,0,.18);
+      transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;
     }
-
-    .btn-mail {
-      background: #82ccdd;
-      color: #fff;
+    .btn:hover{ transform:translateY(-2px); box-shadow:0 6px 14px rgba(0,0,0,.18); }
+    .btn:active{ transform:translateY(0); opacity:.9; }
+    .btn-logs{ background:var(--accent); color:#fff; }
+    .btn-mail{ background:var(--accent-2); color:#fff; }
+    .btn-pro{
+      background:linear-gradient(135deg, var(--gold-1), var(--gold-2));
+      color:#fff; border:2px solid #fff; font-size:1.06rem;
     }
-
-    .btn-pro {
-      background: linear-gradient(135deg, #e58e26, #f6b93b);
-      color: #fff;
-      font-size: 1.1rem;
-      border: 2px solid #fff;
+    .badges{display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem}
+    .badge{
+      background:#eef6ff; color:#0b57d0; font-weight:600;
+      padding:.35rem .55rem; border-radius:.5rem; font-size:.85rem;
     }
-
-    .btn-pro:hover {
-      background: linear-gradient(135deg, #f6b93b, #e58e26);
-    }
-
-    footer {
-      text-align: center;
-      margin: 2rem 0;
-      font-size: 0.9rem;
-      color: #555;
+    footer{
+      text-align:center; color:#666; font-size:.92rem; margin:2rem 0 1rem;
     }
   </style>
 </head>
 <body>
-  <header>🌊 AlertTrail — Dashboard</header>
+  <!-- Safety: usa 'user' si existe, sino toma 'current_user'; si ninguno está, usa {} -->
+  {% set user = (user if user is defined else (current_user if current_user is defined else {})) %}
+  {% set plan = (user.plan if user and user.plan else 'FREE') %}
+
+  <header>
+    <div class="title">🌊 <strong>AlertTrail</strong> — Dashboard</div>
+    <div class="actions">
+      {% if user and user.email %}
+        <span style="opacity:.85;margin-right:.5rem;">{{ user.email }}</span>
+      {% endif %}
+      <a href="/auth/logout">Cerrar sesión</a>
+    </div>
+  </header>
 
   <div class="container">
-    <h2>Bienvenido, {{ user.name }}</h2>
-    <p>
-      Plan actual: <strong>{{ user.plan }}</strong>  
-      {% if user.plan == "FREE" %} (5 escaneos gratis por semana) {% endif %}
-    </p>
+    <div>
+      <h2>Bienvenido, {{ user.name or user.email or 'Usuario' }}</h2>
+      <p class="muted">
+        Plan actual: <strong>{{ plan }}</strong>
+        {% if plan|upper == 'FREE' %} — tenés <strong>5 escaneos de logs gratis por semana</strong>.{% endif %}
+      </p>
+      <div class="badges">
+        <span class="badge">Estado: Activo</span>
+        {% if plan|upper == 'PRO' %}
+          <span class="badge">PRO habilitado</span>
+        {% else %}
+          <span class="badge">Modo FREE</span>
+        {% endif %}
+      </div>
+    </div>
 
-    <div class="actions">
-      <a href="/analysis" class="btn btn-logs">📊 Analizar Logs</a>
-      <a href="/mail" class="btn btn-mail">📧 Escanear Emails</a>
-      {% if user.plan != "PRO" %}
-      <a href="/subscribe" class="btn btn-pro">🚀 Hazte PRO</a>
+    <div class="grid" style="margin-top:1.25rem;">
+      <div class="card">
+        <h3>Log Scanner</h3>
+        <p class="muted">Subí archivos de logs (Nginx/Apache) y obtené análisis + PDF.</p>
+        <a class="btn btn-logs" href="/analysis">📊 Analizar Logs</a>
+      </div>
+
+      <div class="card">
+        <h3>Mail Scanner</h3>
+        <p class="muted">Vinculá tu casilla (IMAP) y detectá amenazas entrantes.</p>
+        <a class="btn btn-mail" href="/mail">📧 Escanear Emails</a>
+      </div>
+
+      {% if plan|upper != 'PRO' %}
+      <div class="card">
+        <h3>Mejora a PRO</h3>
+        <p class="muted">Análisis extendido, IA opcional y límites superiores.</p>
+        <a class="btn btn-pro" href="/billing/checkout">🚀 Hazte PRO</a>
+      </div>
+      {% endif %}
+
+      {% if is_admin %}
+      <div class="card">
+        <h3>Panel Admin</h3>
+        <p class="muted">Descargas mensuales, usuarios PRO, métricas.</p>
+        <a class="btn" href="/stats">📈 Ver estadísticas</a>
+      </div>
       {% endif %}
     </div>
   </div>
