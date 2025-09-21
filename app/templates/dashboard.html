@@ -40,25 +40,38 @@
       background:#0ea5e9; color:#03131c; font-weight:700; text-decoration:none;
     }
     .btn:hover { filter: brightness(.95); }
+    .btn.disabled { pointer-events:none; opacity:.6; }
+    .btn.upgrade { background:#fbbf24; color:#3a2a00; }
     ul { margin:6px 0 0 18px; }
     footer { margin-top: 32px; text-align:center; color:#8bd2f7; opacity:.7; }
     .stats { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-top:8px;}
     .stat { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px; text-align:center;}
     .stat h3 { margin:0; font-size:28px;}
     .stat p { margin:2px 0 0; font-size:12px; opacity:.85;}
+    .hint { font-size:12px; color:#bfe6fb; opacity:.9; margin-top:6px }
   </style>
 </head>
 <body>
   <div class="wrap">
+    {% set is_pro = (current_user and (current_user.is_pro or (current_user.plan or 'free')|lower == 'pro')) %}
     <div class="topbar">
       <div class="brand">☰&nbsp; AlertTrail</div>
-      {% if current_user and (current_user.plan or '')|upper == 'PRO' %}
+      {% if is_pro %}
         <span class="badge">PRO</span>
       {% endif %}
       <nav style="margin-left:auto">
         <a href="/analysis/generate">Generar PDF</a>
-        <a href="/mail/connect">Conectar mail</a>
-        <a href="/mail/scanner">Scanner de mail</a>
+
+        {# --- Mail solo para PRO --- #}
+        {% if is_pro %}
+          <a href="/mail/connect">Conectar mail</a>
+          <a href="/mail/scanner">Scanner de mail</a>
+        {% else %}
+          <a href="/billing" title="Disponible solo en PRO" style="opacity:.6;">Conectar mail</a>
+          <a href="/billing" title="Disponible solo en PRO" style="opacity:.6;">Scanner de mail</a>
+        {% endif %}
+
+        <a href="/billing">Plan</a>
         <a href="/auth/logout">Salir</a>
       </nav>
     </div>
@@ -68,15 +81,38 @@
         <p class="muted">Bienvenido/a</p>
         <h2 style="margin:2px 0 6px">{{ (current_user.name or 'Usuario') if current_user else 'Usuario' }}</h2>
         <p class="muted">{{ (current_user.email or '') if current_user else '' }}</p>
-        <p class="muted" style="margin-top:6px">Estado: <strong>{{ ((current_user.plan or "FREE") if current_user else "FREE")|upper }}</strong></p>
+        <p class="muted" style="margin-top:6px">
+          Estado: <strong>{{ ((current_user.plan or "FREE") if current_user else "FREE")|upper }}</strong>
+          {% if not is_pro %}
+            <span class="muted" style="margin-left:8px;">• FREE incluye 5 escaneos/semana</span>
+          {% endif %}
+        </p>
       </section>
 
       <section class="card">
         <h3 style="margin:0 0 8px">Acciones rápidas</h3>
         <ul>
-          <li><a class="btn" href="/analysis/generate">Analizar logs y generar PDF</a></li>
-          <li style="margin-top:8px"><a class="btn" href="/mail/connect">Vincular una casilla de correo</a></li>
-          <li style="margin-top:8px"><a class="btn" href="/mail/scanner">Ejecutar scanner de mail</a></li>
+          <li>
+            <a id="btn-logs" class="btn" href="/analysis/generate">Analizar logs y generar PDF</a>
+            <div id="quota-hint" class="hint"></div>
+          </li>
+
+          <li style="margin-top:8px">
+            {% if is_pro %}
+              <a class="btn" href="/mail/connect">Vincular una casilla de correo</a>
+            {% else %}
+              <a class="btn disabled" href="/billing" title="Disponible solo en PRO">Vincular una casilla de correo</a>
+              <a class="btn upgrade" style="margin-left:8px" href="/billing">Mejorar a PRO</a>
+            {% endif %}
+          </li>
+
+          <li style="margin-top:8px">
+            {% if is_pro %}
+              <a class="btn" href="/mail/scanner">Ejecutar scanner de mail</a>
+            {% else %}
+              <a class="btn disabled" href="/billing" title="Disponible solo en PRO">Ejecutar scanner de mail</a>
+            {% endif %}
+          </li>
         </ul>
       </section>
     </div>
@@ -115,5 +151,45 @@
 
     <footer>© AlertTrail</footer>
   </div>
+
+  <script>
+    // ----- Lógica de cuota FREE: 5 escaneos por semana -----
+    (function(){
+      const isPro = {{ 'true' if is_pro else 'false' }};
+      const quotaHint = document.getElementById('quota-hint');
+      const btnLogs = document.getElementById('btn-logs');
+
+      if (isPro) {
+        if (quotaHint) quotaHint.textContent = 'PRO: sin límites de escaneos.';
+        return;
+      }
+
+      // Texto por defecto (si no hay endpoint de cuota aún)
+      if (quotaHint) quotaHint.textContent = 'FREE: 5 escaneos de logs por semana.';
+
+      // Intentar leer cuota desde el backend si existe.
+      // Respuesta esperada (ejemplo): { "limit": 5, "used": 2, "remaining": 3, "period": "week" }
+      fetch('/analysis/quota', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(q => {
+          const limit = Number(q.limit ?? 5);
+          const used = Number(q.used ?? (limit - (q.remaining ?? 0)));
+          const remaining = Number(q.remaining ?? Math.max(0, limit - used));
+
+          if (quotaHint) {
+            quotaHint.textContent = `Gratis esta semana: ${used}/${limit} usados · Te quedan ${remaining}`;
+          }
+
+          if (remaining <= 0 && btnLogs) {
+            btnLogs.classList.add('disabled');
+            btnLogs.setAttribute('href', '/billing?upgrade=logs');
+            btnLogs.textContent = 'Límite alcanzado — Mejorar a PRO';
+          }
+        })
+        .catch(() => {
+          // Si el endpoint no existe todavía, mantenemos el texto por defecto y dejamos que el backend haga el enforcement.
+        });
+    })();
+  </script>
 </body>
 </html>
