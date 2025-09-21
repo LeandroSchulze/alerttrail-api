@@ -18,7 +18,31 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.database import Base, engine, get_db
 from app.security import get_current_user_cookie
 
-router = APIRouter(prefix="/mail", tags=["mail"])
+router = APIRouter(
+    prefix="/mail",
+    tags=["mail"],
+    dependencies=[Depends(require_pro_user)]  # <- activa el guard PRO para TODAS las rutas /mail/*
+)
+
+
+# --- PRO guard (mail sólo para plan PRO) ---
+from fastapi import Depends, HTTPException, Request
+from app.security import get_current_user_cookie
+
+def _is_pro(u) -> bool:
+    return bool(getattr(u, "is_pro", False)) or (getattr(u, "plan", "free") or "free").lower() == "pro"
+
+def require_pro_user(request: Request, current_user=Depends(get_current_user_cookie)):
+    if not current_user:
+        # no logueado -> que el manejador global te mande al login
+        raise HTTPException(status_code=401, detail="No autenticado")
+    if not _is_pro(current_user):
+        # redirigimos a /billing (sirve para HTML y también informa a clientes API)
+        raise HTTPException(
+            status_code=303,  # redirect
+            detail="Funcionalidad disponible sólo para PRO",
+            headers={"Location": "/billing?upgrade=mail"}
+        )
 
 # ---------------- Templates ----------------
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
