@@ -1,6 +1,6 @@
 # app/routers/auth.py
 import os
-import re  # requerido si activás algún debug que use regex
+import re
 from typing import Optional
 from pathlib import Path
 
@@ -20,19 +20,19 @@ from app.security import (
     create_access_token,
     issue_access_cookie,
     get_current_user_cookie,
-    # Constantes de cookie: usamos las mismas que al setear para evitar desincronización
+    # Constantes de cookie para evitar desincronización
     COOKIE_NAME, COOKIE_PATH, COOKIE_HTTPONLY, COOKIE_SECURE, COOKIE_SAMESITE,
 )
 
-# COOKIE_DOMAIN puede no estar definido en algunas versiones: fallback suave
+# COOKIE_DOMAIN puede no existir en algunas versiones -> fallback suave
 try:
     from app.security import COOKIE_DOMAIN  # type: ignore
 except Exception:
     COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "")
 
-# --- Templates: apuntamos explícitamente a app/templates ---
-APP_DIR = Path(__file__).resolve().parent.parent        # .../app
-TEMPLATES_DIR = APP_DIR / "templates"                   # .../app/templates
+# ---------- Templates: apuntar SIEMPRE a app/templates ----------
+APP_DIR = Path(__file__).resolve().parent.parent       # .../app
+TEMPLATES_DIR = APP_DIR / "templates"                  # .../app/templates
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -224,3 +224,47 @@ def _debug_cookies(request: Request):
             if k and k not in keys:
                 keys.append(k)
     return {"cookies_presentes": keys}
+
+
+# ====== ENDPOINTS DE RESCATE (usar solo con secreto) ======
+@router.post("/_force_admin_reset")
+def _force_admin_reset(secret: str = Query(...), db: Session = Depends(get_db)):
+    """Crea/actualiza el admin usando ENV (ADMIN_EMAIL/ADMIN_PASS). Requiere ADMIN_SETUP_SECRET."""
+    setup_secret = os.getenv("ADMIN_SETUP_SECRET", "")
+    if not setup_secret or secret != setup_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@example.com"))
+    password = os.getenv("ADMIN_PASS", "ChangeMe123!")
+    name = os.getenv("ADMIN_NAME", "Admin")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Faltan ADMIN_EMAIL o ADMIN_PASS")
+
+    user = db.query(models.User).filter(func.lower(models.User.email) == email).first()
+    if user:
+        _set_user_pwd(user, get_password_hash(password))
+        if hasattr(user, "name"):
+            user.name = name
+        db.commit()
+        action = "actualizado"
+    else:
+        user = models.User(email=email, name=name)
+        _set_user_pwd(user, get_password_hash(password))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        action = "creado"
+    return {"ok": True, "admin": user.email, "action": action}
+
+
+@router.get("/_debug_auth")
+def _debug_auth(email: str, password: str, secret: str, db: Session = Depends(get_db)):
+    """Verifica si la password dada matchea el hash guardado (protegido por ADMIN_SETUP_SECRET)."""
+    setup_secret = os.getenv("ADMIN_SETUP_SECRET", "")
+    if not setup_secret or secret != setup_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+    e = _norm_email(email)
+    user = db.query(models.User).filter(func.lower(models.User.email) == e).first()
+    if not user:
+        return {"ok": False, "reason": "not_found"}
+    ok = verify_password(password, _get_user_pwd(user))
+    return {"ok": ok, "user_id": getattr(user, "id", None)}
