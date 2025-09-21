@@ -135,7 +135,7 @@ def login_web(
     response: Response,
     email: str = Form(...),
     password: str = Form(...),
-    next: Optional[str] = Form(default="/dashboard"),
+    next_url: Optional[str] = Form(default="/dashboard"),
     db: Session = Depends(get_db),
 ):
     email_n = _norm_email(email)
@@ -144,7 +144,7 @@ def login_web(
         try:
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "error": "Email o password incorrectos", "next": next},
+                {"request": request, "error": "Email o password incorrectos", "next": (next_url or "/dashboard")},
                 status_code=400,
             )
         except TemplateNotFound:
@@ -153,11 +153,25 @@ def login_web(
     token = create_access_token({"sub": str(user.id)})
 
     # Redirección con 303 para no perder el Set-Cookie
-    resp = RedirectResponse(url=(next or "/dashboard"), status_code=303)
-    issue_access_cookie(resp, token)
+    redirect_to = next_url or "/dashboard"
+    resp = RedirectResponse(url=redirect_to, status_code=303)
+
+    # >>> Seteamos la cookie directamente, sin helpers <<<
+    # Importante: usar los mismos parámetros que en el login
+    cookie_kwargs = dict(
+        key=COOKIE_NAME,
+        value=token,
+        path=COOKIE_PATH,
+        httponly=COOKIE_HTTPONLY,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+    )
+    if COOKIE_DOMAIN:
+        cookie_kwargs["domain"] = COOKIE_DOMAIN
+    resp.set_cookie(**cookie_kwargs)
+
     resp.headers["Cache-Control"] = "no-store"
     return resp
-
 
 # ---------------- Yo (sesión por cookie) ----------------
 @router.get("/me")
