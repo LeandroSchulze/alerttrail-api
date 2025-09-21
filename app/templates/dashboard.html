@@ -8,219 +8,112 @@
   <link rel="icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    :root{
-      --bg-top:#0f2740;      /* más claro que antes */
-      --bg-bot:#0b1d2a;
-      --ink:#eaf2f7;
-      --muted:#bfe6fb;
-      --accent:#0ea5e9;
-      --card-bg:rgba(255,255,255,.06);
-      --card-br:rgba(255,255,255,.1);
-      --shadow:0 10px 24px rgba(0,0,0,.25);
+    body {
+      margin: 0;
+      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.85)), 
+                  url('/static/water-bg.jpg') no-repeat center center fixed;
+      background-size: cover;
+      color: #222;
     }
 
-    /* ====== Layout / Fondo ====== */
-    body{
-      margin:0; color:var(--ink);
-      font-family:system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      background:
-        radial-gradient(800px 400px at 15% -10%, rgba(124,207,255,.18), transparent 60%),
-        radial-gradient(600px 360px at 110% 0%, rgba(124,207,255,.12), transparent 60%),
-        linear-gradient(180deg, var(--bg-top), var(--bg-bot));
-      min-height:100vh;
+    header {
+      background: #0a3d62;
+      color: #fff;
+      padding: 1rem 2rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+      letter-spacing: 1px;
     }
-    .wrap{ max-width:1100px; margin:0 auto; padding:28px 16px 64px; }
 
-    /* ====== Topbar ====== */
-    .topbar{ display:flex; align-items:center; gap:12px; }
-    .brand{ font-weight:700; font-size:22px; letter-spacing:.2px }
-    .badge{
-      font-size:12px; padding:2px 8px; border-radius:999px;
-      background:#22c55e; color:#06241f; font-weight:800;
-      box-shadow:0 4px 14px rgba(34,197,94,.35);
+    .container {
+      max-width: 1000px;
+      margin: 2rem auto;
+      padding: 2rem;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 1rem;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
     }
-    nav a{
-      color:#a5e6ff; text-decoration:none; margin-left:20px;
-      position:relative; transition:filter .15s ease, opacity .15s ease;
-    }
-    nav a:hover{ filter:brightness(.95) }
-    nav a::after{
-      content:""; position:absolute; left:0; bottom:-6px; width:0; height:2px;
-      background:linear-gradient(90deg,#7dd3fc,#38bdf8);
-      transition:width .18s ease;
-    }
-    nav a:hover::after{ width:100% }
 
-    /* ====== Cards ====== */
-    .card{
-      background:var(--card-bg);
-      border:1px solid var(--card-br);
-      border-radius:16px; padding:18px 20px;
-      box-shadow:var(--shadow); backdrop-filter:blur(4px);
+    h2 {
+      margin-top: 0;
+      color: #0a3d62;
     }
-    .grid{ display:grid; gap:16px }
-    .grid.cols-2{ grid-template-columns:1.2fr .8fr }
-    .muted{ color:var(--muted); opacity:.9 }
 
-    /* ====== Botones ====== */
-    .btn{
-      display:inline-block; padding:10px 14px; border-radius:12px;
-      background:var(--accent); color:#03131c; font-weight:800; text-decoration:none;
-      transition:transform .12s ease, filter .12s ease, box-shadow .12s ease;
-      box-shadow:0 6px 18px rgba(14,165,233,.28);
+    .actions {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: 1.5rem;
     }
-    .btn:hover{ transform:translateY(-1px); filter:brightness(.96) }
 
-    .btn.disabled{ pointer-events:none; opacity:.6; box-shadow:none }
-    .btn.upgrade{
-      /* nuevo estilo “más lindo” */
-      background:linear-gradient(180deg,#f8c24b,#f59e0b);
-      color:#2b1d00; box-shadow:0 10px 26px rgba(251,191,36,.35), inset 0 -1px 0 rgba(0,0,0,.15);
-      position:relative;
+    .btn {
+      flex: 1;
+      min-width: 200px;
+      padding: 1rem;
+      text-align: center;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+      transition: all 0.3s ease;
     }
-    .btn.upgrade::before{
-      content:"★"; font-size:12px; margin-right:6px; display:inline-block; transform:translateY(-1px);
+
+    .btn:hover {
+      transform: translateY(-3px);
     }
-    .btn.upgrade:hover{ transform:translateY(-1.5px); filter:brightness(.98) }
-    .btn.upgrade:active{ transform:translateY(0) }
 
-    ul{ margin:6px 0 0 18px }
-    footer{ margin-top:32px; text-align:center; color:#8bd2f7; opacity:.7 }
+    .btn-logs {
+      background: #38ada9;
+      color: #fff;
+    }
 
-    .stats{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:8px }
-    .stat{ background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:14px; text-align:center }
-    .stat h3{ margin:0; font-size:28px }
-    .stat p{ margin:2px 0 0; font-size:12px; opacity:.85 }
+    .btn-mail {
+      background: #82ccdd;
+      color: #fff;
+    }
 
-    .hint{ font-size:12px; color:var(--muted); opacity:.95; margin-top:6px }
+    .btn-pro {
+      background: linear-gradient(135deg, #e58e26, #f6b93b);
+      color: #fff;
+      font-size: 1.1rem;
+      border: 2px solid #fff;
+    }
+
+    .btn-pro:hover {
+      background: linear-gradient(135deg, #f6b93b, #e58e26);
+    }
+
+    footer {
+      text-align: center;
+      margin: 2rem 0;
+      font-size: 0.9rem;
+      color: #555;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    {% set is_pro = (current_user and (current_user.is_pro or (current_user.plan or 'free')|lower == 'pro')) %}
-    <div class="topbar">
-      <div class="brand">☰&nbsp; AlertTrail</div>
-      {% if is_pro %}<span class="badge">PRO</span>{% endif %}
-      <nav style="margin-left:auto">
-        <a href="/analysis/generate">Generar PDF</a>
+  <header>🌊 AlertTrail — Dashboard</header>
 
-        {% if is_pro %}
-          <a href="/mail/connect">Conectar mail</a>
-          <a href="/mail/scanner">Scanner de mail</a>
-        {% else %}
-          <a href="/billing" title="Disponible solo en PRO" style="opacity:.7">Conectar mail</a>
-          <a href="/billing" title="Disponible solo en PRO" style="opacity:.7">Scanner de mail</a>
-        {% endif %}
+  <div class="container">
+    <h2>Bienvenido, {{ user.name }}</h2>
+    <p>
+      Plan actual: <strong>{{ user.plan }}</strong>  
+      {% if user.plan == "FREE" %} (5 escaneos gratis por semana) {% endif %}
+    </p>
 
-        <a href="/billing">Plan</a>
-        <a href="/auth/logout">Salir</a>
-      </nav>
+    <div class="actions">
+      <a href="/analysis" class="btn btn-logs">📊 Analizar Logs</a>
+      <a href="/mail" class="btn btn-mail">📧 Escanear Emails</a>
+      {% if user.plan != "PRO" %}
+      <a href="/subscribe" class="btn btn-pro">🚀 Hazte PRO</a>
+      {% endif %}
     </div>
-
-    <div class="grid cols-2" style="margin-top:18px">
-      <section class="card">
-        <p class="muted">Bienvenido/a</p>
-        <h2 style="margin:2px 0 6px">{{ (current_user.name or 'Usuario') if current_user else 'Usuario' }}</h2>
-        <p class="muted">{{ (current_user.email or '') if current_user else '' }}</p>
-        <p class="muted" style="margin-top:6px">
-          Estado: <strong>{{ ((current_user.plan or "FREE") if current_user else "FREE")|upper }}</strong>
-          {% if not is_pro %}<span class="muted" style="margin-left:8px;">• FREE incluye 5 escaneos/semana</span>{% endif %}
-        </p>
-      </section>
-
-      <section class="card">
-        <h3 style="margin:0 0 8px">Acciones rápidas</h3>
-        <ul>
-          <li>
-            <a id="btn-logs" class="btn" href="/analysis/generate">Analizar logs y generar PDF</a>
-            <div id="quota-hint" class="hint"></div>
-          </li>
-
-          <li style="margin-top:8px">
-            {% if is_pro %}
-              <a class="btn" href="/mail/connect">Vincular una casilla de correo</a>
-            {% else %}
-              <a class="btn disabled" href="/billing" title="Disponible solo en PRO">Vincular una casilla de correo</a>
-              <a class="btn upgrade" style="margin-left:8px" href="/billing">Mejorar a PRO</a>
-            {% endif %}
-          </li>
-
-          <li style="margin-top:8px">
-            {% if is_pro %}
-              <a class="btn" href="/mail/scanner">Ejecutar scanner de mail</a>
-            {% else %}
-              <a class="btn disabled" href="/billing" title="Disponible solo en PRO">Ejecutar scanner de mail</a>
-            {% endif %}
-          </li>
-        </ul>
-      </section>
-    </div>
-
-    {% if is_admin %}
-      <section class="card" style="margin-top:16px">
-        <div style="display:flex; align-items:center; justify-content:space-between">
-          <h3 style="margin:0">Métricas (solo admin)</h3>
-          <button id="refresh" class="btn" type="button">Actualizar</button>
-        </div>
-        <div class="stats" id="stats">
-          <div class="stat"><h3>—</h3><p>PDFs este mes</p></div>
-          <div class="stat"><h3>—</h3><p>Usuarios Free</p></div>
-          <div class="stat"><h3>—</h3><p>Usuarios PRO</p></div>
-        </div>
-        <p id="range" class="muted" style="margin-top:8px"></p>
-      </section>
-      <script>
-        async function loadStats(){
-          try{
-            const r = await fetch('/stats', { credentials:'include' });
-            if(!r.ok) throw new Error('HTTP '+r.status);
-            const data = await r.json();
-            const boxes = document.querySelectorAll('#stats .stat h3');
-            boxes[0].textContent = data.pdfs_mes ?? '0';
-            boxes[1].textContent = data.usuarios_free ?? '0';
-            boxes[2].textContent = data.usuarios_pro ?? '0';
-            document.getElementById('range').textContent =
-              `Rango: ${data.desde?.slice(0,10)} → ${data.hasta?.slice(0,10)}`;
-          }catch(e){ console.error(e); }
-        }
-        document.getElementById('refresh')?.addEventListener('click', loadStats);
-        loadStats();
-      </script>
-    {% endif %}
-
-    <footer>© AlertTrail</footer>
   </div>
 
-  <script>
-    // ----- Lógica de cuota FREE: 5 escaneos por semana -----
-    (function(){
-      const isPro = {{ 'true' if is_pro else 'false' }};
-      const quotaHint = document.getElementById('quota-hint');
-      const btnLogs = document.getElementById('btn-logs');
-
-      if (isPro) {
-        if (quotaHint) quotaHint.textContent = 'PRO: sin límites de escaneos.';
-        return;
-      }
-      if (quotaHint) quotaHint.textContent = 'FREE: 5 escaneos de logs por semana.';
-
-      fetch('/analysis/quota', { credentials: 'include' })
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
-        .then(q => {
-          const limit = Number(q.limit ?? 5);
-          const used = Number(q.used ?? (limit - (q.remaining ?? 0)));
-          const remaining = Number(q.remaining ?? Math.max(0, limit - used));
-
-          if (quotaHint) quotaHint.textContent = `Gratis esta semana: ${used}/${limit} usados · Te quedan ${remaining}`;
-
-          if (remaining <= 0 && btnLogs) {
-            btnLogs.classList.add('disabled');
-            btnLogs.setAttribute('href', '/billing?upgrade=logs');
-            btnLogs.textContent = 'Límite alcanzado — Mejorar a PRO';
-          }
-        })
-        .catch(()=>{});
-    })();
-  </script>
+  <footer>
+    &copy; 2025 AlertTrail. Todos los derechos reservados.
+  </footer>
 </body>
 </html>
