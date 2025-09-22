@@ -12,7 +12,7 @@ router = APIRouter(tags=["payments"])
 # ====== ENV ======
 MP_TOKEN = os.getenv("MP_ACCESS_TOKEN", "")
 
-# Usa PUBLIC_BASE_URL o (SITE_URL/site_url). Debe ser https y sin slash final.
+# Usa PUBLIC_BASE_URL o SITE_URL / site_url (https y sin slash final)
 BASE_URL = (
     os.getenv("PUBLIC_BASE_URL")
     or os.getenv("SITE_URL")
@@ -26,12 +26,24 @@ WEBHOOK_SECRET = os.getenv("MP_WEBHOOK_SECRET", "change-me")
 PLAN_PRICE    = float(os.getenv("PRO_PRICE_MONTH") or os.getenv("PLAN_PRICE", "10"))
 PLAN_CURRENCY = os.getenv("PLAN_CURRENCY", "USD")   # ARS o USD
 
-# EMPRESAS (acepta varios nombres)
+# EMPRESAS — usa tus ENV y defaults:
+# - BIZ_INCLUDED_SEATS: asientos incluidos (p. ej. 25)
+# - BIZ_EXTRA_SEAT_USD: precio por asiento extra (misma moneda que PLAN_CURRENCY)
 EMPRESAS_PRICE = float(
     os.getenv("EMPRESAS_PRICE_MONTH")
     or os.getenv("BUSINESS_PRICE_MONTH")
     or os.getenv("ENTERPRISE_PRICE_MONTH")
-    or "49"
+    or "99"
+)
+EMPRESAS_INCLUDED_SEATS = int(
+    os.getenv("BIZ_INCLUDED_SEATS")
+    or os.getenv("EMPRESAS_INCLUDED_SEATS")
+    or "25"
+)
+EMPRESAS_EXTRA_SEAT_PRICE = float(
+    os.getenv("BIZ_EXTRA_SEAT_USD")
+    or os.getenv("EMPRESAS_EXTRA_SEAT_PRICE")
+    or "0"
 )
 
 # ====== Helpers ======
@@ -57,7 +69,13 @@ def _norm_plan(plan: str) -> str:
 def _plan_config(plan: str):
     p = _norm_plan(plan)
     if p == "EMPRESAS":
-        return {"plan": "EMPRESAS", "title": "AlertTrail EMPRESAS (mensual)", "unit_price": EMPRESAS_PRICE}
+        return {
+            "plan": "EMPRESAS",
+            "title": f"AlertTrail EMPRESAS (mensual) — {EMPRESAS_INCLUDED_SEATS} cuentas incluidas",
+            "unit_price": EMPRESAS_PRICE,                    # p. ej. USD 99
+            "included_seats": EMPRESAS_INCLUDED_SEATS,       # p. ej. 25
+            "extra_seat_price": EMPRESAS_EXTRA_SEAT_PRICE,   # p. ej. BIZ_EXTRA_SEAT_USD
+        }
     return {"plan": "PRO", "title": "AlertTrail PRO (mensual)", "unit_price": PLAN_PRICE}
 
 def _create_preference(user, plan: str = "PRO", seats: int = 1) -> dict:
@@ -66,21 +84,53 @@ def _create_preference(user, plan: str = "PRO", seats: int = 1) -> dict:
 
     uid, email = _uid_email_from(user)
     cfg = _plan_config(plan)
-    qty = max(1, int(seats or 1))
 
-    body = {
-        "items": [{
+    # Construcción de items y seats que guardamos en metadata
+    items = []
+    if cfg["plan"] == "EMPRESAS":
+        # Precio fijo: 1 ítem base + opcional ítem de extras
+        included = int(cfg.get("included_seats", 25))
+        requested = int(seats or included)  # si no mandan seats, asumimos los incluidos
+        extras = max(0, requested - included)
+
+        # Ítem base EMPRESAS (siempre)
+        items.append({
+            "title": cfg["title"],
+            "quantity": 1,
+            "unit_price": cfg["unit_price"],
+            "currency_id": PLAN_CURRENCY
+        })
+
+        # Ítem por asientos extra (si hay y tiene precio)
+        extra_price = float(cfg.get("extra_seat_price", 0) or 0)
+        if extras > 0 and extra_price > 0:
+            items.append({
+                "title": "Asientos extra EMPRESAS",
+                "quantity": extras,
+                "unit_price": extra_price,
+                "currency_id": PLAN_CURRENCY
+            })
+
+        seats_meta = included + extras  # total contratado
+    else:
+        # PRO: multiplica por seats si lo pasan (sino, 1)
+        qty = max(1, int(seats or 1))
+        items.append({
             "title": cfg["title"],
             "quantity": qty,
             "unit_price": cfg["unit_price"],
             "currency_id": PLAN_CURRENCY
-        }],
+        })
+        seats_meta = qty
+
+    body = {
+        "items": items,
         "payer": ({"email": email} if email else {}),
         "metadata": {
             "user_id": uid,
             "user_email": email,
             "plan": cfg["plan"],
-            "seats": qty
+            "seats": seats_meta
         },
         "back_urls": {
             "success": f"{BASE_URL}/billing/success",
@@ -89,7 +139,7 @@ def _create_preference(user, plan: str = "PRO", seats: int = 1) -> dict:
         },
         "auto_return": "approved",
         "notification_url": f"{BASE_URL}/mp/webhook?secret={WEBHOOK_SECRET}",
-        # Importante: NO usamos "purpose": "wallet_purchase" para no bloquear el botón de pagar.
+        # Importante: no usamos "purpose": "wallet_purchase" para evitar bloqueos del botón Pagar.
     }
 
     r = requests.post(
@@ -124,7 +174,8 @@ def billing_checkout_empresas(
     db: Session = Depends(get_db),
     user = Depends(get_current_user_cookie),
 ):
-    return _checkout_redirect(user, db, plan="EMPRESAS", seats=1)
+    # Cobra el plan EMPRESAS (precio base) y registra los seats incluidos.
+    return _checkout_redirect(user, db, plan="EMPRESAS", seats=EMPRESAS_INCLUDED_SEATS)
 
 @router.post("/billing/checkout")
 def billing_checkout_post(
@@ -155,12 +206,12 @@ def billing_failure():
 
 @router.post("/mp/webhook")
 async def mp_webhook(request: Request, db: Session = Depends(get_db)):
-    # 1) Valida secret simple
+    # 1) Validación simple del secret
     secret = request.query_params.get("secret")
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Invalid secret")
 
-    # 2) Lee el evento
+    # 2) Evento
     data = await request.json()
     topic = data.get("type") or data.get("topic")
     payment_id = data.get("data", {}).get("id") or data.get("id")
@@ -168,7 +219,7 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db)):
     if topic != "payment" or not payment_id:
         return JSONResponse({"ok": True, "skip": "not a payment or no id"}, status_code=200)
 
-    # 3) Consulta el pago en MP
+    # 3) Consulta el pago
     pr = requests.get(
         f"https://api.mercadopago.com/v1/payments/{payment_id}",
         headers={"Authorization": f"Bearer {MP_TOKEN}"},
@@ -178,7 +229,7 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "payment lookup failed"}, status_code=200)
 
     p = pr.json()
-    status_mp = (p.get("status") or "").lower()
+    status_mp = (p.get("status") or "").lower()          # approved / rejected / pending / ...
     metadata  = p.get("metadata") or {}
     user_id   = metadata.get("user_id")
 
@@ -189,23 +240,25 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db)):
     if plan_meta not in {"PRO", "EMPRESAS"}:
         plan_meta = "PRO"
 
+    # seats (por si lo usás luego en DB)
     try:
         seats = int(metadata.get("seats") or 1)
     except Exception:
         seats = 1
 
-    # 5) Activar plan si está aprobado
+    # 5) Activación si está aprobado
     if status_mp == "approved" and user_id:
-        from ..models import User  # import local para evitar problemas en el arranque
+        from ..models import User  # import local para evitar problemas en arranque
         user = db.query(User).get(user_id)
         if user:
             try:
                 user.plan = plan_meta
-                # si luego guardás seats: user.plan_seats = seats
+                # Si más adelante guardás seats: user.plan_seats = seats
                 db.commit()
             except Exception as e:
                 db.rollback()
                 print("DB error setting plan:", e)
         return {"ok": True, "user_id": user_id, "plan": plan_meta, "seats": seats}
 
+    # 6) Otros estados: responder 200 para evitar reintentos interminables de MP
     return {"ok": True, "status": status_mp, "user_id": user_id}
