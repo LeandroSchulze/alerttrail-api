@@ -199,15 +199,31 @@ def register_action(
     email_norm = email.strip().lower()
     if db.query(User).filter(func.lower(User.email) == email_norm).first():
         raise HTTPException(status_code=400, detail="Ese email ya está registrado")
+
+    # Creamos primero el usuario con campos seguros
     user = User(
         name=(name or "").strip() or "Usuario",
         email=email_norm,
-        hashed_password=get_password_hash(password),
         role="user",
         plan="FREE",
         created_at=datetime.utcnow(),
     )
+
+    # Asignamos el hash de contraseña al atributo que exista en el modelo
+    pw_hash = get_password_hash(password)
+    if hasattr(user, "hashed_password"):
+        setattr(user, "hashed_password", pw_hash)
+    elif hasattr(user, "password_hash"):
+        setattr(user, "password_hash", pw_hash)
+    elif hasattr(user, "password"):
+        # Último recurso: si el modelo usa 'password', guardamos el hash ahí
+        setattr(user, "password", pw_hash)
+    else:
+        # Si ningún campo existe, devolvemos error explícito para evitar datos inseguros
+        raise HTTPException(status_code=500, detail="Modelo User no tiene un campo de contraseña válido")
+
     db.add(user); db.commit(); db.refresh(user)
+
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return r
