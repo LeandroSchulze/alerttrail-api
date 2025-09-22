@@ -12,7 +12,7 @@
       --muted:#475569;           /* slate-600 */
       --line:#e5e7eb;            /* bordes */
       --brand:#2563eb;           /* azul */
-      --brand-2:#22c55e;         /* verde */
+      --ok:#16a34a;              /* verde */
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -27,7 +27,7 @@
     .dot{width:10px;height:10px;border-radius:999px;background:var(--brand);box-shadow:0 0 10px rgba(37,99,235,.6)}
     .brand a{color:var(--text);text-decoration:none}
     .pill{display:flex;align-items:center;gap:.4rem;background:#eef2ff;color:#1e3a8a;border:1px solid #dbeafe;padding:8px 10px;border-radius:999px;font-weight:600}
-    .logout{appearance:none;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(90deg,#2563eb,#22c55e);text-decoration:none}
+    .logout{appearance:none;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(90deg,#2563eb,#16a34a);text-decoration:none}
     .logout:hover{filter:brightness(1.05)}
     .right{display:flex;align-items:center;gap:10px}
 
@@ -35,15 +35,22 @@
     h1{margin:18px 0 6px;font-size:1.6rem}
     .muted{color:var(--muted)}
     .grid{display:grid;gap:16px;margin-top:16px}
-    @media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
+    @media(min-width:980px){.grid{grid-template-columns:1fr 1fr}}
 
     .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
     .card h3{margin:0 0 10px}
 
     /* Quick links estilo anterior: botones suaves */
     .quick{display:flex;flex-wrap:wrap;gap:10px}
-    .quick a{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f8fafc;color:#0f172a;text-decoration:none}
-    .quick a:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
+    .chip{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f8fafc;color:#0f172a;text-decoration:none}
+    .chip:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
+
+    /* Botones de acción en plan */
+    .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+    .btn-primary{display:inline-block;text-decoration:none;background:var(--brand);color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
+    .btn-primary:hover{filter:brightness(1.05)}
+    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);background:#fff}
+    .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
   </style>
 </head>
 <body>
@@ -67,6 +74,7 @@
     </div>
 
     <div class="grid">
+      <!-- Estado + acciones de plan (incluye Cambiar plan) -->
       <section class="card">
         <h3>Estado de tu cuenta</h3>
         <p class="muted">Plan actual: <strong>{{ user.plan }}</strong></p>
@@ -75,15 +83,20 @@
         {% else %}
           <p class="muted">Rol: <strong>Usuario</strong></p>
         {% endif %}
+        <div class="actions">
+          <a class="btn-primary" href="/billing">Cambiar plan</a>
+          <a class="btn-outline" href="/billing">Ver facturación</a>
+        </div>
       </section>
 
+      <!-- Acceso rápido como antes -->
       <section class="card">
         <h3>Acceso rápido</h3>
         <div class="quick">
-          <a href="/analysis">Análisis</a>
-          <a href="/mail">Emails</a>
-          <a href="/stats">Estadísticas</a>
-          <a href="/billing">Facturación</a>
+          <a class="chip" href="/analysis">Análisis</a>
+          <a class="chip" href="/mail">Emails</a>
+          <a class="chip" href="/stats">Estadísticas</a>
+          <a class="chip" href="/billing">Facturación</a>
         </div>
       </section>
     </div>
