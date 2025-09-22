@@ -60,6 +60,25 @@ async def force_www(request: Request, call_next):
     return await call_next(request)
 # ================================================================
 
+# ========= Redirigir /auth/register a /register (form) ==========
+@app.middleware("http")
+async def redirect_auth_register_mw(request: Request, call_next):
+    # normaliza (quita trailing slash)
+    path = request.url.path.rstrip("/")
+    if path == "/auth/register":
+        ctype = (request.headers.get("content-type") or "").lower()
+
+        # 1) GET siempre al formulario HTML
+        if request.method == "GET":
+            return RedirectResponse("/register", status_code=302)
+
+        # 2) Form (no JSON): preserva método + body
+        if request.method in ("POST", "PUT", "PATCH") and not ctype.startswith("application/json"):
+            return RedirectResponse("/register", status_code=307)
+        # 3) Si es JSON, dejamos pasar al endpoint del router /auth (no rompemos integraciones)
+    return await call_next(request)
+# ================================================================
+
 # === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
@@ -366,40 +385,6 @@ if not _route_exists("/auth/login/web"):
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
-
-# >>> NUEVO: fallbacks para /auth/register (para evitar el error de JSON) <<<
-# GET /auth/register -> redirige al formulario HTML /register
-if not _route_has_method("/auth/register", "GET"):
-    @app.get("/auth/register", include_in_schema=False)
-    def _fb_auth_register_get():
-        return RedirectResponse(url="/register", status_code=302)
-
-# POST /auth/register -> acepta FORM si no existe la versión del router
-if not _route_has_method("/auth/register", "POST"):
-    @app.post("/auth/register", include_in_schema=False)
-    def _fb_auth_register_post(
-        response: Response,
-        name: str = Form(...),
-        email: str = Form(...),
-        password: str = Form(...),
-        db: Session = Depends(get_db),
-    ):
-        email_norm = email.strip().lower()
-        if db.query(User).filter(func.lower(User.email) == email_norm).first():
-            raise HTTPException(status_code=400, detail="Ese email ya está registrado")
-        user = User(
-            name=(name or "").strip() or "Usuario",
-            email=email_norm,
-            hashed_password=get_password_hash(password),
-            role="user",
-            plan="FREE",
-            created_at=datetime.utcnow(),
-        )
-        db.add(user); db.commit(); db.refresh(user)
-        r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
-        return r
-# <<< FIN NUEVO >>>
 
 # === Handler global: 401/403 HTML -> login (evita loops) ===
 @app.exception_handler(HTTPException)
