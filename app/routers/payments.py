@@ -9,11 +9,11 @@ from ..security import get_current_user_cookie
 
 router = APIRouter(tags=["payments"])
 
-MP_TOKEN         = os.getenv("MP_ACCESS_TOKEN", "")
-BASE_URL         = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
-WEBHOOK_SECRET   = os.getenv("MP_WEBHOOK_SECRET", "change-me")
-PLAN_PRICE       = float(os.getenv("PLAN_PRICE", "10"))
-PLAN_CURRENCY    = os.getenv("PLAN_CURRENCY", "USD")
+MP_TOKEN = os.getenv("MP_ACCESS_TOKEN", "")
+BASE_URL = (...)  # la que ya tenés con PUBLIC_BASE_URL / SITE_URL
+WEBHOOK_SECRET = os.getenv("MP_WEBHOOK_SECRET", "change-me")
+PLAN_PRICE    = float(os.getenv("PRO_PRICE_MONTH") or os.getenv("PLAN_PRICE", "10"))
+PLAN_CURRENCY = os.getenv("PLAN_CURRENCY", "USD")
 
 def _uid_email_from(user):
     # Soporta User ORM o dict con claims
@@ -172,26 +172,21 @@ def billing_failure():
 # ---------- WEBHOOK ----------
 @router.post("/mp/webhook")
 async def mp_webhook(request: Request, db: Session = Depends(get_db)):
-    # Validación simple del secret
+    # 1) Valida secret simple
     secret = request.query_params.get("secret")
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Invalid secret")
 
+    # 2) Lee el evento
     data = await request.json()
-    # MP puede mandar varios formatos; cubrimos casos comunes
     topic = data.get("type") or data.get("topic")
-    payment_id = None
+    payment_id = data.get("data", {}).get("id") or data.get("id")
 
-    if topic == "payment":
-        payment_id = data.get("data", {}).get("id") or data.get("id")
-    elif topic == "merchant_order":
-        # Podrías manejar merchant_order si lo configuraste así
-        pass
+    # Solo procesamos pagos con id válido
+    if topic != "payment" or not payment_id:
+        return JSONResponse({"ok": True, "skip": "not a payment or no id"}, status_code=200)
 
-    if not payment_id:
-        return JSONResponse({"ok": True, "skip": "no payment id"}, status_code=200)
-
-    # Consultar detalle del pago
+    # 3) Consulta el pago en MP (necesitamos status y metadata)
     pr = requests.get(
         f"https://api.mercadopago.com/v1/payments/{payment_id}",
         headers={"Authorization": f"Bearer {MP_TOKEN}"},
@@ -201,20 +196,36 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "payment lookup failed"}, status_code=200)
 
     p = pr.json()
-    status_mp = p.get("status")                   # approved, rejected, pending, in_process...
+    status_mp = (p.get("status") or "").lower()            # approved / rejected / pending / ...
     metadata  = p.get("metadata") or {}
     user_id   = metadata.get("user_id")
 
+    # 4) Plan según metadata (default PRO); aceptamos sinónimos
+    plan_meta = (metadata.get("plan") or "PRO").upper()
+    if plan_meta in {"BUSINESS", "ENTERPRISE", "EMPRESA"}:
+        plan_meta = "EMPRESAS"
+    if plan_meta not in {"PRO", "EMPRESAS"}:
+        plan_meta = "PRO"
+
+    # (opcional) seats por si lo usás más adelante
+    try:
+        seats = int(metadata.get("seats") or 1)
+    except Exception:
+        seats = 1
+
+    # 5) Si el pago quedó aprobado, activamos plan para ese user_id
     if status_mp == "approved" and user_id:
+        from ..models import User  # import local para no romper arranque si cambia el modelo
         user = db.query(User).get(user_id)
         if user:
-            # activar PRO
             try:
-                user.plan = "PRO"
+                user.plan = plan_meta
+                # si en el futuro guardás seats: user.plan_seats = seats
                 db.commit()
             except Exception as e:
                 db.rollback()
-                print("DB error setting PRO:", e)
-        return {"ok": True, "user_id": user_id, "plan": "PRO"}
+                print("DB error setting plan:", e)
+        return {"ok": True, "user_id": user_id, "plan": plan_meta, "seats": seats}
 
+    # 6) Para otros estados respondemos 200 para que MP no reintente indefinidamente
     return {"ok": True, "status": status_mp, "user_id": user_id}
