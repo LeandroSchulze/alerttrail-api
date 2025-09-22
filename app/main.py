@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
 from app.routers import push, alerts_pro  # ⬅️ NUEVO
+from app.routers import payments
+app.include_router(payments.router)
 
 from app.database import SessionLocal
 from app.security import (
