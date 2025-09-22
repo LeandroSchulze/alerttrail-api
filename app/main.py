@@ -12,9 +12,10 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-from app.routers import push, alerts_pro  # ⬅️ NUEVO
-from app.routers import payments
-app.include_router(payments.router)
+
+# IMPORTS de routers (solo import; los include van más abajo)
+from app.routers import push, alerts_pro            # ← NUEVO (solo import)
+from app.routers import payments                    # ← NUEVO (solo import)
 
 from app.database import SessionLocal
 from app.security import (
@@ -26,13 +27,9 @@ from app.security import (
     decode_token,
     COOKIE_NAME,
 )
-
-# include de routers existentes...
-app.include_router(push.router)        # ⬅️ NUEVO
-app.include_router(alerts_pro.router)  # ⬅️ NUEVO
-
 from app.models import User
 
+# ====== Crear app (AHORA sí) ======
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
@@ -217,7 +214,6 @@ def dashboard(
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
 
-    # Contexto 'user' adicional para el template (sin romper compatibilidad con 'current_user')
     user_ctx = {
         "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
         "email": getattr(user, "email", ""),
@@ -228,8 +224,8 @@ def dashboard(
         "dashboard.html",
         {
             "request": request,
-            "current_user": user,   # se mantiene
-            "user": user_ctx,       # agregado para el template
+            "current_user": user,
+            "user": user_ctx,
             "is_admin": is_admin,
         }
     )
@@ -300,7 +296,24 @@ try:
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
-# 👇 Billing (AGREGADO)
+# 👇 Routers nuevos (PUSH / PRO PREFS / PAYMENTS)
+try:
+    app.include_router(push.router)                     # /push/*
+except Exception as e:
+    print("No pude cargar app.routers.push:", e)
+
+try:
+    app.include_router(alerts_pro.router)               # /alerts-pro/*
+except Exception as e:
+    print("No pude cargar app.routers.alerts_pro:", e)
+
+try:
+    app.include_router(payments.router)                 # /billing/* y /mp/webhook
+except Exception as e:
+    print("No pude cargar app.routers.payments:", e)
+# 👆 Routers nuevos
+
+# 👇 (Opcional) compat con un antiguo router "billing"
 try:
     from app.routers import billing as billing_router_mod
     app.include_router(billing_router_mod.router)       # /billing/*
