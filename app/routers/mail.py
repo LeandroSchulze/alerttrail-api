@@ -1,4 +1,5 @@
 # app/routers/mail.py
+from app.services.pro_alerts import queue_or_push  # NUEVO
 import os
 import imaplib
 import email
