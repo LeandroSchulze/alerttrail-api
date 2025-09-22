@@ -1,168 +1,184 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <title>AlertTrail — Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Cache-Control" content="no-store" />
-  <link rel="icon" href="/static/favicon.ico">
-  <link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Dashboard — AlertTrail</title>
   <style>
     :root{
-      --brand:#0a3d62;
-      --accent:#38ada9;
-      --accent-2:#82ccdd;
-      --gold-1:#e58e26;
-      --gold-2:#f6b93b;
-      --text:#222;
+      --bg:#0f1115; --card:#151924; --muted:#9aa3b2; --text:#eef1f6; --accent:#5b8cff; --ok:#16a34a; --warn:#f59e0b;
+      --danger:#ef4444; --border:#1f2533; --chip:#1a2130;
     }
     *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      color:var(--text);
-      background: linear-gradient(rgba(255,255,255,.88), rgba(255,255,255,.88)),
-                  url('/static/water-bg.jpg') no-repeat center center fixed;
-      background-size: cover;
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .container{max-width:1100px;margin:0 auto;padding:24px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#5b8cff,#7c53ff)}
+    .brand h1{font-size:18px;margin:0}
+    .userbox{display:flex;align-items:center;gap:10px}
+    .chip{background:var(--chip);border:1px solid var(--border);padding:6px 10px;border-radius:999px;font-size:12px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+    .card{grid-column:span 12;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px}
+    @media(min-width:880px){
+      .card.span6{grid-column:span 6}
+      .card.span4{grid-column:span 4}
+      .card.span8{grid-column:span 8}
     }
-    header{
-      background:var(--brand);
-      color:#fff;
-      padding:1rem 2rem;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:1rem;
-    }
-    header .title{
-      font-weight:800;
-      letter-spacing:.5px;
-    }
-    header .actions a{
-      color:#fff;
-      text-decoration:none;
-      font-weight:600;
-      padding:.5rem .85rem;
-      border:1px solid rgba(255,255,255,.35);
-      border-radius:.6rem;
-      transition:.2s ease;
-    }
-    header .actions a:hover{background:rgba(255,255,255,.12)}
-    .container{
-      max-width:1000px;
-      margin:2rem auto;
-      padding:2rem;
-      background:rgba(255,255,255,.95);
-      border-radius:1rem;
-      box-shadow:0 4px 12px rgba(0,0,0,.12);
-    }
-    h2{margin:.2rem 0 0;color:var(--brand)}
-    .muted{color:#555;margin:.35rem 0 0}
-    .grid{
-      display:grid;
-      grid-template-columns: repeat(auto-fit, minmax(230px,1fr));
-      gap:1rem;
-      margin-top:1.25rem;
-    }
-    .card{
-      padding:1.1rem;
-      border-radius:14px;
-      background:#fff;
-      box-shadow:0 2px 8px rgba(0,0,0,.08);
-    }
-    .btn{
-      display:block;
-      text-align:center;
-      padding:1rem 1.1rem;
-      border-radius:12px;
-      text-decoration:none;
-      font-weight:700;
-      box-shadow:0 3px 6px rgba(0,0,0,.18);
-      transition:transform .2s ease, box-shadow .2s ease, opacity .2s ease;
-    }
-    .btn:hover{ transform:translateY(-2px); box-shadow:0 6px 14px rgba(0,0,0,.18); }
-    .btn:active{ transform:translateY(0); opacity:.9; }
-    .btn-logs{ background:var(--accent); color:#fff; }
-    .btn-mail{ background:var(--accent-2); color:#fff; }
-    .btn-pro{
-      background:linear-gradient(135deg, var(--gold-1), var(--gold-2));
-      color:#fff; border:2px solid #fff; font-size:1.06rem;
-    }
-    .badges{display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem}
-    .badge{
-      background:#eef6ff; color:#0b57d0; font-weight:600;
-      padding:.35rem .55rem; border-radius:.5rem; font-size:.85rem;
-    }
-    footer{
-      text-align:center; color:#666; font-size:.92rem; margin:2rem 0 1rem;
-    }
+    h2{font-size:18px;margin:0 0 8px}
+    h3{font-size:16px;margin:0 0 8px}
+    p{margin:6px 0;color:var(--muted)}
+    .btn{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#1c2333;color:#eaf0ff;font-weight:600}
+    .btn:hover{filter:brightness(1.08)}
+    .btn-pro{background:linear-gradient(135deg,#5b8cff,#7c53ff);border-color:rgba(255,255,255,.12)}
+    .btn-ghost{background:transparent}
+    .btn-danger{background:#2a1620;border-color:#3a1c29;color:#ffb4c3}
+    .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .muted{color:var(--muted)}
+    .list{display:grid;gap:8px}
+    .kbd{font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#cbd5e1;background:#0d1117;border:1px solid #1f2937;border-radius:6px;padding:2px 6px}
+    footer{margin:28px 0 8px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:13px}
+    .notice{padding:10px 12px;border:1px dashed #324060;background:#121826;border-radius:10px}
+    ul.inline{padding:0;margin:8px 0;list-style:none;display:flex;gap:12px;flex-wrap:wrap}
   </style>
+
+  {% if user.plan in ['PRO','EMPRESAS'] %}
+  <script>
+    async function urlBase64ToUint8Array(base64String){
+      const padding='='.repeat((4 - base64String.length % 4) % 4);
+      const base64=(base64String + padding).replace(/-/g,'+').replace(/_/g,'/');
+      const rawData=atob(base64); const outputArray=new Uint8Array(rawData.length);
+      for(let i=0;i<rawData.length;i++) outputArray[i]=rawData.charCodeAt(i);
+      return outputArray;
+    }
+    async function enablePush(btn){
+      try{
+        if(!('serviceWorker' in navigator) || !('PushManager' in window)){ alert('Este navegador no soporta Push.'); return; }
+        const perm = await Notification.requestPermission();
+        if(perm!=='granted'){ alert('Permiso denegado.'); return; }
+        const reg = await navigator.serviceWorker.register('/static/sw.js');
+        const kp  = await fetch('/push/pubkey').then(r=>r.json());
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey: await urlBase64ToUint8Array(kp.vapid_public_key)
+        });
+        await fetch('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});
+        btn && (btn.textContent='✅ Activadas'); alert('Notificaciones activadas');
+      }catch(e){ console.error(e); alert('No se pudo activar push: '+(e?.message||e)); }
+    }
+    async function testPush(){
+      try{
+        const r = await fetch('/push/send-test',{method:'POST'});
+        const d = await r.json();
+        if(d?.sent){ alert('Test enviado — mirá la notificación'); }
+        else{ alert((d?.detail)||'No se pudo enviar'); }
+      }catch(e){ alert('Error enviando test'); }
+    }
+  </script>
+  {% endif %}
 </head>
+
 <body>
-  <!-- Safety: usa 'user' si existe, sino toma 'current_user'; si ninguno está, usa {} -->
-  {% set user = (user if user is defined else (current_user if current_user is defined else {})) %}
-  {% set plan = (user.plan if user and user.plan else 'FREE') %}
-
-  <header>
-    <div class="title">🌊 <strong>AlertTrail</strong> — Dashboard</div>
-    <div class="actions">
-      {% if user and user.email %}
-        <span style="opacity:.85;margin-right:.5rem;">{{ user.email }}</span>
-      {% endif %}
-      <a href="/auth/logout">Cerrar sesión</a>
-    </div>
-  </header>
-
   <div class="container">
-    <div>
-      <h2>Bienvenido, {{ user.name or user.email or 'Usuario' }}</h2>
-      <p class="muted">
-        Plan actual: <strong>{{ plan }}</strong>
-        {% if plan|upper == 'FREE' %} — tenés <strong>5 escaneos de logs gratis por semana</strong>.{% endif %}
-      </p>
-      <div class="badges">
-        <span class="badge">Estado: Activo</span>
-        {% if plan|upper == 'PRO' %}
-          <span class="badge">PRO habilitado</span>
-        {% else %}
-          <span class="badge">Modo FREE</span>
-        {% endif %}
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <h1>AlertTrail</h1>
       </div>
-    </div>
-
-    <div class="grid" style="margin-top:1.25rem;">
-      <div class="card">
-        <h3>Log Scanner</h3>
-        <p class="muted">Subí archivos de logs (Nginx/Apache) y obtené análisis + PDF.</p>
-        <a class="btn btn-logs" href="/analysis">📊 Analizar Logs</a>
+      <div class="userbox">
+        <span class="chip">{{ user.email }}</span>
+        <span class="chip">Plan: {{ user.plan }}</span>
+        {% if is_admin %}<span class="chip">Admin</span>{% endif %}
       </div>
+    </header>
 
-      <div class="card">
-        <h3>Mail Scanner</h3>
-        <p class="muted">Vinculá tu casilla (IMAP) y detectá amenazas entrantes.</p>
-        <a class="btn btn-mail" href="/mail">📧 Escanear Emails</a>
-      </div>
+    <div class="grid">
 
-      {% if plan|upper != 'PRO' %}
-      <div class="card">
+      <!-- Estado general -->
+      <section class="card span8">
+        <h2>Bienvenido, {{ user.name }}</h2>
+        <p class="muted">Acá vas a ver el estado del sistema, tus alertas y accesos rápidos.</p>
+        <ul class="inline">
+          <li><a class="btn btn-ghost" href="/reports/">📄 Ver reportes (PDF)</a></li>
+          <li><a class="btn btn-ghost" href="/push/test-page">🔔 Probar notificaciones</a></li>
+          <li><a class="btn btn-ghost" href="/docs">📚 API Docs</a></li>
+        </ul>
+        <div class="notice" style="margin-top:10px">
+          <strong>Tip:</strong> Si activás las notificaciones Push, vas a recibir avisos cuando detectemos
+          adjuntos maliciosos o intentos de phishing. Funciona en PRO y EMPRESAS.
+        </div>
+      </section>
+
+      <!-- Acciones de plan / upgrade -->
+      {% if user.plan not in ['PRO','EMPRESAS'] %}
+      <section class="card span4">
         <h3>Mejora a PRO</h3>
-        <p class="muted">Análisis extendido, IA opcional y límites superiores.</p>
-        <a class="btn btn-pro" href="/billing/checkout">🚀 Hazte PRO</a>
-      </div>
+        <p>Funciones avanzadas, notificaciones en tiempo real y más.</p>
+        <div class="row">
+          <a class="btn btn-pro" href="/billing/checkout">🚀 Hazte PRO</a>
+        </div>
+        <hr style="border-color:var(--border);margin:14px 0">
+        <h3>Plan Empresas</h3>
+        <p class="muted">USD 99/mes — incluye 25 cuentas (extras opcionales).</p>
+        <div class="row">
+          <a class="btn" href="/billing/checkout/empresas">🏢 Contratar EMPRESAS</a>
+        </div>
+      </section>
+      {% else %}
+      <!-- Bloque de notificaciones solo para PRO/EMPRESAS -->
+      <section class="card span4">
+        <h3>Notificaciones Push</h3>
+        <p>Recibí alertas en tu equipo cuando detectemos un correo sospechoso.</p>
+        <div class="row">
+          <button class="btn" onclick="enablePush(this)">🔔 Activar notificaciones</button>
+          <button class="btn" onclick="testPush()">▶ Probar envío</button>
+        </div>
+        <p class="muted" style="margin-top:8px">Si no ves la notificación, verificá permiso del navegador y que <span class="kbd">/static/sw.js</span> esté accesible.</p>
+      </section>
       {% endif %}
+
+      <!-- Accesos rápidos a correo / alertas -->
+      <section class="card span6">
+        <h3>Correo & Alertas</h3>
+        <p>El escáner de correo marca adjuntos maliciosos y posibles phishing.</p>
+        <ul class="inline">
+          <li><a class="btn" href="/mail/alerts">📨 Ver alertas de mail</a></li>
+          <li><a class="btn" href="/push/test-page">🔔 Activar/Probar push</a></li>
+        </ul>
+        <p class="muted">Cuando llegue un mail con objeto malicioso, verás una alerta y (si habilitaste) te llegará una notificación.</p>
+      </section>
+
+      <!-- Analítica / PDFs -->
+      <section class="card span6">
+        <h3>Análisis & Reportes</h3>
+        <p>Generá reportes PDF desde el análisis de eventos.</p>
+        <ul class="inline">
+          <li><a class="btn" href="/analysis">🧪 Ir al análisis</a></li>
+          <li><a class="btn" href="/reports/">📄 Descargar últimos PDFs</a></li>
+        </ul>
+        <p class="muted">Si tu análisis soporta <span class="kbd">?as_pdf=1</span>, podés descargar directamente el informe.</p>
+      </section>
 
       {% if is_admin %}
-      <div class="card">
-        <h3>Panel Admin</h3>
-        <p class="muted">Descargas mensuales, usuarios PRO, métricas.</p>
-        <a class="btn" href="/stats">📈 Ver estadísticas</a>
-      </div>
+      <section class="card span12">
+        <h3>Administración</h3>
+        <ul class="inline">
+          <li><a class="btn" href="/stats">📊 Estadísticas</a></li>
+          <li><a class="btn btn-danger" href="/admin/tasks">🛠️ Tareas</a></li>
+        </ul>
+        <p class="muted">Solo visible para administradores.</p>
+      </section>
       {% endif %}
-    </div>
-  </div>
 
-  <footer>
-    &copy; 2025 AlertTrail. Todos los derechos reservados.
-  </footer>
+    </div>
+
+    <footer>
+      &copy; 2025 AlertTrail ·
+      <a href="mailto:supp.alerttrail@gmail.com">Soporte: supp.alerttrail@gmail.com</a>
+    </footer>
+  </div>
 </body>
 </html>
