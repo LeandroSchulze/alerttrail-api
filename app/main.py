@@ -321,6 +321,15 @@ except Exception as e:
     print("No pude cargar app.routers.billing:", e)
 # 👆 Billing
 
+
+# === Hooks de eventos (para notificar al crear MailAlert) ===
+try:
+    import app.events.alerts_hooks as _alerts_hooks  # registra @event.listens_for
+    print("alerts_hooks cargado ✔")
+except Exception as e:
+    print("No pude cargar app.events.alerts_hooks:", e)
+
+
 # === Fallbacks por si /auth/* no quedó montado ===
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
