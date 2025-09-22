@@ -51,23 +51,27 @@ def _plan_config(plan: str):
         "unit_price": PLAN_PRICE,
     }
     
-def _create_preference(user: "User|dict") -> dict:
+def _create_preference(user: "User|dict", plan: str = "PRO", seats: int = 1) -> dict:
     if not MP_TOKEN:
         raise RuntimeError("MP_ACCESS_TOKEN no configurado")
 
     uid, email = _uid_email_from(user)
+    cfg = _plan_config(plan)
+    qty = max(1, int(seats or 1))
 
     body = {
         "items": [{
-            "title": "AlertTrail PRO (mensual)",
-            "quantity": 1,
-            "unit_price": PLAN_PRICE,
+            "title": cfg["title"],
+            "quantity": qty,
+            "unit_price": cfg["unit_price"],
             "currency_id": PLAN_CURRENCY
         }],
-        "payer": ({ "email": email } if email else {}),
+        "payer": ({"email": email} if email else {}),
         "metadata": {
             "user_id": uid,
-            "user_email": email
+            "user_email": email,
+            "plan": cfg["plan"],
+            "seats": qty
         },
         "back_urls": {
             "success": f"{BASE_URL}/billing/success",
@@ -76,8 +80,18 @@ def _create_preference(user: "User|dict") -> dict:
         },
         "auto_return": "approved",
         "notification_url": f"{BASE_URL}/mp/webhook?secret={WEBHOOK_SECRET}",
-        "purpose": "wallet_purchase"
+        # Quitar "purpose": "wallet_purchase" para evitar bloqueos innecesarios
     }
+
+    r = requests.post(
+        "https://api.mercadopago.com/checkout/preferences",
+        headers={"Authorization": f"Bearer {MP_TOKEN}", "Content-Type": "application/json"},
+        data=json.dumps(body),
+        timeout=20
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Error creando preferencia MP: {r.status_code} {r.text}")
+    return r.json()
 
     r = requests.post(
         "https://api.mercadopago.com/checkout/preferences",
