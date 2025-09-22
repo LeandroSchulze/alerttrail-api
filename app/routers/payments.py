@@ -117,24 +117,38 @@ def _create_preference(user: "User|dict", plan: str = "PRO", seats: int = 1) -> 
 
 # ---------- CHECKOUT ----------
 @router.get("/billing/checkout")
-def billing_checkout_get(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
-    """
-    Soporta GET para que el botón/anchor funcione.
-    Crea la preferencia y redirige al init_point de MP.
-    """
-    pref = _create_preference(user)
-    url = pref.get("init_point") or pref.get("sandbox_init_point") or pref.get("init_point", "")
+def _checkout_redirect(user, db, plan: str = "PRO", seats: int = 1):
+    pref = _create_preference(user, plan=plan, seats=seats)
+    url = pref.get("init_point") or pref.get("sandbox_init_point") or ""
     if not url:
         raise HTTPException(status_code=500, detail="No se obtuvo URL de checkout")
     return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
 
+@router.get("/billing/checkout")
+def billing_checkout_get(
+    plan: str = "PRO",
+    seats: int = 1,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_cookie),
+):
+    return _checkout_redirect(user, db, plan=plan, seats=seats)
+
+# Alias cómodo para el botón “Plan Empresas”
+@router.get("/billing/checkout/empresas")
+def billing_checkout_empresas(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_cookie),
+):
+    return _checkout_redirect(user, db, plan="EMPRESAS", seats=1)
+
 @router.post("/billing/checkout")
-def billing_checkout_post(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
-    """
-    Variante POST por si querés llamarla vía fetch y luego redirigir desde el front.
-    Devuelve la URL de checkout.
-    """
-    pref = _create_preference(user)
+def billing_checkout_post(
+    plan: str = "PRO",
+    seats: int = 1,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_cookie),
+):
+    pref = _create_preference(user, plan=plan, seats=seats)
     url = pref.get("init_point") or pref.get("sandbox_init_point") or ""
     return {"checkout_url": url}
 
