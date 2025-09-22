@@ -12,6 +12,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
+from app.routers import push, alerts_pro  # ⬅️ NUEVO
 
 from app.database import SessionLocal
 from app.security import (
@@ -23,6 +24,10 @@ from app.security import (
     decode_token,
     COOKIE_NAME,
 )
+
+# include de routers existentes...
+app.include_router(push.router)        # ⬅️ NUEVO
+app.include_router(alerts_pro.router)  # ⬅️ NUEVO
 
 from app.models import User
 
