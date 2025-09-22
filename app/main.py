@@ -13,10 +13,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
 
-# IMPORTS de routers (solo import; los include van más abajo)
-from app.routers import push, alerts_pro            # ← NUEVO (solo import)
-from app.routers import payments                    # ← NUEVO (solo import)
-
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie,
@@ -27,9 +23,9 @@ from app.security import (
     decode_token,
     COOKIE_NAME,
 )
+
 from app.models import User
 
-# ====== Crear app (AHORA sí) ======
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
@@ -214,6 +210,7 @@ def dashboard(
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
 
+    # Contexto 'user' adicional para el template (sin romper compatibilidad con 'current_user')
     user_ctx = {
         "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
         "email": getattr(user, "email", ""),
@@ -224,8 +221,8 @@ def dashboard(
         "dashboard.html",
         {
             "request": request,
-            "current_user": user,
-            "user": user_ctx,
+            "current_user": user,   # se mantiene
+            "user": user_ctx,       # agregado para el template
             "is_admin": is_admin,
         }
     )
@@ -296,39 +293,13 @@ try:
 except Exception as e:
     print("No pude cargar app.routers.admin:", e)
 
-# 👇 Routers nuevos (PUSH / PRO PREFS / PAYMENTS)
-try:
-    app.include_router(push.router)                     # /push/*
-except Exception as e:
-    print("No pude cargar app.routers.push:", e)
-
-try:
-    app.include_router(alerts_pro.router)               # /alerts-pro/*
-except Exception as e:
-    print("No pude cargar app.routers.alerts_pro:", e)
-
-try:
-    app.include_router(payments.router)                 # /billing/* y /mp/webhook
-except Exception as e:
-    print("No pude cargar app.routers.payments:", e)
-# 👆 Routers nuevos
-
-# 👇 (Opcional) compat con un antiguo router "billing"
+# 👇 Billing (AGREGADO)
 try:
     from app.routers import billing as billing_router_mod
     app.include_router(billing_router_mod.router)       # /billing/*
 except Exception as e:
     print("No pude cargar app.routers.billing:", e)
 # 👆 Billing
-
-
-# === Hooks de eventos (para notificar al crear MailAlert) ===
-try:
-    import app.events.alerts_hooks as _alerts_hooks  # registra @event.listens_for
-    print("alerts_hooks cargado ✔")
-except Exception as e:
-    print("No pude cargar app.events.alerts_hooks:", e)
-
 
 # === Fallbacks por si /auth/* no quedó montado ===
 def _route_exists(path: str) -> bool:
@@ -395,6 +366,40 @@ if not _route_exists("/auth/login/web"):
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
+
+# >>> NUEVO: fallbacks para /auth/register (para evitar el error de JSON) <<<
+# GET /auth/register -> redirige al formulario HTML /register
+if not _route_has_method("/auth/register", "GET"):
+    @app.get("/auth/register", include_in_schema=False)
+    def _fb_auth_register_get():
+        return RedirectResponse(url="/register", status_code=302)
+
+# POST /auth/register -> acepta FORM si no existe la versión del router
+if not _route_has_method("/auth/register", "POST"):
+    @app.post("/auth/register", include_in_schema=False)
+    def _fb_auth_register_post(
+        response: Response,
+        name: str = Form(...),
+        email: str = Form(...),
+        password: str = Form(...),
+        db: Session = Depends(get_db),
+    ):
+        email_norm = email.strip().lower()
+        if db.query(User).filter(func.lower(User.email) == email_norm).first():
+            raise HTTPException(status_code=400, detail="Ese email ya está registrado")
+        user = User(
+            name=(name or "").strip() or "Usuario",
+            email=email_norm,
+            hashed_password=get_password_hash(password),
+            role="user",
+            plan="FREE",
+            created_at=datetime.utcnow(),
+        )
+        db.add(user); db.commit(); db.refresh(user)
+        r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
+# <<< FIN NUEVO >>>
 
 # === Handler global: 401/403 HTML -> login (evita loops) ===
 @app.exception_handler(HTTPException)
