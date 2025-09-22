@@ -30,6 +30,26 @@ def _uid_email_from(user):
     except Exception:
         pass
     return uid, email
+
+def _norm_plan(plan: str) -> str:
+    p = (plan or "PRO").strip().upper()
+    if p in {"EMPRESAS", "BUSINESS", "ENTERPRISE", "EMPRESA"}:
+        return "EMPRESAS"
+    return "PRO"
+
+def _plan_config(plan: str):
+    p = _norm_plan(plan)
+    if p == "EMPRESAS":
+        return {
+            "plan": "EMPRESAS",
+            "title": "AlertTrail EMPRESAS (mensual)",
+            "unit_price": EMPRESAS_PRICE,
+        }
+    return {
+        "plan": "PRO",
+        "title": "AlertTrail PRO (mensual)",
+        "unit_price": PLAN_PRICE,
+    }
     
 def _create_preference(user: "User|dict") -> dict:
     if not MP_TOKEN:
