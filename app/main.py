@@ -200,14 +200,20 @@ def register_action(
     if db.query(User).filter(func.lower(User.email) == email_norm).first():
         raise HTTPException(status_code=400, detail="Ese email ya está registrado")
 
-    # Creamos primero el usuario con campos seguros
-    user = User(
-        name=(name or "").strip() or "Usuario",
-        email=email_norm,
-        role="user",
-        plan="FREE",
-        created_at=datetime.utcnow(),
-    )
+    # Creamos la instancia sin kwargs para evitar campos inexistentes
+    user = User()
+
+    # Seteamos sólo los atributos que existan en el modelo
+    safe_fields = [
+        ("name", (name or "").strip() or "Usuario"),
+        ("email", email_norm),
+        ("role", "user"),             # si no existe, se ignora
+        ("plan", "FREE"),              # si no existe, se ignora
+        ("created_at", datetime.utcnow()),
+    ]
+    for field, value in safe_fields:
+        if hasattr(user, field):
+            setattr(user, field, value)
 
     # Asignamos el hash de contraseña al atributo que exista en el modelo
     pw_hash = get_password_hash(password)
@@ -216,16 +222,14 @@ def register_action(
     elif hasattr(user, "password_hash"):
         setattr(user, "password_hash", pw_hash)
     elif hasattr(user, "password"):
-        # Último recurso: si el modelo usa 'password', guardamos el hash ahí
         setattr(user, "password", pw_hash)
     else:
-        # Si ningún campo existe, devolvemos error explícito para evitar datos inseguros
         raise HTTPException(status_code=500, detail="Modelo User no tiene un campo de contraseña válido")
 
     db.add(user); db.commit(); db.refresh(user)
 
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": getattr(user, "email", email_norm)})
     return r
 
 # Logout
@@ -437,3 +441,4 @@ def _log_routes():
     for p in paths:
         print(p)
     print("==============\n")
+
