@@ -1,13 +1,125 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Registro</title>
-<link rel="stylesheet" href="/static/style.css"></head><body>
-<div class="card">
-  <h1>Crear cuenta</h1>
-  <form method="post" action="/auth/register">
-    <input name="name" placeholder="Nombre" required>
-    <input name="email" placeholder="Email" required>
-    <input type="password" name="password" placeholder="Contraseña" required>
-    <button type="submit">Registrarme</button>
-  </form>
-  <p>¿Ya tienes cuenta? <a href="/auth/login">Entrar</a></p>
-</div>
-</body></html>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Crear cuenta — AlertTrail</title>
+  <style>
+    :root{
+      --bg:#0f172a;        /* slate-900 */
+      --card:#0b1226;      /* slate-950-ish */
+      --muted:#94a3b8;     /* slate-400 */
+      --text:#e5e7eb;      /* gray-200 */
+      --brand:#22d3ee;     /* cyan-400 */
+      --accent:#60a5fa;    /* blue-400 */
+      --ok:#10b981;        /* emerald-500 */
+      --ring:rgba(96,165,250,.4);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; color:var(--text); background:
+      radial-gradient(1200px 800px at 10% -10%, rgba(34,211,238,.15), rgba(0,0,0,0)),
+      radial-gradient(1200px 800px at 120% 110%, rgba(96,165,250,.12), rgba(0,0,0,0)),
+      var(--bg);
+      font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:16px 24px; background:transparent;
+    }
+    .brand{
+      display:flex; gap:.6rem; align-items:center; font-weight:700; letter-spacing:.2px;
+    }
+    .brand .dot{width:10px;height:10px;border-radius:999px;background:var(--brand);box-shadow:0 0 16px var(--brand)}
+    .brand a{color:var(--text); text-decoration:none}
+    .links a{color:var(--muted); text-decoration:none; padding:6px 10px; border-radius:10px}
+    .links a:hover{color:var(--text); background:rgba(255,255,255,.06)}
+    main{display:grid; place-items:center; padding:24px}
+    .card{
+      width:100%; max-width:520px; background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));
+      border:1px solid rgba(148,163,184,.2); border-radius:20px; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+    }
+    h1{margin:0 0 4px; font-size:1.5rem}
+    p.sub{margin:0 0 20px; color:var(--muted)}
+    form{display:grid; gap:14px}
+    label{font-size:.9rem; color:var(--muted)}
+    input{
+      width:100%; padding:12px 14px; border-radius:12px; border:1px solid rgba(148,163,184,.25);
+      background:#0a1022; color:var(--text);
+      outline:none; transition:border .15s, box-shadow .15s;
+    }
+    input:focus{border-color:var(--accent); box-shadow:0 0 0 6px var(--ring)}
+    .row{display:grid; gap:8px}
+    .passwrap{position:relative}
+    .toggle{
+      position:absolute; right:8px; top:50%; transform:translateY(-50%);
+      border:0; background:transparent; color:var(--muted); cursor:pointer; padding:6px 8px; border-radius:8px;
+    }
+    .toggle:hover{color:var(--text); background:rgba(255,255,255,.06)}
+    .btn{
+      appearance:none; border:0; cursor:pointer; font-weight:600;
+      padding:12px 16px; border-radius:12px; color:#041016;
+      background:linear-gradient(90deg, var(--brand), var(--accent));
+      box-shadow:0 10px 30px rgba(34,211,238,.25);
+    }
+    .btn:hover{filter:brightness(1.05)}
+    .muted{color:var(--muted); font-size:.85rem}
+    .foot{margin-top:14px; color:var(--muted)}
+    .foot a{color:var(--text)}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <a href="/">AlertTrail</a>
+    </div>
+    <nav class="links">
+      <a href="/auth/login">Iniciar sesión</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="card">
+      <h1>Crear cuenta</h1>
+      <p class="sub">Probá AlertTrail gratis. Sin tarjeta, sin compromiso.</p>
+
+      <form method="post" action="/register" autocomplete="on">
+        <div class="row">
+          <label for="name">Nombre</label>
+          <input id="name" name="name" placeholder="Tu nombre" required />
+        </div>
+
+        <div class="row">
+          <label for="email">Email</label>
+          <input id="email" type="email" name="email" placeholder="tucorreo@acme.com" required />
+        </div>
+
+        <div class="row">
+          <label for="password">Contraseña</label>
+          <div class="passwrap">
+            <input id="password" type="password" name="password" placeholder="Mínimo 6 caracteres" required />
+            <button class="toggle" type="button" id="togglePass" aria-label="Mostrar u ocultar contraseña">👁</button>
+          </div>
+        </div>
+
+        <button class="btn" type="submit">Crear cuenta</button>
+        <p class="muted">Al registrarte aceptás los Términos y la Política de Privacidad.</p>
+      </form>
+
+      <p class="foot">¿Ya tenés cuenta? <a href="/auth/login">Iniciá sesión</a></p>
+    </section>
+  </main>
+
+  <script>
+    const btn = document.getElementById('togglePass');
+    const input = document.getElementById('password');
+    btn?.addEventListener('click', () => {
+      input.type = input.type === 'password' ? 'text' : 'password';
+      btn.textContent = input.type === 'password' ? '👁' : '🙈';
+    });
+  </script>
+</body>
+</html>
