@@ -15,9 +15,27 @@ WEBHOOK_SECRET   = os.getenv("MP_WEBHOOK_SECRET", "change-me")
 PLAN_PRICE       = float(os.getenv("PLAN_PRICE", "10"))
 PLAN_CURRENCY    = os.getenv("PLAN_CURRENCY", "USD")
 
-def _create_preference(user: User) -> dict:
+def _uid_email_from(user):
+    # Soporta User ORM o dict con claims
+    uid = getattr(user, "id", None)
+    email = getattr(user, "email", None)
+
+    if isinstance(user, dict):
+        uid = user.get("user_id") or user.get("id") or user.get("uid") or uid
+        email = user.get("email") or email
+
+    # normaliza tipos
+    try:
+        uid = int(uid) if uid is not None else None
+    except Exception:
+        pass
+    return uid, email
+    
+def _create_preference(user: "User|dict") -> dict:
     if not MP_TOKEN:
         raise RuntimeError("MP_ACCESS_TOKEN no configurado")
+
+    uid, email = _uid_email_from(user)
 
     body = {
         "items": [{
@@ -26,12 +44,10 @@ def _create_preference(user: User) -> dict:
             "unit_price": PLAN_PRICE,
             "currency_id": PLAN_CURRENCY
         }],
-        "payer": {
-            "email": getattr(user, "email", None)
-        },
+        "payer": ({ "email": email } if email else {}),
         "metadata": {
-            "user_id": user.id,
-            "user_email": getattr(user, "email", None)
+            "user_id": uid,
+            "user_email": email
         },
         "back_urls": {
             "success": f"{BASE_URL}/billing/success",
@@ -40,9 +56,19 @@ def _create_preference(user: User) -> dict:
         },
         "auto_return": "approved",
         "notification_url": f"{BASE_URL}/mp/webhook?secret={WEBHOOK_SECRET}",
-        # Para “Wallet” (si lo configuraste así):
         "purpose": "wallet_purchase"
     }
+
+    r = requests.post(
+        "https://api.mercadopago.com/checkout/preferences",
+        headers={"Authorization": f"Bearer {MP_TOKEN}",
+                 "Content-Type": "application/json"},
+        data=json.dumps(body),
+        timeout=20
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Error creando preferencia MP: {r.status_code} {r.text}")
+    return r.json()
 
     r = requests.post(
         "https://api.mercadopago.com/checkout/preferences",
