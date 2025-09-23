@@ -1,8 +1,8 @@
 # app/routers/billing.py
-import os, re
-from typing import Optional
+import os
+from typing import Optional, Tuple
 
-from fastapi import APIRouter, Depends, Request, HTTPException, status
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -14,9 +14,17 @@ from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-PRO_PRICE_ARS = float(os.getenv("PRO_PRICE_ARS", "5999"))
-BASE_URL = os.getenv("BASE_URL", "https://www.alerttrail.com")
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "").strip()
+# ======== ENV & helpers ========
+BASE_URL = os.getenv("BASE_URL", "https://www.alerttrail.com").rstrip("/")
+MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+
+def _parse_float(v: Optional[str], default: float) -> float:
+    try:
+        if v is None or v == "":
+            return default
+        return float(v)
+    except Exception:
+        return default
 
 def _is_pro(u) -> bool:
     return bool(getattr(u, "is_pro", False)) or (getattr(u, "plan", "free") or "free").lower() == "pro"
@@ -33,13 +41,56 @@ def _sdk() -> mercadopago.SDK:
         raise RuntimeError("Falta MP_ACCESS_TOKEN en variables de entorno")
     return mercadopago.SDK(MP_ACCESS_TOKEN)
 
-# ---------- UI simple ----------
+def _compute_prices_for_ui() -> Tuple[str, float]:
+    """
+    Devuelve:
+      display_label -> texto para el botón (ej: 'Mejorar a PRO (USD 10.00/mes · ~$5.999 ARS)')
+      mp_amount_ars -> monto final que se envía a Mercado Pago (en ARS)
+    Reglas:
+      - Si PLAN_CURRENCY=USD: muestra USD y calcula ARS con USD_ARS,
+        salvo que MP_PRICE_ARS (o PRO_PRICE_ARS) esté seteado (override).
+      - Si PLAN_CURRENCY=ARS: muestra solo ARS (usa MP_PRICE_ARS o PLAN_PRICE).
+    """
+    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    price = _parse_float(os.getenv("PLAN_PRICE"), 10.0)
+
+    # overrides (1) MP_PRICE_ARS, (2) PRO_PRICE_ARS (compat), (3) cálculo por USD_ARS
+    override_mp = os.getenv("MP_PRICE_ARS")
+    if override_mp is None:
+        override_mp = os.getenv("PRO_PRICE_ARS")  # compatibilidad con versión anterior
+
+    usd_ars = _parse_float(os.getenv("USD_ARS"), 600.0)
+
+    if currency == "USD":
+        if override_mp:
+            mp_amount_ars = _parse_float(override_mp, round(price * usd_ars))
+        else:
+            mp_amount_ars = round(price * usd_ars)
+
+        # Formato bonito con separador de miles estilo ES
+        label = f"Mejorar a PRO (USD {price:.2f}/mes · ~${mp_amount_ars:,.0f} ARS)"
+        label = label.replace(",", ".")  # 5,999 -> 5.999
+        return label, float(mp_amount_ars)
+
+    # currency == ARS
+    if override_mp:
+        mp_amount_ars = _parse_float(override_mp, price)
+    else:
+        mp_amount_ars = price
+
+    label = f"Mejorar a PRO (${mp_amount_ars:,.0f}/mes)".replace(",", ".")
+    return label, float(mp_amount_ars)
+
+# ---------- UI ----------
 @router.get("", response_class=HTMLResponse)
 def billing_page(request: Request, current_user=Depends(get_current_user_cookie)):
     if not current_user:
         return RedirectResponse(url="/auth/login", status_code=303)
+
     plan = (getattr(current_user, "plan", "FREE") or "FREE").upper()
     is_pro = _is_pro(current_user)
+    display_label, _ = _compute_prices_for_ui()
+
     html = f"""
     <!doctype html><html lang="es"><meta charset="utf-8"><title>Plan | AlertTrail</title>
     <body style="font-family:system-ui;background:#0b2133;color:#e5f2ff;margin:0">
@@ -50,7 +101,7 @@ def billing_page(request: Request, current_user=Depends(get_current_user_cookie)
           <p style="margin:6px 0">Estado actual: <b>{plan}</b></p>
           <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">
             {(
-              '<form method="post" action="/billing/checkout"><button style="padding:10px 14px;border:0;border-radius:10px;background:#10b981;color:#06241f;font-weight:700;cursor:pointer">Mejorar a PRO ($'+str(int(PRO_PRICE_ARS))+'/mes)</button></form>'
+              f'<form method="post" action="/billing/checkout"><button style="padding:10px 14px;border:0;border-radius:10px;background:#10b981;color:#06241f;font-weight:700;cursor:pointer">{display_label}</button></form>'
               if not is_pro else
               '<form method="post" action="/billing/downgrade"><button style="padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;color:#3a2a00;font-weight:700;cursor:pointer">Bajar a FREE</button></form>'
             )}
@@ -73,13 +124,14 @@ def checkout(request: Request, current_user=Depends(get_current_user_cookie)):
     if not current_user:
         return RedirectResponse(url="/auth/login", status_code=303)
 
+    _, mp_amount_ars = _compute_prices_for_ui()
+
     sdk = _sdk()
-    origin = BASE_URL.rstrip("/")
     pref = {
         "items": [{
             "title": "AlertTrail PRO - 1 mes",
             "quantity": 1,
-            "unit_price": PRO_PRICE_ARS,
+            "unit_price": mp_amount_ars,   # Monto en ARS
             "currency_id": "ARS",
         }],
         "payer": {
@@ -87,20 +139,19 @@ def checkout(request: Request, current_user=Depends(get_current_user_cookie)):
         },
         "external_reference": f"user:{getattr(current_user, 'id', '')}",
         "back_urls": {
-            "success": f"{origin}/billing/success",
-            "failure": f"{origin}/billing/failure",
-            "pending": f"{origin}/billing/pending",
+            "success": f"{BASE_URL}/billing/success",
+            "failure": f"{BASE_URL}/billing/failure",
+            "pending": f"{BASE_URL}/billing/pending",
         },
         "auto_return": "approved",
-        "notification_url": f"{origin}/billing/ipn"  # webhook
+        "notification_url": f"{BASE_URL}/billing/ipn",  # webhook
     }
-    resp = sdk.preference().create(pref)  # crea la preferencia
-    # init_point te lleva al checkout
-    init_point = resp["response"].get("init_point")  # o sandbox_init_point si usás credenciales de test
+
+    resp = sdk.preference().create(pref)
+    init_point = resp["response"].get("init_point") or resp["response"].get("sandbox_init_point")
     if not init_point:
         raise HTTPException(status_code=500, detail="No se pudo crear la preferencia de pago")
     return RedirectResponse(url=init_point, status_code=303)
-# (Crear preferencia y redirigir con init_point es el flujo oficial de Checkout Pro). :contentReference[oaicite:2]{index=2}
 
 # ---------- Webhook (IPN/Webhook de MP) ----------
 @router.post("/ipn")
@@ -110,18 +161,16 @@ async def mp_ipn(request: Request, db: Session = Depends(get_db)):
     Validamos consultando la API con el payment_id y activamos PRO si está 'approved'.
     """
     try:
-        # MP envía a veces como query (type=payment&id=123) y/o cuerpo JSON {type, data:{id}}
         qp = request.query_params
-        body = {}
         try:
             body = await request.json()
         except Exception:
             body = {}
 
-        topic = qp.get("type") or body.get("type")
-        payment_id = qp.get("id") or (body.get("data", {}) or {}).get("id")
+        topic = qp.get("type") or (body.get("type") if isinstance(body, dict) else None)
+        payment_id = qp.get("id") or ((body.get("data") or {}).get("id") if isinstance(body, dict) else None)
 
-        # Aceptamos solo pagos
+        # Solo pagos
         if str(topic).lower() != "payment" or not payment_id:
             return PlainTextResponse("ignored", status_code=200)
 
@@ -142,18 +191,21 @@ async def mp_ipn(request: Request, db: Session = Depends(get_db)):
                     _set_plan(user, "pro")
                     db.add(user)
                     db.commit()
-        # IMPORTANTE: devolvé 200 siempre, MP reintenta si no recibe 200.
+
+        # Siempre 200; MP reintenta si no recibe 200
         return PlainTextResponse("ok", status_code=200)
-    except Exception as e:
-        # No devolvemos 500 para que MP no reintente indefinidamente; logueá el error en tus logs.
+
+    except Exception:
+        # No devolvemos 500 para evitar reintentos infinitos
         return PlainTextResponse("ok", status_code=200)
-# (Uso de notification_url + consulta a /payments por id para verificar 'approved' es el patrón recomendado). :contentReference[oaicite:3]{index=3}
 
 # ---------- páginas de retorno ----------
 @router.get("/success", response_class=HTMLResponse)
 def success_page(request: Request, current_user=Depends(get_current_user_cookie)):
-    # El cambio real a PRO lo hace el webhook; esta página es informativa.
-    return HTMLResponse("<h2>¡Pago aprobado!</h2><p>Si tu plan aún no muestra PRO, refrescá en unos segundos.</p><a href='/dashboard'>Volver al dashboard</a>")
+    return HTMLResponse(
+        "<h2>¡Pago aprobado!</h2><p>Si tu plan aún no muestra PRO, refrescá en unos segundos.</p>"
+        "<a href='/dashboard'>Volver al dashboard</a>"
+    )
 
 @router.get("/failure", response_class=HTMLResponse)
 def failure_page(request: Request):
@@ -163,7 +215,7 @@ def failure_page(request: Request):
 def pending_page(request: Request):
     return HTMLResponse("<h2>Pago pendiente</h2><p>Te avisaremos cuando se acredite.</p><a href='/dashboard'>Volver al dashboard</a>")
 
-# ---------- baja manual (opcional) ----------
+# ---------- baja manual ----------
 @router.post("/downgrade")
 def downgrade(current_user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
     if not current_user:
