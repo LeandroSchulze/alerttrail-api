@@ -20,11 +20,18 @@ from app.security import get_current_user_cookie
 
 # ---- PRO guard (mail sólo PRO/BIZ) ----
 def _is_pro(u) -> bool:
-    # Permitir admin aunque no tenga plan PRO/BIZ (para administrar y probar)
+    # dejar pasar a admin siempre (útil para probar)
     if bool(getattr(u, "is_admin", False)):
         return True
-    plan = (getattr(u, "plan", "free") or "free").lower()
-    return bool(getattr(u, "is_pro", False)) or plan in {"pro", "biz", "business"}
+
+    # normalizar plan: None -> "", quitar espacios y bajar a minúsculas
+    plan = ((getattr(u, "plan", "") or "")).strip().lower()
+
+    # compat: booleano heredado o alias de nombres
+    if bool(getattr(u, "is_pro", False)):
+        return True
+
+    return plan in {"pro", "biz", "business", "empresa", "empresas"}
 
 def require_pro_user(request: Request, current_user=Depends(get_current_user_cookie)):
     if not current_user:
