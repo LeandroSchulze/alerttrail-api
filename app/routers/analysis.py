@@ -166,6 +166,12 @@ code{{white-space:pre-wrap}}
 
 # -------------------- Rutas --------------------
 
+# Alias raíz: /analysis y /analysis/ -> /analysis/generate
+@router.get("", include_in_schema=False)
+@router.get("/", include_in_schema=False)
+async def analysis_index():
+    return RedirectResponse(url="/analysis/generate", status_code=307)
+
 @router.get("/generate", response_class=HTMLResponse)
 async def generate_page(request: Request, current=Depends(get_current_user_cookie)):
     if current is None:
