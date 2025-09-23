@@ -20,8 +20,11 @@ from app.security import get_current_user_cookie
 
 # ---- PRO guard (mail sólo PRO/BIZ) ----
 def _is_pro(u) -> bool:
+    # Permitir admin aunque no tenga plan PRO/BIZ (para administrar y probar)
+    if bool(getattr(u, "is_admin", False)):
+        return True
     plan = (getattr(u, "plan", "free") or "free").lower()
-    return bool(getattr(u, "is_pro", False)) or plan in {"pro", "biz"}
+    return bool(getattr(u, "is_pro", False)) or plan in {"pro", "biz", "business"}
 
 def require_pro_user(request: Request, current_user=Depends(get_current_user_cookie)):
     if not current_user:
@@ -99,7 +102,7 @@ class MailAlert(Base):
     msg_uid = Column(String, index=True)
     subject = Column(Text)
     sender = Column(String)
-    reason = Column(String)
+    reason = Column(String)  # si en el futuro querés evitar truncados, cambiá a Text y migra la DB
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
@@ -163,6 +166,11 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
     M = imaplib.IMAP4_SSL(server, port) if acct.use_ssl else imaplib.IMAP4(server, port)
     M.login(data["username"], data["password"])
     return M
+
+# ---- Ruta índice para evitar 404 en /mail ----
+@router.get("/", response_class=HTMLResponse)
+def mail_index(request: Request):
+    return RedirectResponse(url="/mail/scanner", status_code=302)
 
 # ---- UI Conectar casilla ----
 @router.get("/connect", response_class=HTMLResponse)
@@ -386,8 +394,9 @@ def _scan_account(db: Session, acct: MailAccount) -> dict:
                     _notify_alert(user_id=acct.user_id, subject=subject, sender=sender, reasons=reasons)
                 alerts += 1
         M.logout()
-    except Exception:
+    except Exception as e:
         errors += 1
+        print(f"[mail][_scan_account] error: {e}")
     return {"scans": scans, "alerts": alerts, "errors": errors}
 
 def _run_scan_all_accounts(db: Session) -> dict:
