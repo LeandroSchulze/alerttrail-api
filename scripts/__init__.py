@@ -1,7 +1,7 @@
 import os
 from app.database import Base, engine, SessionLocal
 from app.models import User
-from app.utils.security import hash_password
+from app.security import get_password_hash as hash_password
 
 def upsert_admin():
     admin_email = os.getenv("ADMIN_EMAIL")
