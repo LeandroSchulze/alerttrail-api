@@ -74,7 +74,7 @@
     </div>
 
     <div class="grid">
-      <!-- Estado + acciones de plan (incluye Cambiar plan) -->
+      <!-- Estado + acciones de plan -->
       <section class="card">
         <h3>Estado de tu cuenta</h3>
         <p class="muted">Plan actual: <strong>{{ user.plan }}</strong></p>
@@ -89,7 +89,7 @@
         </div>
       </section>
 
-      <!-- Acceso rápido como antes -->
+      <!-- Acceso rápido -->
       <section class="card">
         <h3>Acceso rápido</h3>
         <div class="quick">
@@ -99,31 +99,73 @@
           <a class="chip" href="/billing">Facturación</a>
         </div>
       </section>
-        <div class="card" style="margin-top:16px">
-      <h3>Planes</h3>
-      <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch">
-        <!-- PRO -->
-        <div class="card" style="margin:0">
-          <h3 style="margin-bottom:6px">PRO <span class="muted" style="font-weight:400">— US$ 10 / mes</span></h3>
-          <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
-            <li>Uso individual o equipo chico</li>
-            <li>Funciones completas del producto</li>
-            <li>Soporte estándar</li>
-          </ul>
-          <a class="btn-primary" href="/billing/checkout?plan=PRO">Elegir PRO</a>
-        </div>
-        <!-- EMPRESAS -->
-        <div class="card" style="margin:0">
-          <h3 style="margin-bottom:6px">EMPRESAS <span class="muted" style="font-weight:400">— US$ 99 / mes</span></h3>
-          <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
-            <li><strong>25 asientos incluidos</strong></li>
-            <li>Usuarios adicionales por asiento extra</li>
-            <li>Soporte prioritario</li>
-          </ul>
-          <a class="btn-primary" href="/billing/checkout?plan=BIZ">Elegir EMPRESAS</a>
+
+      <!-- Planes -->
+      <div class="card" style="margin-top:16px">
+        <h3>Planes</h3>
+        <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch">
+          <!-- PRO -->
+          <div class="card" style="margin:0">
+            <h3 style="margin-bottom:6px">PRO <span class="muted" style="font-weight:400">— US$ 10 / mes</span></h3>
+            <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
+              <li>Uso individual o equipo chico</li>
+              <li>Funciones completas del producto</li>
+              <li>Soporte estándar</li>
+            </ul>
+            <a class="btn-primary" href="/billing/checkout?plan=PRO">Elegir PRO</a>
+          </div>
+          <!-- EMPRESAS -->
+          <div class="card" style="margin:0">
+            <h3 style="margin-bottom:6px">EMPRESAS <span class="muted" style="font-weight:400">— US$ 99 / mes</span></h3>
+            <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
+              <li><strong>25 asientos incluidos</strong></li>
+              <li>Usuarios adicionales por asiento extra</li>
+              <li>Soporte prioritario</li>
+            </ul>
+            <a class="btn-primary" href="/billing/checkout?plan=BIZ">Elegir EMPRESAS</a>
+          </div>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- Script para notificaciones -->
+  <script>
+  let lastUnread = 0;
+
+  if ("Notification" in window) {
+    Notification.requestPermission().then(function (perm) {
+      console.log("Permiso notificaciones:", perm);
+    });
+  }
+
+  function showDesktopNotif(title, msg) {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification(title, {
+        body: msg,
+        icon: "/static/favicon.ico"
+      });
+    }
+  }
+
+  async function checkAlerts() {
+    try {
+      const res = await fetch("/mail/alerts/unread_count");
+      if (!res.ok) return;
+      const data = await res.json();
+      const unread = data.unread || 0;
+
+      if (unread > lastUnread) {
+        showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso.");
+      }
+      lastUnread = unread;
+    } catch (e) {
+      console.error("Error chequeando alertas", e);
+    }
+  }
+
+  setInterval(checkAlerts, 30000);
+  checkAlerts();
+  </script>
 </body>
 </html>
