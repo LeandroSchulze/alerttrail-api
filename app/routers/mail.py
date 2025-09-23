@@ -4,7 +4,7 @@ import imaplib
 import email
 from email.header import decode_header, make_header
 from datetime import datetime, timedelta
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,84 +18,77 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.database import Base, engine, get_db
 from app.security import get_current_user_cookie
 
-# ---- Notificación opcional (no rompe si no existe) --------------------------
-try:
-    from app.services.pro_alerts import queue_or_push  # opcional
-except Exception:  # pragma: no cover
-    def queue_or_push(*_args, **_kwargs):
-        return None
-
-# -----------------------------------------------------------------------------
-# Guard PRO (mail sólo para plan PRO)
-# -----------------------------------------------------------------------------
+# ---- PRO guard (mail sólo PRO/BIZ) ----
 def _is_pro(u) -> bool:
-    return bool(getattr(u, "is_pro", False)) or (
-        (getattr(u, "plan", "free") or "free").lower() == "pro"
-    )
+    plan = (getattr(u, "plan", "free") or "free").lower()
+    return bool(getattr(u, "is_pro", False)) or plan in {"pro", "biz"}
 
 def require_pro_user(request: Request, current_user=Depends(get_current_user_cookie)):
     if not current_user:
-        # no logueado -> el manejador global te mandará a login si Accept: text/html
         raise HTTPException(status_code=401, detail="No autenticado")
     if not _is_pro(current_user):
-        # para HTML navegadores esto se traduce en redirección /billing
+        # 303 con Location -> /billing (lo captura tu handler global para HTML)
         raise HTTPException(
             status_code=303,
             detail="Funcionalidad disponible sólo para PRO",
-            headers={"Location": "/billing?upgrade=mail"},
+            headers={"Location": "/billing?upgrade=mail"}
         )
 
-# -----------------------------------------------------------------------------
-# Router
-# -----------------------------------------------------------------------------
-router = APIRouter(
-    prefix="/mail",
-    tags=["mail"],
-    dependencies=[Depends(require_pro_user)],   # se aplica a todas las rutas /mail/*
-)
+router = APIRouter(prefix="/mail", tags=["mail"], dependencies=[Depends(require_pro_user)])
 
-# ---------------- Templates ----------------
-APP_DIR = os.path.dirname(os.path.dirname(__file__))          # app/
-TEMPLATES_DIR = os.path.join(APP_DIR, "templates")            # app/templates
+# ---- Templates ----
+APP_DIR = os.path.dirname(os.path.dirname(__file__))
+TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# ---------------- Cifrado ----------------
+# ---- Alerta in-app (opcional) ----
+try:
+    from app.services.pro_alerts import queue_or_push  # type: ignore
+except Exception:
+    queue_or_push = None  # si no existe el módulo, no rompemos
+
+def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -> None:
+    """Envía alerta in-app si está disponible app.services.pro_alerts.queue_or_push."""
+    if not queue_or_push:
+        return
+    try:
+        msg = f"Correo sospechoso: {subject} — {sender} ({'; '.join(reasons)})"
+        # Ajustá los campos si tu servicio espera otros nombres
+        queue_or_push(user_id=user_id, title="Alerta de correo", message=msg, level="warning")
+    except Exception:
+        pass
+
+# ---- Cifrado credenciales ----
 def _get_fernet() -> Fernet:
     """
-    Usa MAIL_CRYPT_KEY si está y es válida; si no, la deriva de JWT_SECRET.
-    MAIL_CRYPT_KEY debe ser una key Fernet válida (32 bytes urlsafe-base64).
+    Usa MAIL_CRYPT_KEY (Fernet urlsafe-base64) si está; si no, deriva de JWT_SECRET.
     """
     import base64, hashlib
     env_key = os.getenv("MAIL_CRYPT_KEY")
     if env_key:
-        key_bytes = env_key.encode() if isinstance(env_key, str) else env_key
         try:
-            return Fernet(key_bytes)
+            return Fernet(env_key.encode() if isinstance(env_key, str) else env_key)
         except Exception:
             pass
     seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
     derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
     return Fernet(derived)
 
-# ---------------- Modelos (locales) ----------------
+# ---- Modelos locales ----
 class MailAccount(Base):
     __tablename__ = "mail_accounts"
-
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email = Column(String, nullable=False)
 
-    # Compat con esquemas antiguos
-    imap_host   = Column(String, nullable=False, default="imap.gmail.com")
-    # Campo “nuevo” usado por el código
+    imap_host   = Column(String, nullable=False, default="imap.gmail.com")  # compat legado
     imap_server = Column(String, nullable=False, default="imap.gmail.com")
     imap_port   = Column(Integer, nullable=False, default=993)
     use_ssl     = Column(Boolean, nullable=False, default=True)
 
-    # Credenciales cifradas
     enc_blob     = Column(Text, nullable=False, default="")  # JSON cifrado {username,password}
-    enc_password = Column(Text, nullable=False, default="")  # ← legado (algunas DB lo tienen NOT NULL)
+    enc_password = Column(Text, nullable=False, default="")  # legado (NOT NULL en DBs viejas)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -110,20 +103,15 @@ class MailAlert(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
-# Crear tablas si faltan (idempotente)
+# Crear tablas si no existen
 try:
     Base.metadata.create_all(bind=engine)
-except Exception as e:  # pragma: no cover
+except Exception as e:
     print(f"[mail] aviso creando tablas: {e}")
 
-# ---------------- Utilidades ----------------
-SUS_ATTACH_EXTS = {
-    ".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"
-}
-SUS_SUBJECT_WORDS = {
-    "suspend","suspendida","password","contraseña","verify","verificar",
-    "urgente","factura","pago","bloqueada","blocked"
-}
+# ---- Heurísticas de riesgo ----
+SUS_ATTACH_EXTS = {".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"}
+SUS_SUBJECT_WORDS = {"suspend","suspendida","password","contraseña","verify","verificar","urgente","factura","pago","bloqueada","blocked"}
 
 def _decode_hdr(v):
     try:
@@ -136,7 +124,6 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
     subj = _decode_hdr(msg.get("Subject", ""))
     if any(w in subj.lower() for w in SUS_SUBJECT_WORDS):
         reasons.append("Asunto sospechoso")
-
     for part in msg.walk():
         if part.get_content_disposition() == "attachment":
             fn = part.get_filename()
@@ -146,8 +133,7 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
                     if fn_d.endswith(ext):
                         reasons.append(f"Adjunto peligroso ({ext})")
                         break
-
-    # Heurística simple sobre HTML y acortadores
+    # enlaces acortados en HTML
     try:
         from bs4 import BeautifulSoup
         for part in msg.walk():
@@ -156,12 +142,11 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
                 soup = BeautifulSoup(html, "html.parser")  # type: ignore
                 for a in soup.find_all("a"):
                     href = (a.get("href") or "").lower()
-                    if any(x in href for x in ("bit.ly", "tinyurl", "goo.gl")):
+                    if any(x in href for x in ("bit.ly","tinyurl","goo.gl")):
                         reasons.append("Acortador de URL")
                         break
     except Exception:
         pass
-
     return (len(reasons) > 0, reasons)
 
 def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
@@ -175,21 +160,11 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
     server = acct.imap_server or acct.imap_host or "imap.gmail.com"
     port = acct.imap_port or 993
 
-    if acct.use_ssl:
-        M = imaplib.IMAP4_SSL(server, port)
-    else:
-        M = imaplib.IMAP4(server, port)
+    M = imaplib.IMAP4_SSL(server, port) if acct.use_ssl else imaplib.IMAP4(server, port)
     M.login(data["username"], data["password"])
     return M
 
-# ---------------- Rutas ----------------
-
-# Alias raíz: /mail y /mail/ -> /mail/connect
-@router.get("", include_in_schema=False)
-@router.get("/", include_in_schema=False)
-async def mail_index():
-    return RedirectResponse(url="/mail/connect", status_code=307)
-
+# ---- UI Conectar casilla ----
 @router.get("/connect", response_class=HTMLResponse)
 def connect_form(request: Request):
     return templates.TemplateResponse("mail_connect.html", {"request": request})
@@ -200,7 +175,6 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
     Acepta JSON o FormData:
       JSON: {email_addr, username, password, imap_server?, imap_port?, use_ssl?}
       Form: campos con mismos nombres (use_ssl presente => True)
-    Guarda/actualiza la cuenta seteando imap_host e imap_server.
     """
     user = get_current_user_cookie(request, db)
     if not user:
@@ -234,12 +208,10 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
+        # Test de login
         stage = "test-imap"
         try:
-            if use_ssl:
-                M = imaplib.IMAP4_SSL(imap_server, imap_port)
-            else:
-                M = imaplib.IMAP4(imap_server, imap_port)
+            M = imaplib.IMAP4_SSL(imap_server, imap_port) if use_ssl else imaplib.IMAP4(imap_server, imap_port)
             M.login(username, password)
             M.logout()
         except Exception as e:
@@ -249,64 +221,54 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
+        # Cifrado y commit
         stage = "encrypt"
         import json
-        try:
-            f = _get_fernet()
-            blob = f.encrypt(json.dumps({"username": username, "password": password}).encode()).decode()
-        except Exception as e:
-            return templates.TemplateResponse(
-                "mail_connect.html",
-                {"request": request, "error": f"Error cifrando credenciales (MAIL_CRYPT_KEY inválida?): {e}"},
-                status_code=500,
-            )
+        f = _get_fernet()
+        blob = f.encrypt(json.dumps({"username": username, "password": password}).encode()).decode()
 
         stage = "db-commit"
-        try:
-            acct = db.query(MailAccount).filter(
-                MailAccount.user_id == user.id,
-                MailAccount.email == email_addr
-            ).first()
+        acct = db.query(MailAccount).filter(
+            MailAccount.user_id == user.id,
+            MailAccount.email == email_addr
+        ).first()
 
-            if acct is None:
-                acct = MailAccount(
-                    user_id=user.id,
-                    email=email_addr,
-                    imap_host=imap_server,          # compat legado
-                    imap_server=imap_server,
-                    imap_port=imap_port,
-                    use_ssl=use_ssl,
-                    enc_blob=blob,
-                    enc_password=blob,              # compat: NOT NULL legado
-                )
-                db.add(acct)
-            else:
-                acct.imap_host   = imap_server      # compat legado
-                acct.imap_server = imap_server
-                acct.imap_port   = imap_port
-                acct.use_ssl     = use_ssl
-                acct.enc_blob    = blob
-                acct.enc_password= blob             # compat legado
+        if acct is None:
+            acct = MailAccount(
+                user_id=user.id,
+                email=email_addr,
+                imap_host=imap_server,          # compat
+                imap_server=imap_server,
+                imap_port=imap_port,
+                use_ssl=use_ssl,
+                enc_blob=blob,
+                enc_password=blob,              # compat
+            )
+            db.add(acct)
+        else:
+            acct.imap_host   = imap_server
+            acct.imap_server = imap_server
+            acct.imap_port   = imap_port
+            acct.use_ssl     = use_ssl
+            acct.enc_blob    = blob
+            acct.enc_password= blob
 
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        db.commit()
 
         return templates.TemplateResponse(
             "mail_connect.html",
             {"request": request, "ok": True, "email_addr": email_addr},
         )
 
-    except Exception as e:  # pragma: no cover
-        import traceback
-        traceback.print_exc()
+    except Exception as e:
+        import traceback; traceback.print_exc()
         return templates.TemplateResponse(
             "mail_connect.html",
             {"request": request, "error": f"Fallo en etapa '{stage}': {e}"},
             status_code=500,
         )
 
+# ---- Escaneo manual UI ----
 @router.get("/scanner", response_class=HTMLResponse)
 def manual_scan(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
@@ -318,7 +280,6 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/mail/connect", status_code=302)
 
     findings: List[Tuple[str, str, List[str]]] = []
-
     try:
         M = _imap_login(acct)
         M.select("INBOX")
@@ -337,9 +298,9 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
             if risky:
                 subject = _decode_hdr(msg.get("Subject", ""))
                 sender = _decode_hdr(msg.get("From", ""))
-                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                findings.append((subject, sender, reasons))  # <-- AHORA sí se agrega a la lista
 
-                # Guardar/evitar duplicados
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
                 exists = db.query(MailAlert).filter(
                     MailAlert.user_id == user.id,
                     MailAlert.msg_uid == uid_str
@@ -351,10 +312,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
                         reason="; ".join(reasons),
                     ))
                     db.commit()
-
-                # Mostrar en UI
-                findings.append((subject, sender, reasons))
-
+                    _notify_alert(user_id=user.id, subject=subject, sender=sender, reasons=reasons)
         M.logout()
     except Exception as e:
         return HTMLResponse(f"<h2>Error escaneando: {e}</h2>", status_code=500)
@@ -369,20 +327,31 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
       <h2>Mail Scanner</h2>
       <p>Cuenta: {acct.email}</p>
       <ul>{items}</ul>
-      <p><a href="/dashboard">Volver</a></p>
+      <p><a href="/mail/alerts">Ver alertas guardadas</a> · <a href="/dashboard">Volver</a></p>
     </body></html>
     """
     return HTMLResponse(html)
 
-# --- Helpers para cron / API ---
-import json
+# ---- Vista simple de alertas guardadas ----
+@router.get("/alerts", response_class=HTMLResponse)
+def list_alerts(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
 
+    rows = db.query(MailAlert).filter(MailAlert.user_id == user.id).order_by(MailAlert.created_at.desc()).limit(100).all()
+    lis = "".join(
+        f"<li><b>{_decode_hdr(r.subject or '')}</b> — <small>{_decode_hdr(r.sender or '')}</small>"
+        f"<br><i>{r.reason or ''}</i><br><small>{r.created_at}</small></li>"
+        for r in rows
+    ) or "<li>Sin alertas</li>"
+    return HTMLResponse(f"<h2 style='font-family:system-ui'>Alertas</h2><ul>{lis}</ul><p><a href='/dashboard'>Volver</a></p>")
+
+# ---- Helpers para cron / API ----
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
 
 def _scan_account(db: Session, acct: MailAccount) -> dict:
-    scans = 0
-    alerts = 0
-    errors = 0
+    scans = alerts = errors = 0
     try:
         M = _imap_login(acct)
         M.select("INBOX")
@@ -414,6 +383,7 @@ def _scan_account(db: Session, acct: MailAccount) -> dict:
                         reason="; ".join(reasons),
                     ))
                     db.commit()
+                    _notify_alert(user_id=acct.user_id, subject=subject, sender=sender, reasons=reasons)
                 alerts += 1
         M.logout()
     except Exception:
@@ -430,7 +400,7 @@ def _run_scan_all_accounts(db: Session) -> dict:
         total["errors"] += r["errors"]
     return total
 
-# --- Endpoint cron seguro ---
+# ---- Endpoint cron seguro ----
 @router.get("/poll")
 def mail_poll(secret: str, db: Session = Depends(get_db)):
     if not MAIL_CRON_SECRET:
@@ -440,9 +410,8 @@ def mail_poll(secret: str, db: Session = Depends(get_db)):
     result = _run_scan_all_accounts(db)
     return {"status": "ok", "source": "cron", **result}
 
-# --- Endpoint API manual sin UI ---
-@router.post("/scan")
-@router.get("/scan")
+# ---- Endpoint API manual ----
+@router.api_route("/scan", methods=["GET", "POST"])
 def mail_scan_api(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
@@ -454,4 +423,3 @@ def mail_scan_api(request: Request, db: Session = Depends(get_db)):
 
     result = _scan_account(db, acct)
     return {"status": "ok", "source": "manual", **result}
-
