@@ -1,5 +1,4 @@
 # app/routers/mail.py
-from app.services.pro_alerts import queue_or_push  # NUEVO
 import os
 import imaplib
 import email
@@ -19,35 +18,45 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.database import Base, engine, get_db
 from app.security import get_current_user_cookie
 
-router = APIRouter(
-    prefix="/mail",
-    tags=["mail"],
-    dependencies=[Depends(require_pro_user)]  # <- activa el guard PRO para TODAS las rutas /mail/*
-)
+# ---- Notificación opcional (no rompe si no existe) --------------------------
+try:
+    from app.services.pro_alerts import queue_or_push  # opcional
+except Exception:  # pragma: no cover
+    def queue_or_push(*_args, **_kwargs):
+        return None
 
-
-# --- PRO guard (mail sólo para plan PRO) ---
-from fastapi import Depends, HTTPException, Request
-from app.security import get_current_user_cookie
-
+# -----------------------------------------------------------------------------
+# Guard PRO (mail sólo para plan PRO)
+# -----------------------------------------------------------------------------
 def _is_pro(u) -> bool:
-    return bool(getattr(u, "is_pro", False)) or (getattr(u, "plan", "free") or "free").lower() == "pro"
+    return bool(getattr(u, "is_pro", False)) or (
+        (getattr(u, "plan", "free") or "free").lower() == "pro"
+    )
 
 def require_pro_user(request: Request, current_user=Depends(get_current_user_cookie)):
     if not current_user:
-        # no logueado -> que el manejador global te mande al login
+        # no logueado -> el manejador global te mandará a login si Accept: text/html
         raise HTTPException(status_code=401, detail="No autenticado")
     if not _is_pro(current_user):
-        # redirigimos a /billing (sirve para HTML y también informa a clientes API)
+        # para HTML navegadores esto se traduce en redirección /billing
         raise HTTPException(
-            status_code=303,  # redirect
+            status_code=303,
             detail="Funcionalidad disponible sólo para PRO",
-            headers={"Location": "/billing?upgrade=mail"}
+            headers={"Location": "/billing?upgrade=mail"},
         )
 
+# -----------------------------------------------------------------------------
+# Router
+# -----------------------------------------------------------------------------
+router = APIRouter(
+    prefix="/mail",
+    tags=["mail"],
+    dependencies=[Depends(require_pro_user)],   # se aplica a todas las rutas /mail/*
+)
+
 # ---------------- Templates ----------------
-APP_DIR = os.path.dirname(os.path.dirname(__file__))
-TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
+APP_DIR = os.path.dirname(os.path.dirname(__file__))          # app/
+TEMPLATES_DIR = os.path.join(APP_DIR, "templates")            # app/templates
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -104,12 +113,17 @@ class MailAlert(Base):
 # Crear tablas si faltan (idempotente)
 try:
     Base.metadata.create_all(bind=engine)
-except Exception as e:
+except Exception as e:  # pragma: no cover
     print(f"[mail] aviso creando tablas: {e}")
 
 # ---------------- Utilidades ----------------
-SUS_ATTACH_EXTS = {".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"}
-SUS_SUBJECT_WORDS = {"suspend","suspendida","password","contraseña","verify","verificar","urgente","factura","pago","bloqueada","blocked"}
+SUS_ATTACH_EXTS = {
+    ".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"
+}
+SUS_SUBJECT_WORDS = {
+    "suspend","suspendida","password","contraseña","verify","verificar",
+    "urgente","factura","pago","bloqueada","blocked"
+}
 
 def _decode_hdr(v):
     try:
@@ -122,6 +136,7 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
     subj = _decode_hdr(msg.get("Subject", ""))
     if any(w in subj.lower() for w in SUS_SUBJECT_WORDS):
         reasons.append("Asunto sospechoso")
+
     for part in msg.walk():
         if part.get_content_disposition() == "attachment":
             fn = part.get_filename()
@@ -131,6 +146,8 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
                     if fn_d.endswith(ext):
                         reasons.append(f"Adjunto peligroso ({ext})")
                         break
+
+    # Heurística simple sobre HTML y acortadores
     try:
         from bs4 import BeautifulSoup
         for part in msg.walk():
@@ -139,11 +156,12 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
                 soup = BeautifulSoup(html, "html.parser")  # type: ignore
                 for a in soup.find_all("a"):
                     href = (a.get("href") or "").lower()
-                    if any(x in href for x in ("bit.ly","tinyurl","goo.gl")):
+                    if any(x in href for x in ("bit.ly", "tinyurl", "goo.gl")):
                         reasons.append("Acortador de URL")
                         break
     except Exception:
         pass
+
     return (len(reasons) > 0, reasons)
 
 def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
@@ -165,6 +183,13 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
     return M
 
 # ---------------- Rutas ----------------
+
+# Alias raíz: /mail y /mail/ -> /mail/connect
+@router.get("", include_in_schema=False)
+@router.get("/", include_in_schema=False)
+async def mail_index():
+    return RedirectResponse(url="/mail/connect", status_code=307)
+
 @router.get("/connect", response_class=HTMLResponse)
 def connect_form(request: Request):
     return templates.TemplateResponse("mail_connect.html", {"request": request})
@@ -273,7 +298,7 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             {"request": request, "ok": True, "email_addr": email_addr},
         )
 
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         import traceback
         traceback.print_exc()
         return templates.TemplateResponse(
@@ -293,6 +318,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/mail/connect", status_code=302)
 
     findings: List[Tuple[str, str, List[str]]] = []
+
     try:
         M = _imap_login(acct)
         M.select("INBOX")
@@ -312,6 +338,8 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
                 subject = _decode_hdr(msg.get("Subject", ""))
                 sender = _decode_hdr(msg.get("From", ""))
                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+
+                # Guardar/evitar duplicados
                 exists = db.query(MailAlert).filter(
                     MailAlert.user_id == user.id,
                     MailAlert.msg_uid == uid_str
@@ -323,6 +351,10 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
                         reason="; ".join(reasons),
                     ))
                     db.commit()
+
+                # Mostrar en UI
+                findings.append((subject, sender, reasons))
+
         M.logout()
     except Exception as e:
         return HTMLResponse(f"<h2>Error escaneando: {e}</h2>", status_code=500)
@@ -344,7 +376,6 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
 
 # --- Helpers para cron / API ---
 import json
-from sqlalchemy import select  # (puede quedar aunque no lo uses mucho)
 
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
 
@@ -402,7 +433,6 @@ def _run_scan_all_accounts(db: Session) -> dict:
 # --- Endpoint cron seguro ---
 @router.get("/poll")
 def mail_poll(secret: str, db: Session = Depends(get_db)):
-    print("[mail_poll] hit /mail/poll")
     if not MAIL_CRON_SECRET:
         raise HTTPException(status_code=503, detail="MAIL_CRON_SECRET no configurado")
     if secret != MAIL_CRON_SECRET:
@@ -424,3 +454,4 @@ def mail_scan_api(request: Request, db: Session = Depends(get_db)):
 
     result = _scan_account(db, acct)
     return {"status": "ok", "source": "manual", **result}
+
