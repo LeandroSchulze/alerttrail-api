@@ -102,7 +102,6 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
             f"adicional USD {extra_usd:.2f}/asiento)".replace(",", ".")
         )
     else:
-        # Si quisieras soportar PLAN_CURRENCY=ARS directamente
         base_ars = _parse_float(os.getenv("PLAN_PRICE"), price_usd * usd_ars)
         mp_amount_ars = _parse_float(override_biz_ars, base_ars)
         extra_ars = _parse_float(extra_ars_override, round(extra_usd * usd_ars))
@@ -117,12 +116,21 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
 
 # ---------- UI ----------
 @router.get("", response_class=HTMLResponse)
-def billing_page(request: Request, current_user=Depends(get_current_user_cookie)):
+def billing_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_cookie),
+):
     if not current_user:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    plan = (getattr(current_user, "plan", "FREE") or "FREE").upper()
-    is_pro = _is_pro(current_user)
+    # 🔑 Traemos el usuario REAL desde la DB para que el plan sea la fuente de verdad
+    user = db.query(models.User).filter(models.User.id == getattr(current_user, "id")).first()
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    plan = (getattr(user, "plan", "FREE") or "FREE").upper()
+    is_pro = _is_pro(user)
 
     pro_label, _, _ = _compute_price_pro()
     biz_label, _, _, seats, extra_usd, extra_ars = _compute_price_biz()
