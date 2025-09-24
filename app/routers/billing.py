@@ -116,16 +116,15 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
 
 # ---------- UI ----------
 @router.get("", response_class=HTMLResponse)
-def billing_page(
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_cookie),
-):
-    if not current_user:
+def billing_page(request: Request, db: Session = Depends(get_db)):
+    """
+    Importante: pedimos el usuario REAL desde la DB usando get_current_user_cookie(request, db=db).
+    Si no hay sesión, redirigimos a /auth/login.
+    """
+    try:
+        user = get_current_user_cookie(request, db=db)  # ← trae models.User desde la DB
+    except Exception:
         return RedirectResponse(url="/auth/login", status_code=303)
-
-    # 🔑 Traemos el usuario REAL desde la DB para que el plan sea la fuente de verdad
-    user = db.query(models.User).filter(models.User.id == getattr(current_user, "id")).first()
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
 
