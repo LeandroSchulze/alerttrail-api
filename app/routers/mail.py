@@ -337,18 +337,99 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         return HTMLResponse(f"<h2>Error escaneando: {e}</h2>", status_code=500)
 
-    items = "".join(
-        f"<li><b>{subj}</b><br><small>{sender}</small><br><i>{'; '.join(reas)}</i></li>"
-        for (subj, sender, reas) in findings
-    ) or "<li>Sin hallazgos recientes</li>"
+    # ---------- UI ----------
+    def _chip_list(rs: List[str]) -> str:
+        return "".join(f"<span class='tag'>{r}</span>" for r in rs)
+
+    cards = "".join(
+        f"""
+        <article class="item">
+          <div class="item-head">
+            <div class="dot warn"></div>
+            <h4 class="subject">{subject or '(sin asunto)'}</h4>
+          </div>
+          <p class="sender">{sender or ''}</p>
+          <div class="tags">{_chip_list(reasons)}</div>
+        </article>
+        """
+        for (subject, sender, reasons) in findings
+    )
+
+    empty_state = """
+      <div class="empty">
+        <div class="icon">✅</div>
+        <h4>No encontramos riesgos recientes</h4>
+        <p class="muted">Revisamos tus últimos correos. Podés volver a escanear cuando quieras.</p>
+      </div>
+    """
 
     html = f"""
-    <html><body style="font-family:system-ui">
-      <h2>Mail Scanner</h2>
-      <p>Cuenta: {acct.email}</p>
-      <ul>{items}</ul>
-      <p><a href="/mail/alerts">Ver alertas guardadas</a> · <a href="/dashboard">Volver</a></p>
-    </body></html>
+    <!doctype html><html lang="es"><meta charset="utf-8">
+    <title>Mail Scanner — AlertTrail</title>
+    <style>
+      :root {{
+        --bg:#f7fafc; --panel:#ffffff; --text:#0f172a; --muted:#475569; --line:#e5e7eb;
+        --brand:#2563eb; --warn:#f59e0b; --chip:#f1f5f9;
+      }}
+      *{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--text);
+      font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial}}
+      .container{{max-width:1100px;margin:0 auto;padding:16px}}
+      .topbar{{position:sticky;top:0;background:#fffccf00;backdrop-filter:saturate(1.2) blur(6px);
+              border-bottom:1px solid var(--line)}}
+      .topbar-inner{{display:flex;align-items:center;justify-content:space-between;padding:12px 16px}}
+      .brand{{display:flex;align-items:center;gap:.55rem;font-weight:800;letter-spacing:.2px}}
+      .dot{{width:10px;height:10px;border-radius:999px;background:var(--brand)}}
+      .pill{{display:flex;align-items:center;gap:.4rem;background:#eef2ff;color:#1e3a8a;border:1px solid #dbeafe;
+            padding:8px 10px;border-radius:999px;font-weight:600}}
+      a.btn,a.btn:visited{{text-decoration:none}}
+      h1{{margin:18px 0 6px;font-size:1.6rem}}
+      .muted{{color:var(--muted)}}
+      .card{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}}
+      .actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}}
+      .btn{{display:inline-block;border-radius:10px;padding:10px 14px;font-weight:700;border:1px solid var(--line);background:#fff;color:var(--text)}}
+      .btn:hover{{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}}
+      .btn-primary{{background:var(--brand);color:#fff;border:0}}
+      .btn-primary:hover{{filter:brightness(1.05)}}
+      .list{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px}}
+      .item{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}}
+      .item-head{{display:flex;align-items:center;gap:8px;margin-bottom:4px}}
+      .dot.warn{{background:var(--warn);box-shadow:0 0 0 4px rgba(245,158,11,.15)}}
+      .subject{{margin:0;font-size:1rem}}
+      .sender{{margin:.25rem 0 .5rem;color:var(--muted)}}
+      .tags{{display:flex;flex-wrap:wrap;gap:6px}}
+      .tag{{background:var(--chip);border:1px solid var(--line);color:var(--muted);
+            border-radius:999px;padding:6px 10px;font-size:.85rem}}
+      .empty{{text-align:center;padding:36px 16px;border:1px dashed var(--line);border-radius:16px;background:#fff}}
+      .empty .icon{{font-size:36px;margin-bottom:6px}}
+      .header-block{{display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:space-between}}
+      .account{{color:var(--muted)}}
+    </style>
+
+    <header class="topbar">
+      <div class="container topbar-inner">
+        <div class="brand"><div class="dot"></div><a href="/dashboard" style="color:inherit;text-decoration:none">AlertTrail</a></div>
+        <div class="pill">📬 {acct.email}</div>
+      </div>
+    </header>
+
+    <div class="container">
+      <div class="card">
+        <div class="header-block">
+          <div>
+            <h1>Mail Scanner</h1>
+            <p class="account">Cuenta conectada: <b>{acct.email}</b></p>
+          </div>
+          <div class="actions">
+            <a class="btn" href="/mail/alerts">Ver alertas guardadas</a>
+            <a class="btn" href="/dashboard">Volver</a>
+            <a class="btn-primary" href="/mail/scanner">Escanear de nuevo</a>
+          </div>
+        </div>
+
+        { (cards or empty_state) }
+      </div>
+    </div>
+    </html>
     """
     return HTMLResponse(html)
 
