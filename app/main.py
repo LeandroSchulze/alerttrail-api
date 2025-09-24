@@ -25,8 +25,11 @@ from app.security import (
 )
 
 from app.models import User
+from app.routers import stats  # NEW ⬅️ si tu __init__.py ya reexporta stats
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
+
+app.include_router(stats.router)  # NEW ⬅️ monta /stats
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
 
