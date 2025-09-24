@@ -40,7 +40,7 @@
     .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
     .card h3{margin:0 0 10px}
 
-    /* Quick links estilo anterior: botones suaves */
+    /* Quick links */
     .quick{display:flex;flex-wrap:wrap;gap:10px}
     .chip{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f8fafc;color:#0f172a;text-decoration:none}
     .chip:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
@@ -85,7 +85,7 @@
         {% endif %}
         <div class="actions">
           <a class="btn-primary" href="/billing">Cambiar plan</a>
-          <a class="btn-outline" href="/billing">Ver facturación</a>
+          {# Botón de "Ver facturación" removido #}
         </div>
       </section>
 
@@ -95,8 +95,10 @@
         <div class="quick">
           <a class="chip" href="/analysis">Análisis</a>
           <a class="chip" href="/mail">Emails</a>
-          <a class="chip" href="/stats">Estadísticas</a>
-          <a class="chip" href="/billing">Facturación</a>
+          {% if is_admin %}
+            <a class="chip" href="/stats">Estadísticas</a>
+          {% endif %}
+          {# Enlace de "Facturación" removido #}
         </div>
       </section>
 
