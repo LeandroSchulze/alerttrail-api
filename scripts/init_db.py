@@ -7,12 +7,11 @@ from app.database import engine, SessionLocal
 from app.models import Base, User  # Modelos base requeridos
 
 # Si estos modelos existen en tu repo, el import no debe romper el script
-try:  # opcional (sólo para asegurar metadata completa si existen)
+try:
     from app.models import AllowedIP, ReportDownload  # noqa: F401
 except Exception:
     pass
 
-# get_password_hash puede estar en app.security o en app.utils.security
 try:
     from app.security import get_password_hash
 except Exception:
@@ -41,7 +40,6 @@ def _norm_email(e: str) -> str:
 # Creación de tablas (idempotente)
 # ---------------------------------------------------------------------------
 def ensure_tables():
-    """Crea todas las tablas declaradas en app.models si no existen."""
     Base.metadata.create_all(bind=engine)
     print("[init_db] create_all OK")
 
@@ -50,17 +48,10 @@ def ensure_tables():
 # Migraciones ligeras (sin Alembic): USERS
 # ---------------------------------------------------------------------------
 def ensure_users_columns():
-    """
-    Agrega columnas que falten en 'users' cuando la BD ya existía:
-      - is_active   BOOLEAN   NOT NULL DEFAULT 1
-      - plan        VARCHAR(20) NOT NULL DEFAULT 'free'
-      - updated_at  DATETIME (se inicializa con created_at o ahora)
-    """
     insp = inspect(engine)
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
-        # Si la tabla no existe aún, la crea create_all y no hay que migrar nada
         print("[init_db] Tabla users no existe aún (será creada por create_all)")
         return
 
@@ -89,16 +80,7 @@ def ensure_users_columns():
 # Migraciones ligeras (sin Alembic): MAIL_ACCOUNTS
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
-    """
-    Agrega columnas que falten en 'mail_accounts' cuando la BD ya existía:
-      - imap_server  VARCHAR(255) NOT NULL DEFAULT 'imap.gmail.com'
-      - imap_port    INTEGER      NOT NULL DEFAULT 993
-      - use_ssl      BOOLEAN      NOT NULL DEFAULT 1
-      - enc_blob     TEXT         NOT NULL DEFAULT ''
-      - created_at   DATETIME     (se inicializa con CURRENT_TIMESTAMP)
-    """
     insp = inspect(engine)
-    # Si la tabla no existe, create_all la creará
     try:
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
     except Exception:
@@ -134,7 +116,6 @@ def ensure_mail_accounts_columns():
             conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
             print("[init_db] mail_accounts.created_at agregado")
 
-        # Backfill por si quedaron NULL en filas existentes
         conn.execute(text(
             "UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"
         ))
@@ -154,33 +135,23 @@ def ensure_mail_accounts_columns():
 
 
 # ---------------------------------------------------------------------------
-# Seed / actualización de admin (idempotente y robusto)
+# Seed / actualización de admin
 # ---------------------------------------------------------------------------
 def seed_admin():
-    """
-    Crea o actualiza el usuario admin.
-
-    ENV soportadas (con alias):
-      ADMIN_EMAIL (def: admin@tuempresa.com)
-      ADMIN_PASS | ADMIN_PASSWORD
-      ADMIN_NAME (def: Admin)
-      ADMIN_PLAN (def: pro)   -> free|pro
-      ADMIN_FORCE_RESET | ADMIN_RESET_PASSWORD -> 1/true/yes/on fuerza reset del hash
-    """
     email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@tuempresa.com"))
-    # Acepta ambos nombres de variable para compatibilidad
     password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "Admin05112013!"
     name = os.getenv("ADMIN_NAME", "Admin")
-    plan = (os.getenv("ADMIN_PLAN", "pro") or "pro").lower()
+
+    # 🔸 Siempre PRO (forzamos aquí, ignorando ADMIN_PLAN)
+    plan = "pro"
+
     force_reset = truthy(os.getenv("ADMIN_FORCE_RESET")) or truthy(os.getenv("ADMIN_RESET_PASSWORD"))
 
     db = SessionLocal()
     try:
-        # 🔸 Match case-insensitive para evitar problemas de capitalización
         u = db.query(User).filter(func.lower(User.email) == email).first()
 
         def set_password(user, raw):
-            """Setea el hash respetando el nombre del campo del modelo."""
             if hasattr(user, "password_hash"):
                 user.password_hash = get_password_hash(raw)
             elif hasattr(user, "hashed_password"):
@@ -190,7 +161,6 @@ def seed_admin():
 
         if u:
             changed = False
-            # Flags y datos básicos
             if hasattr(u, "is_admin") and not getattr(u, "is_admin"):
                 u.is_admin = True
                 changed = True
@@ -204,7 +174,6 @@ def seed_admin():
                 u.name = name
                 changed = True
 
-            # Reset si se solicita o si falta hash
             has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
             if force_reset or not has_hash:
                 set_password(u, password)
@@ -218,7 +187,6 @@ def seed_admin():
             else:
                 print(f"[init_db] admin existe sin cambios: {masked(email)} (plan={plan})")
         else:
-            # Crear usuario admin
             u = User(
                 email=email,
                 name=name,
