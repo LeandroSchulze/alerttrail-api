@@ -3,6 +3,9 @@ import os, re
 from datetime import datetime
 from pathlib import Path
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
