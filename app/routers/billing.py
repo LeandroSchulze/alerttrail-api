@@ -129,11 +129,15 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     is_pro = _is_pro(user)
     is_biz = (plan == "BIZ")
     is_plan_pro = (plan == "PRO")
+    is_free = (plan == "FREE")
 
     pro_label, _, _ = _compute_price_pro()
     biz_label, _, _, seats, extra_usd, extra_ars = _compute_price_biz()
 
-    # CTA condicionales
+    # Título dinámico de la tarjeta izquierda (tu plan actual)
+    current_title = plan  # "FREE", "PRO" o "BIZ"
+
+    # CTAs condicionales
     pro_cta = (
         "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;"
         "color:#a7f3d0;font-weight:700'>Plan activo</span>"
@@ -152,6 +156,13 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         f"color:#03131c;font-weight:700;cursor:pointer'>{biz_label}</button></form>"
     )
 
+    # Botón de bajar a FREE solo si hoy estás en PRO/BIZ
+    downgrade_btn = (
+        "<form method='post' action='/billing/downgrade'>"
+        "<button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;"
+        "color:#3a2a00;font-weight:700;cursor:pointer'>Bajar a FREE</button></form>"
+    ) if not is_free else ""
+
     html = f"""
     <!doctype html><html lang="es"><meta charset="utf-8"><title>Plan | AlertTrail</title>
     <body style="font-family:system-ui;background:#0b2133;color:#e5f2ff;margin:0">
@@ -160,13 +171,15 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         <h1 style="margin:16px 0 6px">Tu plan</h1>
 
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px">
+          <!-- Tarjeta de plan actual -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
-            <h2 style="margin:0 0 8px">FREE</h2>
+            <h2 style="margin:0 0 8px">{current_title}</h2>
             <p style="margin:6px 0">Estado actual: <b>{plan}</b></p>
             <p style='margin:6px 0;color:#bcd7f0'>Funciones básicas.</p>
-            {"<form method='post' action='/billing/downgrade'><button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;color:#3a2a00;font-weight:700;cursor:pointer'>Bajar a FREE</button></form>" if is_pro else ""}
+            {downgrade_btn}
           </div>
 
+          <!-- Tarjeta PRO -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h2 style="margin:0 0 8px">PRO</h2>
             <ul style="color:#bcd7f0;margin:6px 0 12px">
@@ -176,6 +189,7 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
             <div style="display:flex;gap:10px;flex-wrap:wrap">{pro_cta}</div>
           </div>
 
+          <!-- Tarjeta EMPRESAS -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h2 style="margin:0 0 8px">EMPRESAS</h2>
             <ul style="color:#bcd7f0;margin:6px 0 12px">
