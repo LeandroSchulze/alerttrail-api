@@ -3,9 +3,6 @@ import os, re
 from datetime import datetime
 from pathlib import Path
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,8 +27,10 @@ from app.security import (
 from app.models import User
 from app.routers import stats  # NEW ⬅️ si tu __init__.py ya reexporta stats
 
+# === instancia de la app ANTES de usar app.mount ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
+# monta /stats
 app.include_router(stats.router)  # NEW ⬅️ monta /stats
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
@@ -69,23 +68,17 @@ async def force_www(request: Request, call_next):
 # ========= Redirigir /auth/register a /register (form) ==========
 @app.middleware("http")
 async def redirect_auth_register_mw(request: Request, call_next):
-    # normaliza (quita trailing slash)
     path = request.url.path.rstrip("/")
     if path == "/auth/register":
         ctype = (request.headers.get("content-type") or "").lower()
-
-        # 1) GET siempre al formulario HTML
         if request.method == "GET":
             return RedirectResponse("/register", status_code=302)
-
-        # 2) Form (no JSON): preserva método + body
         if request.method in ("POST", "PUT", "PATCH") and not ctype.startswith("application/json"):
             return RedirectResponse("/register", status_code=307)
-        # 3) Si es JSON, dejamos pasar al endpoint del router /auth (no rompemos integraciones)
     return await call_next(request)
 # ================================================================
 
-# === Static & Templates ===
+# === Static & Templates (AHORA sí) ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
@@ -166,7 +159,7 @@ def home(request: Request, user=Depends(get_current_user_optional)):
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-# Compat: POST /login (form antiguo) — setea cookie en el MISMO redirect
+# Compat: POST /login (form antiguo)
 @app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email_norm = email.strip().lower()
@@ -206,22 +199,18 @@ def register_action(
     if db.query(User).filter(func.lower(User.email) == email_norm).first():
         raise HTTPException(status_code=400, detail="Ese email ya está registrado")
 
-    # Creamos la instancia sin kwargs para evitar campos inexistentes
     user = User()
-
-    # Seteamos sólo los atributos que existan en el modelo
     safe_fields = [
         ("name", (name or "").strip() or "Usuario"),
         ("email", email_norm),
-        ("role", "user"),             # si no existe, se ignora
-        ("plan", "FREE"),              # si no existe, se ignora
+        ("role", "user"),
+        ("plan", "FREE"),
         ("created_at", datetime.utcnow()),
     ]
     for field, value in safe_fields:
         if hasattr(user, field):
             setattr(user, field, value)
 
-    # Asignamos el hash de contraseña al atributo que exista en el modelo
     pw_hash = get_password_hash(password)
     if hasattr(user, "hashed_password"):
         setattr(user, "hashed_password", pw_hash)
@@ -255,7 +244,6 @@ def dashboard(
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
 
-    # Contexto 'user' adicional para el template (sin romper compatibilidad con 'current_user')
     user_ctx = {
         "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
         "email": getattr(user, "email", ""),
@@ -266,8 +254,8 @@ def dashboard(
         "dashboard.html",
         {
             "request": request,
-            "current_user": user,   # se mantiene
-            "user": user_ctx,       # agregado para el template
+            "current_user": user,
+            "user": user_ctx,
             "is_admin": is_admin,
         }
     )
@@ -357,7 +345,6 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# GET /auth/login (evita 405 si router auth no está)
 if not _route_has_method("/auth/login", "GET"):
     @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
     def _fb_auth_login_get(request: Request):
@@ -377,7 +364,6 @@ if not _route_has_method("/auth/login", "GET"):
             </form>"""
             return HTMLResponse(html)
 
-# POST fallbacks — setean cookie en el MISMO redirect
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
     def _fb_auth_login_post(
@@ -447,4 +433,3 @@ def _log_routes():
     for p in paths:
         print(p)
     print("==============\n")
-
