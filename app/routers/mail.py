@@ -33,16 +33,21 @@ def _is_pro(u) -> bool:
 
     return plan in {"pro", "biz", "business", "empresa", "empresas"}
 
-def require_pro_user(request: Request, current_user=Depends(get_current_user_cookie)):
-    if not current_user:
+def require_pro_user(request: Request, db: Session = Depends(get_db)):
+    """
+    Lee el usuario REAL desde la DB (no sólo claims) y valida PRO/BIZ.
+    Si no cumple, redirige a /billing con 303.
+    """
+    user = get_current_user_cookie(request, db=db)  # <- objeto models.User
+    if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-    if not _is_pro(current_user):
-        # 303 con Location -> /billing (lo captura tu handler global para HTML)
+    if not _is_pro(user):
         raise HTTPException(
             status_code=303,
             detail="Funcionalidad disponible sólo para PRO",
-            headers={"Location": "/billing?upgrade=mail"}
+            headers={"Location": "/billing?upgrade=mail"},
         )
+    return user
 
 router = APIRouter(prefix="/mail", tags=["mail"], dependencies=[Depends(require_pro_user)])
 
@@ -313,7 +318,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
             if risky:
                 subject = _decode_hdr(msg.get("Subject", ""))
                 sender = _decode_hdr(msg.get("From", ""))
-                findings.append((subject, sender, reasons))  # <-- AHORA sí se agrega a la lista
+                findings.append((subject, sender, reasons))
 
                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
                 exists = db.query(MailAlert).filter(
