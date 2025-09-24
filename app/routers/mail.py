@@ -367,6 +367,29 @@ def list_alerts(request: Request, db: Session = Depends(get_db)):
     ) or "<li>Sin alertas</li>"
     return HTMLResponse(f"<h2 style='font-family:system-ui'>Alertas</h2><ul>{lis}</ul><p><a href='/dashboard'>Volver</a></p>")
 
+@router.get("/alerts/unread_count")
+def unread_count(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user_cookie(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    count = db.query(MailAlert).filter(
+        MailAlert.user_id == user.id,
+        MailAlert.is_read == False  # noqa: E712
+    ).count()
+    return {"unread": int(count)}
+
+@router.post("/alerts/mark_all_read")
+def mark_all_read(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user_cookie(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    db.query(MailAlert).filter(
+        MailAlert.user_id == user.id,
+        MailAlert.is_read == False  # noqa: E712
+    ).update({MailAlert.is_read: True})
+    db.commit()
+
+
 # ---- Helpers para cron / API ----
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
 
