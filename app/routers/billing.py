@@ -117,12 +117,9 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
 # ---------- UI ----------
 @router.get("", response_class=HTMLResponse)
 def billing_page(request: Request, db: Session = Depends(get_db)):
-    """
-    Importante: pedimos el usuario REAL desde la DB usando get_current_user_cookie(request, db=db).
-    Si no hay sesión, redirigimos a /auth/login.
-    """
+    # Usuario REAL desde DB
     try:
-        user = get_current_user_cookie(request, db=db)  # ← trae models.User desde la DB
+        user = get_current_user_cookie(request, db=db)
     except Exception:
         return RedirectResponse(url="/auth/login", status_code=303)
     if not user:
@@ -130,9 +127,30 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
 
     plan = (getattr(user, "plan", "FREE") or "FREE").upper()
     is_pro = _is_pro(user)
+    is_biz = (plan == "BIZ")
+    is_plan_pro = (plan == "PRO")
 
     pro_label, _, _ = _compute_price_pro()
     biz_label, _, _, seats, extra_usd, extra_ars = _compute_price_biz()
+
+    # CTA condicionales
+    pro_cta = (
+        "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;"
+        "color:#a7f3d0;font-weight:700'>Plan activo</span>"
+        if is_plan_pro else
+        f"<form method='post' action='/billing/checkout?plan=PRO'>"
+        f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#10b981;"
+        f"color:#06241f;font-weight:700;cursor:pointer'>{pro_label}</button></form>"
+    )
+
+    biz_cta = (
+        "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#082f49;"
+        "color:#bae6fd;font-weight:700'>Plan activo</span>"
+        if is_biz else
+        f"<form method='post' action='/billing/checkout?plan=BIZ'>"
+        f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#0ea5e9;"
+        f"color:#03131c;font-weight:700;cursor:pointer'>{biz_label}</button></form>"
+    )
 
     html = f"""
     <!doctype html><html lang="es"><meta charset="utf-8"><title>Plan | AlertTrail</title>
@@ -155,11 +173,7 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
               <li>Funciones avanzadas</li>
               <li>Integraciones clave</li>
             </ul>
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
-              <form method="post" action="/billing/checkout?plan=PRO">
-                <button style="padding:10px 14px;border:0;border-radius:10px;background:#10b981;color:#06241f;font-weight:700;cursor:pointer">{pro_label}</button>
-              </form>
-            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">{pro_cta}</div>
           </div>
 
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
@@ -169,11 +183,7 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
               <li><b>{seats}</b> asientos incluidos</li>
               <li>Asiento adicional: <b>USD {extra_usd:.2f}</b> (~${extra_ars:,.0f} ARS)</li>
             </ul>
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
-              <form method="post" action="/billing/checkout?plan=BIZ">
-                <button style="padding:10px 14px;border:0;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;cursor:pointer">{biz_label}</button>
-              </form>
-            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">{biz_cta}</div>
           </div>
         </div>
       </div>
