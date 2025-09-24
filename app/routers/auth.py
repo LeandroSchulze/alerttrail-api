@@ -17,9 +17,9 @@ from app import models
 from app.security import (
     verify_password,
     get_password_hash,
-    create_access_token,
     get_current_user_cookie,
-    # Constantes para cookies (usamos las mismas que al setear/borrar)
+    issue_access_cookie_for_user,  # 👈 importado
+    # Constantes para cookies
     COOKIE_NAME, COOKIE_PATH, COOKIE_HTTPONLY, COOKIE_SECURE, COOKIE_SAMESITE,
 )
 
@@ -109,7 +109,16 @@ def login_json(payload: LoginJSON, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(func.lower(models.User.email) == email).first()
     if not user or not verify_password(payload.password, _get_user_pwd(user)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
-    token = create_access_token({"sub": str(user.id)})
+
+    # 👇 Usamos issue_access_cookie_for_user en vez de create_access_token simple
+    dummy_resp = Response()
+    token = issue_access_cookie_for_user(
+        dummy_resp,
+        user.id,
+        user.email,
+        getattr(user, "is_admin", False),
+        getattr(user, "plan", "free"),
+    )
     return TokenOut(access_token=token)
 
 # ---------------- Login Web (cookie directa + 303) ----------------
@@ -134,21 +143,16 @@ def login_web(
         except TemplateNotFound:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    token = create_access_token({"sub": str(user.id)})
     resp = RedirectResponse(url=(next_url or "/dashboard"), status_code=303)
 
-    # Seteamos la cookie directamente (evita errores de helpers)
-    cookie_kwargs = dict(
-        key=COOKIE_NAME,
-        value=token,
-        path=COOKIE_PATH,
-        httponly=COOKIE_HTTPONLY,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
+    # 👇 Generamos cookie con claims completos
+    issue_access_cookie_for_user(
+        resp,
+        user.id,
+        user.email,
+        getattr(user, "is_admin", False),
+        getattr(user, "plan", "free"),
     )
-    if COOKIE_DOMAIN:
-        cookie_kwargs["domain"] = COOKIE_DOMAIN
-    resp.set_cookie(**cookie_kwargs)
 
     resp.headers["Cache-Control"] = "no-store"
     return resp
