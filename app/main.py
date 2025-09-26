@@ -433,3 +433,22 @@ def _log_routes():
     for p in paths:
         print(p)
     print("==============\n")
+
+from app.routers import payments
+app.include_router(payments.router)
+
+from app.routers import alerts
+app.include_router(alerts.router)
+
+from app.routers import rules
+app.include_router(rules.router)
+
+from app.routers import reports
+app.include_router(reports.router)
+
+from app.services.scheduler import start_background_scheduler
+
+try:
+    start_background_scheduler()
+except Exception:
+    pass
