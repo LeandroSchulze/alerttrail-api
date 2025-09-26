@@ -25,8 +25,17 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
+
+    # Auth
     password_hash = Column(String(255), nullable=False)  # bcrypt hash
-    plan = Column(String(20), nullable=False, default="free")  # "free" | "pro"
+
+    # Plan / rol
+    plan = Column(String(20), nullable=False, default="FREE")  # "FREE" | "PRO" | "BIZ"
+    role = Column(String(20), nullable=False, default="user")  # "user" | "admin"
+    is_admin = Column(Boolean, nullable=False, default=False)
+    is_superuser = Column(Boolean, nullable=False, default=False)
+
+    # Estado
     is_active = Column(Boolean, nullable=False, default=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
