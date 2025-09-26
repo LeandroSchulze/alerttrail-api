@@ -17,9 +17,6 @@ try:
 except Exception:
     from app.utils.security import get_password_hash  # type: ignore
 
-# Asegura que los modelos de rules se registren en Base
-import app.routers.rules  # registra UserRule y UserSetting
-
 
 # ---------------------------------------------------------------------------
 # Utilidades
@@ -32,7 +29,7 @@ def masked(s: str) -> str:
         return name[:2] + "***@" + dom
     return s[:2] + "***"
 
-def truthy(v: str) -> bool:
+def truthy(v) -> bool:
     return str(v or "").strip().lower() in ("1", "true", "yes", "on")
 
 def _norm_email(e: str) -> str:
@@ -43,6 +40,11 @@ def _norm_email(e: str) -> str:
 # Creación de tablas (idempotente)
 # ---------------------------------------------------------------------------
 def ensure_tables():
+    # Asegura que los modelos de rules se registren en Base antes del create_all
+    try:
+        import app.routers.rules  # registra UserRule y UserSetting
+    except Exception as e:
+        print("[init_db] aviso: no pude registrar modelos de rules:", e)
     Base.metadata.create_all(bind=engine)
     print("[init_db] create_all OK")
 
@@ -65,18 +67,47 @@ def ensure_users_columns():
                 "ADD COLUMN is_active BOOLEAN DEFAULT 1 NOT NULL"
             ))
             print("[init_db] users.is_active agregado")
+
         if "plan" not in cols:
             conn.execute(text(
                 "ALTER TABLE users "
-                "ADD COLUMN plan VARCHAR(20) DEFAULT 'free' NOT NULL"
+                "ADD COLUMN plan VARCHAR(20) DEFAULT 'FREE' NOT NULL"
             ))
             print("[init_db] users.plan agregado")
+
+        if "role" not in cols:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN role VARCHAR(20) DEFAULT 'user' NOT NULL"
+            ))
+            print("[init_db] users.role agregado")
+
+        if "is_admin" not in cols:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN is_admin BOOLEAN DEFAULT 0 NOT NULL"
+            ))
+            print("[init_db] users.is_admin agregado")
+
+        if "is_superuser" not in cols:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN is_superuser BOOLEAN DEFAULT 0 NOT NULL"
+            ))
+            print("[init_db] users.is_superuser agregado")
+
         if "updated_at" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
             conn.execute(text(
                 "UPDATE users SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
             ))
             print("[init_db] users.updated_at agregado y backfilled")
+
+        # Normalizaciones útiles
+        conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
+        conn.execute(text(
+            "UPDATE users SET role = COALESCE(role, 'user')"
+        ))
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +172,11 @@ def ensure_mail_accounts_columns():
 # Seed / actualización de admin
 # ---------------------------------------------------------------------------
 def seed_admin():
-    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@tuempresa.com"))
-    password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "Admin05112013!"
+    # Defaults sensatos
+    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@alerttrail.com"))
+    password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "changeme"
     name = os.getenv("ADMIN_NAME", "Admin")
-
-    # 🔸 Siempre PRO (forzamos aquí, ignorando ADMIN_PLAN)
-    plan = "pro"
+    plan = (os.getenv("ADMIN_PLAN") or "PRO").upper()
 
     force_reset = truthy(os.getenv("ADMIN_FORCE_RESET")) or truthy(os.getenv("ADMIN_RESET_PASSWORD"))
 
@@ -164,23 +194,32 @@ def seed_admin():
 
         if u:
             changed = False
-            if hasattr(u, "is_admin") and not getattr(u, "is_admin"):
-                u.is_admin = True
-                changed = True
-            if hasattr(u, "is_active") and not getattr(u, "is_active"):
-                u.is_active = True
-                changed = True
-            if hasattr(u, "plan") and getattr(u, "plan") != plan:
-                u.plan = plan
-                changed = True
-            if not getattr(u, "name", None):
-                u.name = name
-                changed = True
 
+            # Flags y rol de admin
+            role_now = (getattr(u, "role", "") or "").lower()
+            if role_now != "admin":
+                u.role = "admin"; changed = True
+            if not bool(getattr(u, "is_admin", False)):
+                u.is_admin = True; changed = True
+            if not bool(getattr(u, "is_superuser", False)):
+                u.is_superuser = True; changed = True
+
+            # Plan (si difiere)
+            if (getattr(u, "plan", "") or "").upper() != plan:
+                u.plan = plan; changed = True
+
+            # Nombre (si falta)
+            if not getattr(u, "name", None):
+                u.name = name; changed = True
+
+            # Activo
+            if hasattr(u, "is_active") and not bool(getattr(u, "is_active", True)):
+                u.is_active = True; changed = True
+
+            # Password
             has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
             if force_reset or not has_hash:
-                set_password(u, password)
-                changed = True
+                set_password(u, password); changed = True
 
             if changed:
                 db.add(u)
@@ -190,19 +229,21 @@ def seed_admin():
             else:
                 print(f"[init_db] admin existe sin cambios: {masked(email)} (plan={plan})")
         else:
-            u = User(
-                email=email,
-                name=name,
-            )
+            # Crear admin
+            u = User(email=email, name=name)
             if hasattr(u, "plan"):
                 u.plan = plan
             if hasattr(u, "is_active"):
                 u.is_active = True
+            # rol y flags
+            if hasattr(u, "role"):
+                u.role = "admin"
             if hasattr(u, "is_admin"):
                 u.is_admin = True
+            if hasattr(u, "is_superuser"):
+                u.is_superuser = True
 
             set_password(u, password)
-
             db.add(u)
             db.commit()
             print(f"[init_db] admin creado: {masked(email)} (plan={plan}) [password SET]")
