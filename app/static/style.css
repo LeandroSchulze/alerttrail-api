@@ -9,3 +9,4 @@
 input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:#0e1c27;color:var(--text)}
 button,.btn{display:inline-block;padding:10px 14px;border-radius:10px;background:var(--accent);color:#03131c;font-weight:700;border:0;cursor:pointer;text-decoration:none}
 .btn.secondary{background:transparent;color:var(--text);outline:1px solid var(--border)}
+
