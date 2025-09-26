@@ -17,6 +17,9 @@ try:
 except Exception:
     from app.utils.security import get_password_hash  # type: ignore
 
+# Asegura que los modelos de rules se registren en Base
+import app.routers.rules  # registra UserRule y UserSetting
+
 
 # ---------------------------------------------------------------------------
 # Utilidades
