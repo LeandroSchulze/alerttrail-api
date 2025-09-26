@@ -6,22 +6,15 @@
   <title>Dashboard — AlertTrail</title>
   <style>
     :root{
-      --bg:#f7fafc;             /* claro */
-      --panel:#ffffff;           /* tarjetas */
-      --text:#0f172a;            /* slate-900 */
-      --muted:#475569;           /* slate-600 */
-      --line:#e5e7eb;            /* bordes */
-      --brand:#2563eb;           /* azul */
-      --ok:#16a34a;              /* verde */
+      --bg:#f7fafc; --panel:#ffffff; --text:#0f172a; --muted:#475569; --line:#e5e7eb;
+      --brand:#2563eb; --ok:#16a34a;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial}
     .container{max-width:1100px;margin:0 auto;padding:16px}
 
-    /* Topbar */
-    .topbar{position:sticky;top:0;background:#fffccf00;backdrop-filter:saturate(1.2) blur(6px);
-      border-bottom:1px solid var(--line)}
+    .topbar{position:sticky;top:0;background:#fffccf00;backdrop-filter:saturate(1.2) blur(6px);border-bottom:1px solid var(--line)}
     .topbar-inner{display:flex;align-items:center;justify-content:space-between;padding:12px 16px}
     .brand{display:flex;align-items:center;gap:.55rem;font-weight:800;letter-spacing:.2px}
     .dot{width:10px;height:10px;border-radius:999px;background:var(--brand);box-shadow:0 0 10px rgba(37,99,235,.6)}
@@ -31,21 +24,17 @@
     .logout:hover{filter:brightness(1.05)}
     .right{display:flex;align-items:center;gap:10px}
 
-    /* Layout */
     h1{margin:18px 0 6px;font-size:1.6rem}
     .muted{color:var(--muted)}
     .grid{display:grid;gap:16px;margin-top:16px}
     @media(min-width:980px){.grid{grid-template-columns:1fr 1fr}}
-
     .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
     .card h3{margin:0 0 10px}
 
-    /* Quick links */
     .quick{display:flex;flex-wrap:wrap;gap:10px}
     .chip{display:inline-block;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#f8fafc;color:#0f172a;text-decoration:none}
     .chip:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
 
-    /* Botones de acción en plan */
     .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
     .btn-primary{display:inline-block;text-decoration:none;background:var(--brand);color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
     .btn-primary:hover{filter:brightness(1.05)}
@@ -85,7 +74,6 @@
         {% endif %}
         <div class="actions">
           <a class="btn-primary" href="/billing">Cambiar plan</a>
-          {# Botón de "Ver facturación" removido #}
         </div>
       </section>
 
@@ -97,13 +85,26 @@
           <a class="chip" href="/mail">Emails</a>
           {% if is_admin %}
             <a class="chip" href="/stats">Estadísticas</a>
+            <a class="chip" href="/billing">Facturación</a>
+            <a class="chip" href="/admin/subscriptions">Suscripciones</a>
           {% endif %}
-          {# Enlace de "Facturación" removido #}
         </div>
       </section>
 
+      <!-- Funciones PRO / EMPRESAS -->
+      {% if (user.plan or "").upper() in ["PRO","BIZ","EMPRESAS","EMPRESA"] %}
+      <section class="card" style="grid-column:1/-1">
+        <h3>Funciones PRO / EMPRESAS</h3>
+        <div class="quick">
+          <a class="chip" href="/alerts">Ver alertas</a>
+          <a class="chip" href="/rules">Reglas personalizadas</a>
+          <a class="chip" href="/reports">Reportes</a>
+        </div>
+      </section>
+      {% endif %}
+
       <!-- Planes -->
-      <div class="card" style="margin-top:16px">
+      <section class="card" style="grid-column:1/-1">
         <h3>Planes</h3>
         <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch">
           <!-- PRO -->
@@ -127,68 +128,33 @@
             <a class="btn-primary" href="/billing/checkout?plan=BIZ">Elegir EMPRESAS</a>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   </div>
 
   <!-- Script para notificaciones -->
   <script>
   let lastUnread = 0;
-
   if ("Notification" in window) {
-    Notification.requestPermission().then(function (perm) {
-      console.log("Permiso notificaciones:", perm);
-    });
+    Notification.requestPermission().then(function (perm) { console.log("Permiso notificaciones:", perm); });
   }
-
   function showDesktopNotif(title, msg) {
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(title, {
-        body: msg,
-        icon: "/static/favicon.ico"
-      });
+      new Notification(title, { body: msg, icon: "/static/favicon.ico" });
     }
   }
-
   async function checkAlerts() {
     try {
       const res = await fetch("/mail/alerts/unread_count");
       if (!res.ok) return;
       const data = await res.json();
       const unread = data.unread || 0;
-
-      if (unread > lastUnread) {
-        showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso.");
-      }
+      if (unread > lastUnread) { showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso."); }
       lastUnread = unread;
-    } catch (e) {
-      console.error("Error chequeando alertas", e);
-    }
+    } catch (e) { console.error("Error chequeando alertas", e); }
   }
-
-  setInterval(checkAlerts, 30000);
-  checkAlerts();
+  setInterval(checkAlerts, 30000); checkAlerts();
   </script>
 </body>
 </html>
 
-
-{% if user and user.is_admin %}
-<div class="card" style="margin-top:1rem;">
-  <h3>Admin 🛠️</h3>
-  <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
-    <a class="btn" href="/billing" style="padding:.6rem 1rem;">Facturación</a>
-    <a class="btn" href="/admin/stats" style="padding:.6rem 1rem;">Estadísticas</a>
-        <a class="btn" href="/admin/subscriptions" style="padding:.6rem 1rem;">Suscripciones</a>
-  </div>
-</div>
-{% endif %}
-
-
-{% if (user.plan or "").upper() in ["PRO","EMPRESAS"] %}
-<p style="margin-top:.5rem; display:flex; gap:.5rem; flex-wrap:wrap;">
-  <a class="btn" href="/alerts">Ver alertas</a>
-  <a class="btn" href="/rules">Reglas personalizadas</a>
-  <a class="btn" href="/reports/alerts">Reporte de alertas</a>
-</p>
-{% endif %}
