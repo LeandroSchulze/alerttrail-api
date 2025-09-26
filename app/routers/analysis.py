@@ -270,3 +270,4 @@ async def generate_post(
 @router.get("/generate-pdf")
 async def old_generate_alias():
     return RedirectResponse(url="/analysis/generate", status_code=307)
+
