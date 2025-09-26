@@ -1,6 +1,6 @@
 # app/routers/stats.py
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -8,12 +8,17 @@ from app.security import get_current_user_cookie
 
 router = APIRouter(tags=["stats"])
 
+def _is_admin(u) -> bool:
+    """Acepta admin por rol o por flags."""
+    role = (getattr(u, "role", "") or "").lower()
+    return bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False) or role == "admin")
+
 def require_admin(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db=db)
     if not user:
         # sin sesión -> login
         raise HTTPException(status_code=303, detail="login", headers={"Location": "/auth/login"})
-    if not getattr(user, "is_admin", False):
+    if not _is_admin(user):
         # con sesión pero no admin -> dashboard
         raise HTTPException(status_code=303, detail="forbidden", headers={"Location": "/dashboard"})
     return user
