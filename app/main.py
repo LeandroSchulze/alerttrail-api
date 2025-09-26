@@ -27,6 +27,9 @@ from app.security import (
 from app.models import User
 from app.routers import stats  # NEW ⬅️ si tu __init__.py ya reexporta stats
 
+from app.routers import rules
+app.include_router(rules.router)
+
 # === instancia de la app ANTES de usar app.mount ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
