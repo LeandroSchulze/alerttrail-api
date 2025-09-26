@@ -1,3 +1,4 @@
+import requests
 # app/routers/billing.py
 import os
 from typing import Optional, Tuple
@@ -335,3 +336,79 @@ def downgrade(current_user=Depends(get_current_user_cookie), db: Session = Depen
     db.add(user)
     db.commit()
     return RedirectResponse(url="/billing", status_code=303)
+
+# ====== Estado de suscripción ======
+from fastapi.responses import HTMLResponse
+from ..security import get_current_user_cookie
+from ..database import get_db
+from sqlalchemy.orm import Session
+import os, json
+
+def _mp_headers():
+    token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+    if not token:
+        raise HTTPException(status_code=500, detail="Falta MP_ACCESS_TOKEN")
+    return {"Authorization": f"Bearer {token}"}
+
+@router.get("/status", response_class=HTMLResponse)
+def billing_status(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
+    from fastapi.templating import Jinja2Templates
+    templates = Jinja2Templates(directory=TEMPLATES_DIR) if 'TEMPLATES_DIR' in globals() else Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
+    plan = getattr(user, "plan", "FREE")
+    mp_error = None; mp_info = None
+    try:
+        token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+        if token and getattr(user, "email", None):
+            q = f"https://api.mercadopago.com/preapproval/search?payer_email={user.email}"
+            r = requests.get(q, headers={"Authorization": f"Bearer {token}"})
+            if r.status_code == 200:
+                js = r.json() or {}
+                items = js.get("results") or []
+                if isinstance(items, list) and items:
+                    for it in items:
+                        if "AlertTrail" in (it.get("reason") or ""):
+                            mp_info = {
+                                "preapproval_id": it.get("id"),
+                                "status": (it.get("status") or "").lower(),
+                                "reason": it.get("reason"),
+                                "next_payment_date": it.get("next_payment_date"),
+                                "payer_email": user.email,
+                                "auto_recurring": it.get("auto_recurring") or {},
+                            }
+                            break
+                    if not mp_info:
+                        it = items[0]
+                        mp_info = {
+                            "preapproval_id": it.get("id"),
+                            "status": (it.get("status") or "").lower(),
+                            "reason": it.get("reason"),
+                            "next_payment_date": it.get("next_payment_date"),
+                            "payer_email": user.email,
+                            "auto_recurring": it.get("auto_recurring") or {},
+                        }
+            else:
+                mp_error = "Error consultando Mercado Pago"
+        else:
+            mp_error = "Sin token de MP o sin email de usuario."
+    except Exception as e:
+        mp_error = str(e)
+
+    return templates.TemplateResponse("billing_status.html", {"request": request,"user": user,"plan": plan,"mp_info": mp_info,"mp_error": mp_error})
+
+@router.get("/subscribe", response_class=HTMLResponse)
+def billing_subscribe_landing():
+    inc = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
+    return HTMLResponse(
+        "<h2>Suscripción mensual</h2>"
+        "<p>Elegí tu plan para configurar el débito automático:</p>"
+        '<p><a href="/payments/billing/subscribe?plan=PRO">Suscribirme a PRO</a></p>'
+        f'<p><a href="/payments/billing/subscribe?plan=EMPRESAS&seats={inc}">Suscribirme a EMPRESAS (incluye {inc} asientos)</a></p>'
+    )
+
+from .payments import Subscription
+@router.get("/subscriptions", response_class=HTMLResponse)
+def billing_subscriptions(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
+    from fastapi.templating import Jinja2Templates
+    templates = Jinja2Templates(directory=TEMPLATES_DIR) if 'TEMPLATES_DIR' in globals() else Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
+    rows = db.query(Subscription).filter(Subscription.user_id == getattr(user,"id",None)).order_by(Subscription.updated_at.desc()).limit(50).all()
+    return templates.TemplateResponse("billing_subscriptions.html", {"request": request, "user": user, "subs": rows})
