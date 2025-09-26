@@ -171,3 +171,24 @@
   </script>
 </body>
 </html>
+
+
+{% if user and user.is_admin %}
+<div class="card" style="margin-top:1rem;">
+  <h3>Admin 🛠️</h3>
+  <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    <a class="btn" href="/billing" style="padding:.6rem 1rem;">Facturación</a>
+    <a class="btn" href="/admin/stats" style="padding:.6rem 1rem;">Estadísticas</a>
+        <a class="btn" href="/admin/subscriptions" style="padding:.6rem 1rem;">Suscripciones</a>
+  </div>
+</div>
+{% endif %}
+
+
+{% if (user.plan or "").upper() in ["PRO","EMPRESAS"] %}
+<p style="margin-top:.5rem; display:flex; gap:.5rem; flex-wrap:wrap;">
+  <a class="btn" href="/alerts">Ver alertas</a>
+  <a class="btn" href="/rules">Reglas personalizadas</a>
+  <a class="btn" href="/reports/alerts">Reporte de alertas</a>
+</p>
+{% endif %}
