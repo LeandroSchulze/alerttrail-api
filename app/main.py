@@ -2,6 +2,7 @@
 import os, re
 from datetime import datetime
 from pathlib import Path
+from importlib import import_module
 
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -23,20 +24,14 @@ from app.security import (
     decode_token,
     COOKIE_NAME,
 )
-
 from app.models import User
-from app.routers import stats  # NEW ⬅️ si tu __init__.py ya reexporta stats
 
-from app.routers import rules
-app.include_router(rules.router)
-
-# === instancia de la app ANTES de usar app.mount ===
+# =========================
+# Instancia de la app (PRIMERO)
+# =========================
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
-# monta /stats
-app.include_router(stats.router)  # NEW ⬅️ monta /stats
-
-DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1","true","yes","on"))
+DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
 # -------- Middleware debug auth: log de cookies --------
 @app.middleware("http")
@@ -56,7 +51,6 @@ async def _auth_debug_mw(request: Request, call_next):
         masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
         print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked or '<NONE>'}")
     return resp
-# -----------------------------------------------------------------
 
 # ========= Forzar www.alerttrail.com (308 preserva POST) =========
 @app.middleware("http")
@@ -66,7 +60,6 @@ async def force_www(request: Request, call_next):
         url = request.url.replace(netloc="www.alerttrail.com")
         return RedirectResponse(str(url), status_code=308)
     return await call_next(request)
-# ================================================================
 
 # ========= Redirigir /auth/register a /register (form) ==========
 @app.middleware("http")
@@ -79,9 +72,8 @@ async def redirect_auth_register_mw(request: Request, call_next):
         if request.method in ("POST", "PUT", "PATCH") and not ctype.startswith("application/json"):
             return RedirectResponse("/register", status_code=307)
     return await call_next(request)
-# ================================================================
 
-# === Static & Templates (AHORA sí) ===
+# === Static & Templates ===
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
@@ -141,6 +133,21 @@ def truthy(v):
     if isinstance(v, int):  return v == 1
     if isinstance(v, str):  return v.strip().lower() in {"1","true","yes","y","on"}
     return False
+
+# =========================
+# Montaje de routers (robusto)
+# =========================
+ROUTER_MODULES = [
+    "stats", "payments", "alerts", "rules", "reports",
+    "admin", "admin_metrics", "analysis", "auth", "billing",
+    "mail", "profile", "push",
+]
+for name in ROUTER_MODULES:
+    try:
+        mod = import_module(f"app.routers.{name}")
+        app.include_router(mod.router)
+    except Exception as e:
+        print(f"[routers] No pude cargar {name}: {e}")
 
 # === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
@@ -265,78 +272,6 @@ def dashboard(
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
-# === Endpoints de diagnóstico de cookie (opcionales) ===
-@app.get("/_cookie_test_set", include_in_schema=False)
-def _cookie_test_set():
-    r = RedirectResponse(url="/_cookie_test_get", status_code=303)
-    r.set_cookie(
-        key=COOKIE_NAME,
-        value="test-cookie",
-        path="/",
-        secure=True,
-        httponly=True,
-        samesite="lax",
-        domain=(os.getenv("COOKIE_DOMAIN") or None),
-    )
-    return r
-
-@app.get("/_cookie_test_get", include_in_schema=False)
-def _cookie_test_get(request: Request):
-    return {
-        "host": request.headers.get("host"),
-        "has_cookie_header": bool(request.headers.get("cookie")),
-        "cookies": list(request.cookies.keys()),
-        "cookie_value_sample": (request.cookies.get(COOKIE_NAME) or "")[:16],
-    }
-
-@app.get("/_cookie_decode", include_in_schema=False)
-def _cookie_decode(request: Request):
-    raw = request.cookies.get(COOKIE_NAME)
-    tok = raw if isinstance(raw, str) else (raw.value if hasattr(raw, "value") else (str(raw) if raw is not None else None))
-    out = {"has_cookie": tok is not None}
-    try:
-        out["len"] = len(tok) if isinstance(tok, str) else None
-    except Exception:
-        out["len"] = None
-    try:
-        out["claims"] = decode_token(tok) if tok else None
-    except Exception as e:
-        out["error"] = repr(e)
-    return out
-
-# === Montar routers (si fallan, quedan los fallbacks) ===
-try:
-    from app.routers import auth as auth_router_mod
-    app.include_router(auth_router_mod.router)          # /auth/*
-except Exception as e:
-    print("No pude cargar app.routers.auth:", e)
-
-try:
-    from app.routers import analysis as analysis_router_mod
-    app.include_router(analysis_router_mod.router)      # /analysis/*
-except Exception as e:
-    print("No pude cargar app.routers.analysis:", e)
-
-try:
-    from app.routers import mail as mail_router_mod
-    app.include_router(mail_router_mod.router)          # /mail/*
-except Exception as e:
-    print("No pude cargar app.routers.mail:", e)
-
-try:
-    from app.routers import admin as admin_router_mod
-    app.include_router(admin_router_mod.router)         # /stats, etc.
-except Exception as e:
-    print("No pude cargar app.routers.admin:", e)
-
-# 👇 Billing (AGREGADO)
-try:
-    from app.routers import billing as billing_router_mod
-    app.include_router(billing_router_mod.router)       # /billing/*
-except Exception as e:
-    print("No pude cargar app.routers.billing:", e)
-# 👆 Billing
-
 # === Fallbacks por si /auth/* no quedó montado ===
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
@@ -437,21 +372,10 @@ def _log_routes():
         print(p)
     print("==============\n")
 
-from app.routers import payments
-app.include_router(payments.router)
-
-from app.routers import alerts
-app.include_router(alerts.router)
-
-from app.routers import rules
-app.include_router(rules.router)
-
-from app.routers import reports
-app.include_router(reports.router)
-
-from app.services.scheduler import start_background_scheduler
-
+# === Scheduler opcional ===
 try:
+    from app.services.scheduler import start_background_scheduler
     start_background_scheduler()
 except Exception:
     pass
+
