@@ -1,147 +1,171 @@
 # app/models.py
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Boolean,
-    DateTime,
-    Text,
-    ForeignKey,
-    LargeBinary,
-    UniqueConstraint,
+    Column, Integer, String, Boolean, DateTime, ForeignKey, Text, LargeBinary, Index, UniqueConstraint
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 
 from app.database import Base
 
 
-# ---------------------------
-# Organización (BIZ/Empresas)
-# ---------------------------
-class Organization(Base):
-    __tablename__ = "organizations"
-
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
-
-    # Asientos: total comprados y usados
-    seats_total = Column(Integer, nullable=False, default=1)
-    seats_used = Column(Integer, nullable=False, default=0)
-
-    # ID de cliente en el proveedor de cobros (MP/Stripe), opcional
-    billing_id = Column(String(255), nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    # Relación inversa: usuarios de la organización
-    users = relationship("User", back_populates="organization")
-
-
-# ---------------------------
-# Invitaciones a la organización
-# ---------------------------
-class OrgInvite(Base):
-    __tablename__ = "org_invites"
-
-    id = Column(Integer, primary_key=True)
-
-    org_id = Column(
-        Integer,
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    token = Column(String(64), nullable=False, unique=True, index=True)  # uuid4/slug
-    email = Column(String(255), nullable=True)  # opcional: invitar a un mail concreto
-
-    used = Column(Boolean, nullable=False, default=False)
-    used_by_user_id = Column(Integer, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        UniqueConstraint("org_id", "token", name="uq_org_token"),
-    )
-
-
-# ---------------------------
-# Usuario
-# ---------------------------
+# =========================
+# Users
+# =========================
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Identidad
     email = Column(String(255), unique=True, index=True, nullable=False)
-    name = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=True)
 
-    # Auth
-    password_hash = Column(String(255), nullable=False)  # bcrypt hash
+    # Password (compat con versiones previas)
+    hashed_password = Column(String(512), nullable=True)   # formato pbkdf2$...
+    password_hash   = Column(String(512), nullable=True)   # alias legacy / compat
 
-    # Plan / rol
-    plan = Column(String(20), nullable=False, default="FREE")  # "FREE" | "PRO" | "BIZ"
-    role = Column(String(20), nullable=False, default="user")  # "user" | "admin"
-    is_admin = Column(Boolean, nullable=False, default=False)
-    is_superuser = Column(Boolean, nullable=False, default=False)
+    # Estado/roles/planes
+    is_active     = Column(Boolean, nullable=False, default=True)
+    role          = Column(String(20), nullable=False, default="user")     # user | admin
+    plan          = Column(String(20), nullable=False, default="FREE")     # FREE | PRO | BIZ
+    is_admin      = Column(Boolean, nullable=False, default=False)
+    is_superuser  = Column(Boolean, nullable=False, default=False)
 
-    # Organización (Empresas)
-    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
-    is_org_admin = Column(Boolean, nullable=False, default=False)
+    # Organización
+    org_id        = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    is_org_admin  = Column(Boolean, nullable=False, default=False)
 
-    # Estado
-    is_active = Column(Boolean, nullable=False, default=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Metadatos
+    created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at    = Column(DateTime, nullable=True)
 
     # Relaciones
-    organization = relationship("Organization", back_populates="users")
+    organization  = relationship("Organization", backref=backref("members", lazy="selectin"))
 
-    # Relación opcional con descargas de reportes (si el router admin la usa)
-    report_downloads = relationship(
-        "ReportDownload",
-        back_populates="user",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
+    def __repr__(self):
+        return f"<User id={self.id} email={self.email!r} role={self.role} plan={self.plan}>"
+
+
+# =========================
+# Organizations
+# =========================
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    name           = Column(String(255), unique=True, nullable=False)
+
+    # Owner (tu DB ya lo tiene como NOT NULL)
+    owner_user_id  = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # Licencias / facturación
+    seats_total    = Column(Integer, nullable=False, default=1)
+    seats_used     = Column(Integer, nullable=False, default=0)
+    billing_id     = Column(String(255), nullable=True)
+
+    created_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relaciones
+    owner          = relationship("User", foreign_keys=[owner_user_id], backref=backref("owned_organizations", lazy="selectin"))
+
+    def __repr__(self):
+        return f"<Organization id={self.id} name={self.name!r} owner_user_id={self.owner_user_id} seats={self.seats_used}/{self.seats_total}>"
+
+
+# =========================
+# Invitations to Organization
+# =========================
+class OrgInvite(Base):
+    __tablename__ = "org_invites"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    org_id           = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    email            = Column(String(255), nullable=True, index=True)   # destinatario
+    token            = Column(String(64), nullable=True, unique=True)   # token público
+    used             = Column(Boolean, nullable=False, default=False)
+    used_by_user_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at       = Column(DateTime, nullable=False, default=datetime.utcnow)
+    used_at          = Column(DateTime, nullable=True)
+
+    organization     = relationship("Organization", backref=backref("invites", lazy="selectin"))
+    used_by_user     = relationship("User", foreign_keys=[used_by_user_id], backref=backref("accepted_invites", lazy="selectin"))
+
+    __table_args__ = (
+        Index("ix_org_invites_org_email", "org_id", "email"),
     )
 
-
-# ---------------------------
-# Lista blanca de IPs (admin)
-# ---------------------------
-class AllowedIP(Base):
-    __tablename__ = "allowed_ips"
-
-    id = Column(Integer, primary_key=True, index=True)
-    ip = Column(String(64), unique=True, nullable=False)
-    note = Column(String(255), default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    def __repr__(self):
+        return f"<OrgInvite id={self.id} org_id={self.org_id} email={self.email!r} used={self.used}>"
 
 
-# ---------------------------------------
-# Descargas de reportes (admin / billing)
-# ---------------------------------------
+# =========================
+# Mail Accounts (IMAP)
+# =========================
+class MailAccount(Base):
+    __tablename__ = "mail_accounts"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    email       = Column(String(255), nullable=False, index=True)
+
+    # Conectividad IMAP
+    imap_host   = Column(String(255), nullable=True)                    # legacy
+    imap_server = Column(String(255), nullable=False, default="imap.gmail.com")
+    imap_port   = Column(Integer, nullable=False, default=993)
+    use_ssl     = Column(Boolean, nullable=False, default=True)
+
+    # Credenciales/cifrado
+    enc_password = Column(String(1024), nullable=True)                  # legacy
+    enc_blob     = Column(Text, nullable=False, default="")             # preferido
+
+    created_at  = Column(DateTime, nullable=True, default=datetime.utcnow)
+
+    user        = relationship("User", backref=backref("mail_accounts", lazy="selectin"))
+
+    __table_args__ = (
+        Index("ix_mail_accounts_user_email", "user_id", "email"),
+    )
+
+    def __repr__(self):
+        return f"<MailAccount id={self.id} user_id={self.user_id} email={self.email!r}>"
+
+
+# =========================
+# Report Downloads (PDFs, etc.)
+# =========================
 class ReportDownload(Base):
     __tablename__ = "report_downloads"
 
-    id = Column(Integer, primary_key=True)
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    path        = Column(String(1024), nullable=False)   # /reports/....pdf
+    created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    # Si el reporte está asociado a un usuario; SET NULL para conservar registros
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
-    user = relationship("User", back_populates="report_downloads")
+    user        = relationship("User", backref=backref("report_downloads", lazy="selectin"))
 
-    # Metadatos
-    filename = Column(String(255), nullable=False)               # ej. "reporte.pdf"
-    mime = Column(String(100), default="application/pdf")
-    size_bytes = Column(Integer, default=0)
+    def __repr__(self):
+        return f"<ReportDownload id={self.id} user_id={self.user_id} path={self.path!r}>"
 
-    # Almacenamiento: usá UNO u OTRO según tu implementación
-    data = Column(LargeBinary, nullable=True)                    # PDF en la DB (opcional)
-    storage_path = Column(String(512), nullable=True)            # Ruta en disco/obj storage (opcional)
 
-    # Opcionales útiles (links temporales, flags)
-    token = Column(String(64), unique=True, nullable=True)
-    ready = Column(Boolean, default=True)
+# =========================
+# Allowed IPs (Opcional)
+# =========================
+class AllowedIP(Base):
+    __tablename__ = "allowed_ips"
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    ip_cidr     = Column(String(64), nullable=False)   # ej. "1.2.3.4/32"
+    note        = Column(String(255), nullable=True)
+    created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user        = relationship("User", backref=backref("allowed_ips", lazy="selectin"))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "ip_cidr", name="uq_allowed_ips_user_cidr"),
+    )
+
+    def __repr__(self):
+        return f"<AllowedIP id={self.id} user_id={self.user_id} ip_cidr={self.ip_cidr!r}>"
