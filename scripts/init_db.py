@@ -2,6 +2,7 @@
 import os
 from datetime import datetime
 from sqlalchemy import text, inspect, func
+from sqlalchemy.exc import ProgrammingError, OperationalError
 
 from app.database import engine, SessionLocal
 from app.models import Base, User  # Modelos base requeridos
@@ -9,6 +10,12 @@ from app.models import Base, User  # Modelos base requeridos
 # Si estos modelos existen en tu repo, el import no debe romper el script
 try:
     from app.models import AllowedIP, ReportDownload  # noqa: F401
+except Exception:
+    pass
+
+# Aseguramos cargar Organization/OrgInvite si existen en app.models
+try:
+    from app.models import Organization, OrgInvite  # noqa: F401
 except Exception:
     pass
 
@@ -35,6 +42,20 @@ def truthy(v) -> bool:
 def _norm_email(e: str) -> str:
     return (e or "").strip().lower()
 
+def _dialect_flags():
+    dialect = engine.dialect.name  # 'sqlite', 'postgresql', etc.
+    bool_true = "1" if dialect == "sqlite" else "TRUE"
+    bool_false = "0" if dialect == "sqlite" else "FALSE"
+    return dialect, bool_true, bool_false
+
+def _safe_exec(sql: str):
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(sql))
+            conn.commit()
+        except (ProgrammingError, OperationalError) as e:
+            print(f"[init_db] aviso: {e.__class__.__name__} al ejecutar: {sql}")
+
 
 # ---------------------------------------------------------------------------
 # Creación de tablas (idempotente)
@@ -42,7 +63,7 @@ def _norm_email(e: str) -> str:
 def ensure_tables():
     # Asegura que los modelos de rules se registren en Base antes del create_all
     try:
-        import app.routers.rules  # registra UserRule y UserSetting
+        import app.routers.rules  # registra UserRule y UserSetting (si existen)
     except Exception as e:
         print("[init_db] aviso: no pude registrar modelos de rules:", e)
     Base.metadata.create_all(bind=engine)
@@ -54,6 +75,7 @@ def ensure_tables():
 # ---------------------------------------------------------------------------
 def ensure_users_columns():
     insp = inspect(engine)
+    dialect, BOOL_TRUE, _BOOL_FALSE = _dialect_flags()
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
@@ -63,36 +85,31 @@ def ensure_users_columns():
     with engine.begin() as conn:
         if "is_active" not in cols:
             conn.execute(text(
-                "ALTER TABLE users "
-                "ADD COLUMN is_active BOOLEAN DEFAULT 1 NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
             ))
             print("[init_db] users.is_active agregado")
 
         if "plan" not in cols:
             conn.execute(text(
-                "ALTER TABLE users "
-                "ADD COLUMN plan VARCHAR(20) DEFAULT 'FREE' NOT NULL"
+                "ALTER TABLE users ADD COLUMN plan VARCHAR(20) DEFAULT 'FREE' NOT NULL"
             ))
             print("[init_db] users.plan agregado")
 
         if "role" not in cols:
             conn.execute(text(
-                "ALTER TABLE users "
-                "ADD COLUMN role VARCHAR(20) DEFAULT 'user' NOT NULL"
+                "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user' NOT NULL"
             ))
             print("[init_db] users.role agregado")
 
         if "is_admin" not in cols:
             conn.execute(text(
-                "ALTER TABLE users "
-                "ADD COLUMN is_admin BOOLEAN DEFAULT 0 NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT {BOOL_TRUE if False else '0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
             ))
             print("[init_db] users.is_admin agregado")
 
         if "is_superuser" not in cols:
             conn.execute(text(
-                "ALTER TABLE users "
-                "ADD COLUMN is_superuser BOOLEAN DEFAULT 0 NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT {BOOL_TRUE if False else '0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
             ))
             print("[init_db] users.is_superuser agregado")
 
@@ -105,9 +122,80 @@ def ensure_users_columns():
 
         # Normalizaciones útiles
         conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
-        conn.execute(text(
-            "UPDATE users SET role = COALESCE(role, 'user')"
-        ))
+        conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
+
+
+# ---------------------------------------------------------------------------
+# Migraciones ligeras (sin Alembic): ORGS (users.org_id / is_org_admin + FK)
+# ---------------------------------------------------------------------------
+def ensure_org_schema():
+    insp = inspect(engine)
+    dialect, BOOL_TRUE, BOOL_FALSE = _dialect_flags()
+
+    # Asegurar tablas nuevas si faltan (creadas por create_all)
+    try:
+        _ = insp.get_columns("organizations")
+    except Exception:
+        Base.metadata.create_all(bind=engine)
+
+    # Asegurar columnas en users
+    try:
+        cols = {c["name"] for c in insp.get_columns("users")}
+    except Exception:
+        print("[init_db] users aún no existe; create_all lo creará")
+        return
+
+    if "org_id" not in cols:
+        print("[init_db] Agregando columna users.org_id ...")
+        _safe_exec("ALTER TABLE users ADD COLUMN org_id INTEGER")
+
+    if "is_org_admin" not in cols:
+        print("[init_db] Agregando columna users.is_org_admin ...")
+        _safe_exec(f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL")
+
+    # FK solo en motores que lo soportan fácil por ALTER (Postgres, MySQL). En SQLite, lo omitimos.
+    if engine.dialect.name != "sqlite":
+        print("[init_db] Asegurando FK users.org_id -> organizations.id ...")
+        _safe_exec(
+            "ALTER TABLE users "
+            "ADD CONSTRAINT fk_users_org "
+            "FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL"
+        )
+
+    # Si la tabla organizations existiera desde antes sin columnas nuevas, agregarlas:
+    try:
+        ocols = {c["name"] for c in insp.get_columns("organizations")}
+    except Exception:
+        ocols = set()
+
+    if "seats_total" not in ocols:
+        _safe_exec("ALTER TABLE organizations ADD COLUMN seats_total INTEGER DEFAULT 1 NOT NULL")
+        print("[init_db] organizations.seats_total agregado")
+    if "seats_used" not in ocols:
+        _safe_exec("ALTER TABLE organizations ADD COLUMN seats_used INTEGER DEFAULT 0 NOT NULL")
+        print("[init_db] organizations.seats_used agregado")
+    if "billing_id" not in ocols:
+        _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
+        print("[init_db] organizations.billing_id agregado")
+
+    # org_invites columnas mínimas si la tabla existe pero incompleta
+    try:
+        icols = {c["name"] for c in insp.get_columns("org_invites")}
+    except Exception:
+        icols = set()
+    if icols:
+        if "token" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN token VARCHAR(64)")
+            print("[init_db] org_invites.token agregado")
+        if "email" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN email VARCHAR(255)")
+            print("[init_db] org_invites.email agregado")
+        if "used" not in icols:
+            _safe_exec(f"ALTER TABLE org_invites ADD COLUMN used BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL")
+            print("[init_db] org_invites.used agregado")
+        if "used_by_user_id" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN used_by_user_id INTEGER")
+            print("[init_db] org_invites.used_by_user_id agregado")
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +203,7 @@ def ensure_users_columns():
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
+    _dialect, BOOL_TRUE, _BOOL_FALSE = _dialect_flags()
     try:
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
     except Exception:
@@ -136,14 +225,12 @@ def ensure_mail_accounts_columns():
             print("[init_db] mail_accounts.imap_port agregado")
         if "use_ssl" not in cols:
             conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN use_ssl BOOLEAN DEFAULT 1 NOT NULL"
+                f"ALTER TABLE mail_accounts ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
             ))
             print("[init_db] mail_accounts.use_ssl agregado")
         if "enc_blob" not in cols:
             conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
+                "ALTER TABLE mail_accounts ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
             ))
             print("[init_db] mail_accounts.enc_blob agregado")
         if "created_at" not in cols:
@@ -156,6 +243,7 @@ def ensure_mail_accounts_columns():
         conn.execute(text(
             "UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"
         ))
+        # Para SQLite/Postgres, 1/TRUE funciona con el default que definimos arriba
         conn.execute(text(
             "UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"
         ))
@@ -256,13 +344,63 @@ def seed_admin():
 
 
 # ---------------------------------------------------------------------------
+# Seed opcional: crear/adjuntar organización al admin
+#   - ADMIN_ORG_NAME: si está definido, crea/asegura la org y vincula al admin como is_org_admin
+#   - ADMIN_ORG_SEATS: opcional, por defecto 25
+# ---------------------------------------------------------------------------
+def seed_admin_org_if_requested():
+    org_name = os.getenv("ADMIN_ORG_NAME", "").strip()
+    if not org_name:
+        return
+
+    seats = int(os.getenv("ADMIN_ORG_SEATS", "25"))
+    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@alerttrail.com"))
+
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(func.lower(User.email) == email).first()
+        if not admin:
+            print("[init_db] seed_admin_org: admin no existe todavía, saltando")
+            return
+
+        # Buscar o crear organización
+        org = db.query(Organization).filter(Organization.name == org_name).first()
+        if not org:
+            org = Organization(name=org_name, seats_total=seats, seats_used=0)
+            db.add(org)
+            db.flush()
+            print(f"[init_db] Organización creada: {org_name} (seats_total={seats})")
+
+        # Vincular admin como org admin si no lo está
+        if getattr(admin, "org_id", None) != org.id:
+            admin.org_id = org.id
+            admin.is_org_admin = True
+            db.add(admin)
+
+        # Recontar seats_used de forma idempotente
+        used = db.query(User).filter(User.org_id == org.id, User.is_active == True).count()  # noqa: E712
+        org.seats_used = used
+        db.add(org)
+
+        db.commit()
+        print(f"[init_db] seed_admin_org: admin vinculado a '{org.name}' — seats_used={org.seats_used}/{org.seats_total}")
+    except Exception as e:
+        db.rollback()
+        print(f"[init_db][seed_admin_org ERROR] {e}")
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def main():
     ensure_tables()
     ensure_users_columns()
+    ensure_org_schema()
     ensure_mail_accounts_columns()
     seed_admin()
+    seed_admin_org_if_requested()
     print("[init_db] OK")
 
 
