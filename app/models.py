@@ -3,9 +3,9 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, ForeignKey, Text, LargeBinary, Index, UniqueConstraint
+    Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Index, UniqueConstraint
 )
-from sqlalchemy.orm import relationship, backref
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 
@@ -22,18 +22,18 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=True)
 
-    # Password (compat con versiones previas)
-    hashed_password = Column(String(512), nullable=True)   # formato pbkdf2$...
-    password_hash   = Column(String(512), nullable=True)   # alias legacy / compat
+    # Password (compat)
+    hashed_password = Column(String(512), nullable=True)   # pbkdf2$...
+    password_hash   = Column(String(512), nullable=True)   # legacy/compat
 
     # Estado/roles/planes
     is_active     = Column(Boolean, nullable=False, default=True)
-    role          = Column(String(20), nullable=False, default="user")     # user | admin
-    plan          = Column(String(20), nullable=False, default="FREE")     # FREE | PRO | BIZ
+    role          = Column(String(20), nullable=False, default="user")   # user | admin
+    plan          = Column(String(20), nullable=False, default="FREE")   # FREE | PRO | BIZ
     is_admin      = Column(Boolean, nullable=False, default=False)
     is_superuser  = Column(Boolean, nullable=False, default=False)
 
-    # Organización
+    # Organización a la que PERTENECE el usuario
     org_id        = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     is_org_admin  = Column(Boolean, nullable=False, default=False)
 
@@ -41,8 +41,28 @@ class User(Base):
     created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at    = Column(DateTime, nullable=True)
 
-    # Relaciones
-    organization  = relationship("Organization", backref=backref("members", lazy="selectin"))
+    # ---------------- Relaciones (desambiguadas) ----------------
+    # Pertenece a UNA organización (vía users.org_id)
+    organization = relationship(
+        "Organization",
+        foreign_keys=[org_id],
+        back_populates="members",
+        lazy="selectin",
+    )
+
+    # Es propietario (owner) de CERO o MÁS organizaciones (vía organizations.owner_user_id)
+    owned_organizations = relationship(
+        "Organization",
+        foreign_keys="Organization.owner_user_id",
+        back_populates="owner",
+        lazy="selectin",
+    )
+
+    # Relación con otras tablas
+    mail_accounts = relationship("MailAccount", back_populates="user", lazy="selectin")
+    report_downloads = relationship("ReportDownload", back_populates="user", lazy="selectin")
+    allowed_ips = relationship("AllowedIP", back_populates="user", lazy="selectin")
+    accepted_invites = relationship("OrgInvite", back_populates="used_by_user", lazy="selectin")
 
     def __repr__(self):
         return f"<User id={self.id} email={self.email!r} role={self.role} plan={self.plan}>"
@@ -57,7 +77,7 @@ class Organization(Base):
     id             = Column(Integer, primary_key=True, index=True)
     name           = Column(String(255), unique=True, nullable=False)
 
-    # Owner (tu DB ya lo tiene como NOT NULL)
+    # Dueño/propietario de la org
     owner_user_id  = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     # Licencias / facturación
@@ -67,8 +87,30 @@ class Organization(Base):
 
     created_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    # Relaciones
-    owner          = relationship("User", foreign_keys=[owner_user_id], backref=backref("owned_organizations", lazy="selectin"))
+    # ---------------- Relaciones (desambiguadas) ----------------
+    # Owner: va a User.owned_organizations
+    owner = relationship(
+        "User",
+        foreign_keys=[owner_user_id],
+        back_populates="owned_organizations",
+        lazy="selectin",
+    )
+
+    # Miembros: vienen desde User.org_id
+    members = relationship(
+        "User",
+        foreign_keys="User.org_id",
+        back_populates="organization",
+        lazy="selectin",
+    )
+
+    # Invites
+    invites = relationship(
+        "OrgInvite",
+        foreign_keys="OrgInvite.org_id",
+        back_populates="organization",
+        lazy="selectin",
+    )
 
     def __repr__(self):
         return f"<Organization id={self.id} name={self.name!r} owner_user_id={self.owner_user_id} seats={self.seats_used}/{self.seats_total}>"
@@ -89,8 +131,19 @@ class OrgInvite(Base):
     created_at       = Column(DateTime, nullable=False, default=datetime.utcnow)
     used_at          = Column(DateTime, nullable=True)
 
-    organization     = relationship("Organization", backref=backref("invites", lazy="selectin"))
-    used_by_user     = relationship("User", foreign_keys=[used_by_user_id], backref=backref("accepted_invites", lazy="selectin"))
+    # Relaciones (desambiguadas)
+    organization = relationship(
+        "Organization",
+        foreign_keys=[org_id],
+        back_populates="invites",
+        lazy="selectin",
+    )
+    used_by_user = relationship(
+        "User",
+        foreign_keys=[used_by_user_id],
+        back_populates="accepted_invites",
+        lazy="selectin",
+    )
 
     __table_args__ = (
         Index("ix_org_invites_org_email", "org_id", "email"),
@@ -122,7 +175,12 @@ class MailAccount(Base):
 
     created_at  = Column(DateTime, nullable=True, default=datetime.utcnow)
 
-    user        = relationship("User", backref=backref("mail_accounts", lazy="selectin"))
+    user = relationship(
+        "User",
+        foreign_keys=[user_id],
+        back_populates="mail_accounts",
+        lazy="selectin",
+    )
 
     __table_args__ = (
         Index("ix_mail_accounts_user_email", "user_id", "email"),
@@ -143,7 +201,12 @@ class ReportDownload(Base):
     path        = Column(String(1024), nullable=False)   # /reports/....pdf
     created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    user        = relationship("User", backref=backref("report_downloads", lazy="selectin"))
+    user = relationship(
+        "User",
+        foreign_keys=[user_id],
+        back_populates="report_downloads",
+        lazy="selectin",
+    )
 
     def __repr__(self):
         return f"<ReportDownload id={self.id} user_id={self.user_id} path={self.path!r}>"
@@ -161,7 +224,12 @@ class AllowedIP(Base):
     note        = Column(String(255), nullable=True)
     created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    user        = relationship("User", backref=backref("allowed_ips", lazy="selectin"))
+    user = relationship(
+        "User",
+        foreign_keys=[user_id],
+        back_populates="allowed_ips",
+        lazy="selectin",
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "ip_cidr", name="uq_allowed_ips_user_cidr"),
