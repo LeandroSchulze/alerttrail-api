@@ -74,6 +74,8 @@
         {% endif %}
         <div class="actions">
           <a class="btn-primary" href="/billing">Cambiar plan</a>
+          <!-- Botón para abrir el modal de planes -->
+          <button id="openPlansModal" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
         </div>
       </section>
 
@@ -105,8 +107,12 @@
 
       <!-- Planes -->
       <section class="card" style="grid-column:1/-1">
-        <h3>Planes</h3>
-        <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <h3 style="margin:0">Planes</h3>
+          <!-- Segundo acceso al modal -->
+          <button id="openPlansModal2" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
+        </div>
+        <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch;margin-top:12px">
           <!-- PRO -->
           <div class="card" style="margin:0">
             <h3 style="margin-bottom:6px">PRO <span class="muted" style="font-weight:400">— US$ 10 / mes</span></h3>
@@ -121,8 +127,8 @@
           <div class="card" style="margin:0">
             <h3 style="margin-bottom:6px">EMPRESAS <span class="muted" style="font-weight:400">— US$ 99 / mes</span></h3>
             <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
-              <li><strong>25 asientos incluidos</strong></li>
-              <li>Usuarios adicionales por asiento extra</li>
+              <li><strong>10 cuentas incluidas</strong></li>
+              <li>Asientos adicionales: <strong>US$ 3/mes</strong> por usuario</li>
               <li>Soporte prioritario</li>
             </ul>
             <a class="btn-primary" href="/billing/checkout?plan=BIZ">Elegir EMPRESAS</a>
@@ -131,6 +137,92 @@
       </section>
     </div>
   </div>
+
+  <!-- ===== Modal de Planes (accesible) ===== -->
+  <div id="plansModal" class="plans-modal" role="dialog" aria-modal="true" aria-labelledby="plansModalTitle" aria-hidden="true">
+    <div class="plans-dialog" role="document">
+      <header class="plans-header">
+        <h2 id="plansModalTitle" class="plans-title">Planes y beneficios</h2>
+        <button class="plans-close" id="closePlansModal" aria-label="Cerrar">×</button>
+      </header>
+
+      <nav class="plans-tabs" role="tablist" aria-label="Tipos de plan">
+        <button class="plans-tab is-active" role="tab" aria-selected="true" aria-controls="tab-pro" id="tab-pro-btn">Plan PRO</button>
+        <button class="plans-tab" role="tab" aria-selected="false" aria-controls="tab-biz" id="tab-biz-btn">Plan Empresas</button>
+      </nav>
+
+      <section id="tab-pro" class="plans-panel is-active" role="tabpanel" aria-labelledby="tab-pro-btn">
+        <div class="plans-price">US$ 10<span class="plans-price-per">/mes</span></div>
+        <ul class="plans-list">
+          <li>Escaneo de <strong>logs</strong> y <strong>emails</strong> sin límite práctico*</li>
+          <li><strong>Reportes PDF</strong> avanzados</li>
+          <li><strong>Alertas en tiempo real</strong> ante amenazas por correo</li>
+          <li><strong>Análisis con IA</strong> (detección de patrones sospechosos)</li>
+          <li>Historial por usuario y <strong>descarga</strong> de resultados</li>
+        </ul>
+        <p class="plans-note">* Podrían aplicarse límites razonables contra abuso.</p>
+        <div class="plans-actions">
+          <a href="/billing/checkout?plan=PRO" class="plans-primary">Hacete PRO</a>
+        </div>
+      </section>
+
+      <section id="tab-biz" class="plans-panel" role="tabpanel" aria-labelledby="tab-biz-btn" hidden>
+        <div class="plans-price">US$ 99<span class="plans-price-per">/mes</span></div>
+        <ul class="plans-list">
+          <li>Incluye <strong>todo lo del PRO</strong></li>
+          <li><strong>10 cuentas</strong> de usuario incluidas</li>
+          <li><strong>Asiento adicional</strong>: US$ 3/mes</li>
+          <li><strong>Estadísticas</strong> para toda la organización</li>
+          <li><strong>Soporte prioritario</strong></li>
+        </ul>
+        <div class="plans-actions">
+          <a href="/billing/checkout?plan=BIZ" class="plans-primary">Contratar Empresas</a>
+        </div>
+      </section>
+
+      <footer class="plans-footer">
+        ¿Dudas? Escribinos a
+        <a href="mailto:admin.alerttrail@gmail.com">admin.alerttrail@gmail.com</a>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ===== Footer con soporte (siempre visible) ===== -->
+  <footer class="plans-support-footer">
+    ¿Necesitás ayuda? Soporte:
+    <a href="mailto:admin.alerttrail@gmail.com">admin.alerttrail@gmail.com</a>
+  </footer>
+
+  <!-- ===== Estilos del modal (aislados con prefijo plans-) ===== -->
+  <style>
+    .plans-modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:1000}
+    .plans-modal.is-open{display:flex}
+    .plans-dialog{width:min(720px,92vw);background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden}
+    .plans-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #eef2f7}
+    .plans-title{margin:0;font-size:20px}
+    .plans-close{background:transparent;border:0;font-size:24px;line-height:1;cursor:pointer;padding:4px 8px}
+
+    .plans-tabs{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid #eef2f7}
+    .plans-tab{background:#f4f6fb;border:0;padding:10px 14px;border-radius:999px;cursor:pointer;font-weight:600}
+    .plans-tab.is-active{background:#2563eb;color:#fff}
+
+    .plans-panel{padding:16px 20px}
+    .plans-panel[hidden]{display:none}
+
+    .plans-price{font-size:28px;font-weight:800;margin-bottom:10px}
+    .plans-price-per{font-size:14px;font-weight:600;color:#667085;margin-left:4px}
+    .plans-list{margin:0 0 12px 18px}
+    .plans-list li{margin:6px 0}
+    .plans-note{font-size:12px;color:#667085;margin:8px 0 0}
+
+    .plans-actions{margin-top:14px}
+    .plans-primary{display:inline-block;padding:10px 16px;border-radius:10px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700}
+
+    .plans-footer{padding:14px 20px;border-top:1px solid #eef2f7;font-size:14px;background:#fafafa}
+
+    .plans-support-footer{margin-top:32px;padding:14px;text-align:center;font-size:14px;color:#334155;background:#f8fafc;border-top:1px solid #eef2f7}
+    .plans-support-footer a{font-weight:600}
+  </style>
 
   <!-- Script para notificaciones -->
   <script>
@@ -155,6 +247,50 @@
   }
   setInterval(checkAlerts, 30000); checkAlerts();
   </script>
+
+  <!-- ===== JS del modal (accesible, sin dependencias) ===== -->
+  <script>
+    (function(){
+      const modal = document.getElementById('plansModal');
+      const openBtn1 = document.getElementById('openPlansModal');
+      const openBtn2 = document.getElementById('openPlansModal2');
+      const closeBtn = document.getElementById('closePlansModal');
+      const tabProBtn = document.getElementById('tab-pro-btn');
+      const tabBizBtn = document.getElementById('tab-biz-btn');
+      const tabPro = document.getElementById('tab-pro');
+      const tabBiz = document.getElementById('tab-biz');
+
+      function openModal(){
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden','false');
+        tabProBtn.focus();
+      }
+      function closeModal(){
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden','true');
+        (openBtn1 || openBtn2)?.focus();
+      }
+      function activateTab(which){
+        if (which === 'pro'){
+          tabProBtn.classList.add('is-active'); tabProBtn.setAttribute('aria-selected','true');
+          tabBizBtn.classList.remove('is-active'); tabBizBtn.setAttribute('aria-selected','false');
+          tabPro.hidden = false; tabBiz.hidden = true;
+        } else {
+          tabBizBtn.classList.add('is-active'); tabBizBtn.setAttribute('aria-selected','true');
+          tabProBtn.classList.remove('is-active'); tabProBtn.setAttribute('aria-selected','false');
+          tabBiz.hidden = false; tabPro.hidden = true;
+        }
+      }
+
+      openBtn1?.addEventListener('click', openModal);
+      openBtn2?.addEventListener('click', openModal);
+      closeBtn?.addEventListener('click', closeModal);
+      modal?.addEventListener('click', (e)=>{ if(e.target === modal) closeModal(); });
+      document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modal.classList.contains('is-open')) closeModal(); });
+
+      tabProBtn?.addEventListener('click', ()=>activateTab('pro'));
+      tabBizBtn?.addEventListener('click', ()=>activateTab('biz'));
+    })();
+  </script>
 </body>
 </html>
-
