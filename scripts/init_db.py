@@ -7,7 +7,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from app.database import engine, SessionLocal
 from app.models import Base, User  # Modelos base requeridos
 
-# Imports opcionales (si existen en tu repo, no deben romper)
+# Imports opcionales (si existen, no deben romper)
 try:
     from app.models import AllowedIP, ReportDownload  # noqa: F401
 except Exception:
@@ -177,7 +177,7 @@ def ensure_org_schema():
         _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
         print("[init_db] organizations.billing_id agregado")
 
-    # org_invites columnas mínimas si existe
+    # org_invites columnas mínimas si la tabla existe pero incompleta
     try:
         icols = {c["name"] for c in insp.get_columns("org_invites")}
     except Exception:
@@ -195,6 +195,9 @@ def ensure_org_schema():
         if "used_by_user_id" not in icols:
             _safe_exec("ALTER TABLE org_invites ADD COLUMN used_by_user_id INTEGER")
             print("[init_db] org_invites.used_by_user_id agregado")
+        if "used_at" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN used_at DATETIME")
+            print("[init_db] org_invites.used_at agregado")
 
 
 # ---------------------------------------------------------------------------
@@ -236,21 +239,11 @@ def ensure_mail_accounts_columns():
             conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
             print("[init_db] mail_accounts.created_at agregado")
 
-        conn.execute(text(
-            "UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"
-        ))
-        conn.execute(text(
-            "UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"
-        ))
-        conn.execute(text(
-            "UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"
-        ))
-        conn.execute(text(
-            "UPDATE mail_accounts SET enc_blob = COALESCE(enc_blob, '')"
-        ))
-        conn.execute(text(
-            "UPDATE mail_accounts SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
-        ))
+        conn.execute(text("UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"))
+        conn.execute(text("UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"))
+        conn.execute(text("UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"))
+        conn.execute(text("UPDATE mail_accounts SET enc_blob = COALESCE(enc_blob, '')"))
+        conn.execute(text("UPDATE mail_accounts SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
         print("[init_db] mail_accounts backfill OK")
 
 
@@ -279,12 +272,8 @@ def ensure_report_downloads_columns():
             print("[init_db] report_downloads.path agregado")
 
         if "created_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads ADD COLUMN created_at DATETIME"
-            ))
-            conn.execute(text(
-                "UPDATE report_downloads SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
-            ))
+            conn.execute(text("ALTER TABLE report_downloads ADD COLUMN created_at DATETIME"))
+            conn.execute(text("UPDATE report_downloads SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
             print("[init_db] report_downloads.created_at agregado y backfilled")
 
 
@@ -322,19 +311,13 @@ def ensure_allowed_ips_columns():
 
         # Nota opcional
         if "note" not in cols:
-            conn.execute(text(
-                "ALTER TABLE allowed_ips ADD COLUMN note VARCHAR(255)"
-            ))
+            conn.execute(text("ALTER TABLE allowed_ips ADD COLUMN note VARCHAR(255)"))
             print("[init_db] allowed_ips.note agregado")
 
         # Timestamp
         if "created_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE allowed_ips ADD COLUMN created_at DATETIME"
-            ))
-            conn.execute(text(
-                "UPDATE allowed_ips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
-            ))
+            conn.execute(text("ALTER TABLE allowed_ips ADD COLUMN created_at DATETIME"))
+            conn.execute(text("UPDATE allowed_ips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
             print("[init_db] allowed_ips.created_at agregado y backfilled")
 
 
