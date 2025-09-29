@@ -477,6 +477,7 @@ def main():
     ensure_org_schema()
     ensure_mail_accounts_columns()
     ensure_report_downloads_columns()   # <<< importante antes de seeds
+    ensure_allowed_ips_columns()        # <-- NUEVA LÍNEA
     seed_admin()
     seed_admin_org_if_requested()
     print("[init_db] OK")
