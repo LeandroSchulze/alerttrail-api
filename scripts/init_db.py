@@ -348,6 +348,57 @@ def seed_admin():
         db.rollback(); print(f"[init_db][ERROR] {e}"); raise
     finally:
         db.close()
+        
+
+# ---------------------------------------------------------------------------
+# Migraciones ligeras: ALLOWED_IPS
+# ---------------------------------------------------------------------------
+def ensure_allowed_ips_columns():
+    insp = inspect(engine)
+    try:
+        cols = {c["name"] for c in insp.get_columns("allowed_ips")}
+    except Exception:
+        # Si la tabla no existe aún, la creará create_all; reintentar inspección
+        Base.metadata.create_all(bind=engine)
+        try:
+            cols = {c["name"] for c in insp.get_columns("allowed_ips")}
+        except Exception:
+            print("[init_db] aviso: no pude inspeccionar allowed_ips")
+            return
+
+    with engine.begin() as conn:
+        # Columna ip_cidr (SQLite requiere DEFAULT para NOT NULL en ALTER)
+        if "ip_cidr" not in cols:
+            conn.execute(text(
+                "ALTER TABLE allowed_ips ADD COLUMN ip_cidr VARCHAR(64) DEFAULT '' NOT NULL"
+            ))
+            print("[init_db] allowed_ips.ip_cidr agregado")
+
+        # Migrar desde 'ip' si existía ese nombre legacy
+        if "ip" in cols:
+            conn.execute(text(
+                "UPDATE allowed_ips SET ip_cidr = CASE "
+                "WHEN (ip_cidr IS NULL OR ip_cidr='') THEN COALESCE(ip, '') "
+                "ELSE ip_cidr END"
+            ))
+
+        # Nota opcional
+        if "note" not in cols:
+            conn.execute(text(
+                "ALTER TABLE allowed_ips ADD COLUMN note VARCHAR(255)"
+            ))
+            print("[init_db] allowed_ips.note agregado")
+
+        # Timestamp
+        if "created_at" not in cols:
+            conn.execute(text(
+                "ALTER TABLE allowed_ips ADD COLUMN created_at DATETIME"
+            ))
+            conn.execute(text(
+                "UPDATE allowed_ips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+            ))
+            print("[init_db] allowed_ips.created_at agregado y back_]()
+
 
 
 # ---------------------------------------------------------------------------
