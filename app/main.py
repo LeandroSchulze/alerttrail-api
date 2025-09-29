@@ -26,6 +26,9 @@ from app.security import (
 )
 from app.models import User
 
+from app.routers import orgs
+app.include_router(orgs.router)
+
 # =========================
 # Instancia de la app (PRIMERO)
 # =========================
