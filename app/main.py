@@ -26,11 +26,8 @@ from app.security import (
 )
 from app.models import User
 
-from app.routers import orgs
-app.include_router(orgs.router)
-
 # =========================
-# Instancia de la app (PRIMERO)
+# Instancia de la app
 # =========================
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 
@@ -55,7 +52,7 @@ async def _auth_debug_mw(request: Request, call_next):
         print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked or '<NONE>'}")
     return resp
 
-# ========= Forzar www.alerttrail.com (308 preserva POST) =========
+# ========= Forzar www.alerttrail.com =========
 @app.middleware("http")
 async def force_www(request: Request, call_next):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
@@ -64,7 +61,7 @@ async def force_www(request: Request, call_next):
         return RedirectResponse(str(url), status_code=308)
     return await call_next(request)
 
-# ========= Redirigir /auth/register a /register (form) ==========
+# ========= Redirigir /auth/register a /register ==========
 @app.middleware("http")
 async def redirect_auth_register_mw(request: Request, call_next):
     path = request.url.path.rstrip("/")
@@ -96,7 +93,7 @@ def get_db():
     finally:
         db.close()
 
-# === Usuario opcional: NUNCA lanza excepción ===
+# === Usuario opcional ===
 def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
     try:
         return get_current_user_cookie(request, db)
@@ -138,10 +135,10 @@ def truthy(v):
     return False
 
 # =========================
-# Montaje de routers (robusto)
+# Montaje de routers
 # =========================
 ROUTER_MODULES = [
-    "stats", "payments", "alerts", "rules", "reports",
+    "orgs", "stats", "payments", "alerts", "rules", "reports",
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push",
 ]
@@ -167,7 +164,7 @@ def home(request: Request, user=Depends(get_current_user_optional)):
         </div>"""
         return HTMLResponse(html)
 
-# Alias clásico: /login -> /auth/login
+# Alias clásico
 @app.get("/login", include_in_schema=False)
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
@@ -199,7 +196,6 @@ def register_page(request: Request):
         </form>"""
         return HTMLResponse(html)
 
-# Reg: setea cookie en el MISMO redirect
 @app.post("/register")
 def register_action(
     response: Response,
@@ -240,19 +236,15 @@ def register_action(
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": getattr(user, "email", email_norm)})
     return r
 
-# Logout
 @app.get("/logout")
 def logout(_response: Response):
     r = RedirectResponse(url="/")
     clear_access_cookie(r)
     return r
 
-# === Dashboard protegido ===
+# === Dashboard ===
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(
-    request: Request,
-    db: Session = Depends(get_db),
-):
+def dashboard(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
@@ -265,17 +257,12 @@ def dashboard(
 
     resp = templates.TemplateResponse(
         "dashboard.html",
-        {
-            "request": request,
-            "current_user": user,
-            "user": user_ctx,
-            "is_admin": is_admin,
-        }
+        {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin}
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
-# === Fallbacks por si /auth/* no quedó montado ===
+# === Fallbacks de login si faltan ===
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
@@ -285,6 +272,8 @@ def _route_has_method(path: str, method: str) -> bool:
             if r.methods and method.upper() in r.methods:
                 return True
     return False
+
+# (Aquí mantenemos tus fallback de /auth/login GET/POST y /auth/login/web igual que antes)
 
 if not _route_has_method("/auth/login", "GET"):
     @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
@@ -307,12 +296,7 @@ if not _route_has_method("/auth/login", "GET"):
 
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
-    def _fb_auth_login_post(
-        response: Response,
-        email: str = Form(...),
-        password: str = Form(...),
-        db: Session = Depends(get_db),
-    ):
+    def _fb_auth_login_post(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
         email_norm = email.strip().lower()
         user = db.query(User).filter(func.lower(User.email) == email_norm).first()
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
@@ -324,12 +308,7 @@ if not _route_has_method("/auth/login", "POST"):
 
 if not _route_exists("/auth/login/web"):
     @app.post("/auth/login/web", include_in_schema=False)
-    def _fb_auth_login_web(
-        response: Response,
-        email: str = Form(...),
-        password: str = Form(...),
-        db: Session = Depends(get_db),
-    ):
+    def _fb_auth_login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
         email_norm = email.strip().lower()
         user = db.query(User).filter(func.lower(User.email) == email_norm).first()
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
@@ -339,7 +318,7 @@ if not _route_exists("/auth/login/web"):
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
 
-# === Handler global: 401/403 HTML -> login (evita loops) ===
+# === Handlers globales ===
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
     if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
@@ -381,4 +360,3 @@ try:
     start_background_scheduler()
 except Exception:
     pass
-
