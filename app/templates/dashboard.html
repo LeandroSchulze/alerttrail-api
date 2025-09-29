@@ -38,7 +38,7 @@
     .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
     .btn-primary{display:inline-block;text-decoration:none;background:var(--brand);color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
     .btn-primary:hover{filter:brightness(1.05)}
-    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);background:#fff}
+    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:#var(--text);background:#fff}
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
   </style>
 </head>
@@ -50,7 +50,9 @@
         <a href="/dashboard">AlertTrail</a>
       </div>
       <div class="right">
-        <span class="pill">👤 {{ user.name }} · Plan {{ user.plan }}</span>
+        <span class="pill">
+          👤 {{ user.name }} · Plan {{ user.plan }}{% if user.is_org_admin %} · Org Admin{% endif %}
+        </span>
         <a class="logout" href="/logout">Cerrar sesión</a>
       </div>
     </div>
@@ -76,6 +78,9 @@
           <a class="btn-primary" href="/billing">Cambiar plan</a>
           <!-- Botón para abrir el modal de planes -->
           <button id="openPlansModal" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
+          {% if user.is_org_admin and user.org_id %}
+            <a class="btn-outline" href="/org/admin">Admin de organización</a>
+          {% endif %}
         </div>
       </section>
 
@@ -85,6 +90,9 @@
         <div class="quick">
           <a class="chip" href="/analysis">Análisis</a>
           <a class="chip" href="/mail">Emails</a>
+          {% if user.is_org_admin and user.org_id %}
+            <a class="chip" href="/org/admin">Admin de organización</a>
+          {% endif %}
           {% if is_admin %}
             <a class="chip" href="/stats">Estadísticas</a>
             <a class="chip" href="/billing">Facturación</a>
