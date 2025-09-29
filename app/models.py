@@ -10,10 +10,60 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     LargeBinary,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+
+# ---------------------------
+# Organización (BIZ/Empresas)
+# ---------------------------
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+
+    # Asientos: total comprados y usados
+    seats_total = Column(Integer, nullable=False, default=1)
+    seats_used = Column(Integer, nullable=False, default=0)
+
+    # ID de cliente en el proveedor de cobros (MP/Stripe), opcional
+    billing_id = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relación inversa: usuarios de la organización
+    users = relationship("User", back_populates="organization")
+
+
+# ---------------------------
+# Invitaciones a la organización
+# ---------------------------
+class OrgInvite(Base):
+    __tablename__ = "org_invites"
+
+    id = Column(Integer, primary_key=True)
+
+    org_id = Column(
+        Integer,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token = Column(String(64), nullable=False, unique=True, index=True)  # uuid4/slug
+    email = Column(String(255), nullable=True)  # opcional: invitar a un mail concreto
+
+    used = Column(Boolean, nullable=False, default=False)
+    used_by_user_id = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "token", name="uq_org_token"),
+    )
 
 
 # ---------------------------
@@ -35,11 +85,18 @@ class User(Base):
     is_admin = Column(Boolean, nullable=False, default=False)
     is_superuser = Column(Boolean, nullable=False, default=False)
 
+    # Organización (Empresas)
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
+    is_org_admin = Column(Boolean, nullable=False, default=False)
+
     # Estado
     is_active = Column(Boolean, nullable=False, default=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relaciones
+    organization = relationship("Organization", back_populates="users")
 
     # Relación opcional con descargas de reportes (si el router admin la usa)
     report_downloads = relationship(
