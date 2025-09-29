@@ -7,13 +7,12 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from app.database import engine, SessionLocal
 from app.models import Base, User  # Modelos base requeridos
 
-# Si estos modelos existen en tu repo, el import no debe romper el script
+# Imports opcionales (si existen en tu repo, no deben romper)
 try:
     from app.models import AllowedIP, ReportDownload  # noqa: F401
 except Exception:
     pass
 
-# Aseguramos cargar Organization/OrgInvite si existen en app.models
 try:
     from app.models import Organization, OrgInvite  # noqa: F401
 except Exception:
@@ -26,7 +25,7 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
-# Utilidades
+# Utils
 # ---------------------------------------------------------------------------
 def masked(s: str) -> str:
     if not s:
@@ -61,6 +60,7 @@ def _safe_exec(sql: str):
 # Creación de tablas (idempotente)
 # ---------------------------------------------------------------------------
 def ensure_tables():
+    # Si tenés modelos que se registran al importar routers, hacelo acá
     try:
         import app.routers.rules  # registra UserRule y UserSetting (si existen)
     except Exception as e:
@@ -70,7 +70,7 @@ def ensure_tables():
 
 
 # ---------------------------------------------------------------------------
-# Migraciones ligeras (USERS)
+# Migraciones ligeras: USERS
 # ---------------------------------------------------------------------------
 def ensure_users_columns():
     insp = inspect(engine)
@@ -102,13 +102,13 @@ def ensure_users_columns():
 
         if "is_admin" not in cols:
             conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT {BOOL_TRUE if False else '0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT {'0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
             ))
             print("[init_db] users.is_admin agregado")
 
         if "is_superuser" not in cols:
             conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT {BOOL_TRUE if False else '0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT {'0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
             ))
             print("[init_db] users.is_superuser agregado")
 
@@ -119,22 +119,25 @@ def ensure_users_columns():
             ))
             print("[init_db] users.updated_at agregado y backfilled")
 
+        # Normalizaciones útiles
         conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
         conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
 
 
 # ---------------------------------------------------------------------------
-# Migraciones ligeras (ORGANIZATIONS y ORG_INVITES)
+# Migraciones ligeras: ORGANIZATIONS / ORG_INVITES y users.org_id
 # ---------------------------------------------------------------------------
 def ensure_org_schema():
     insp = inspect(engine)
-    dialect, BOOL_TRUE, BOOL_FALSE = _dialect_flags()
+    dialect, _TRUE, BOOL_FALSE = _dialect_flags()
 
+    # Asegurar existencia de tablas
     try:
         _ = insp.get_columns("organizations")
     except Exception:
         Base.metadata.create_all(bind=engine)
 
+    # users.org_id / users.is_org_admin
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
@@ -149,6 +152,7 @@ def ensure_org_schema():
         print("[init_db] Agregando columna users.is_org_admin ...")
         _safe_exec(f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL")
 
+    # FK users.org_id -> organizations.id (saltamos en SQLite)
     if engine.dialect.name != "sqlite":
         print("[init_db] Asegurando FK users.org_id -> organizations.id ...")
         _safe_exec(
@@ -157,6 +161,7 @@ def ensure_org_schema():
             "FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL"
         )
 
+    # organizations columnas mínimas
     try:
         ocols = {c["name"] for c in insp.get_columns("organizations")}
     except Exception:
@@ -172,6 +177,7 @@ def ensure_org_schema():
         _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
         print("[init_db] organizations.billing_id agregado")
 
+    # org_invites columnas mínimas si existe
     try:
         icols = {c["name"] for c in insp.get_columns("org_invites")}
     except Exception:
@@ -192,7 +198,7 @@ def ensure_org_schema():
 
 
 # ---------------------------------------------------------------------------
-# Migraciones ligeras (MAIL_ACCOUNTS)
+# Migraciones ligeras: MAIL_ACCOUNTS
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
@@ -246,6 +252,40 @@ def ensure_mail_accounts_columns():
             "UPDATE mail_accounts SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
         ))
         print("[init_db] mail_accounts backfill OK")
+
+
+# ---------------------------------------------------------------------------
+# Migraciones ligeras: REPORT_DOWNLOADS  (<<< NUEVA)
+# ---------------------------------------------------------------------------
+def ensure_report_downloads_columns():
+    insp = inspect(engine)
+    try:
+        cols = {c["name"] for c in insp.get_columns("report_downloads")}
+    except Exception:
+        # Si no existe, la creará create_all; intentar re-inspeccionar
+        Base.metadata.create_all(bind=engine)
+        try:
+            cols = {c["name"] for c in insp.get_columns("report_downloads")}
+        except Exception:
+            print("[init_db] aviso: no pude inspeccionar report_downloads")
+            return
+
+    with engine.begin() as conn:
+        if "path" not in cols:
+            # En SQLite: NOT NULL requiere DEFAULT al agregar
+            conn.execute(text(
+                "ALTER TABLE report_downloads ADD COLUMN path TEXT DEFAULT '' NOT NULL"
+            ))
+            print("[init_db] report_downloads.path agregado")
+
+        if "created_at" not in cols:
+            conn.execute(text(
+                "ALTER TABLE report_downloads ADD COLUMN created_at DATETIME"
+            ))
+            conn.execute(text(
+                "UPDATE report_downloads SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+            ))
+            print("[init_db] report_downloads.created_at agregado y backfilled")
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +351,7 @@ def seed_admin():
 
 
 # ---------------------------------------------------------------------------
-# Seed organización con owner_user_id
+# Seed organización (usa owner_user_id del modelo)
 # ---------------------------------------------------------------------------
 def seed_admin_org_if_requested():
     org_name = os.getenv("ADMIN_ORG_NAME", "").strip() or "Tu Empresa S.A"
@@ -325,33 +365,46 @@ def seed_admin_org_if_requested():
             print("[init_db] seed_admin_org: admin no existe todavía, saltando")
             return
 
+        # Detectar si el modelo tiene owner_user_id (por robustez)
+        try:
+            from app.models import Organization
+            HAS_OWNER = hasattr(Organization, "owner_user_id")
+        except Exception:
+            HAS_OWNER = False
+
         org = db.query(Organization).filter(Organization.name == org_name).first()
         if not org:
-            org = Organization(
+            kwargs = dict(
                 name=org_name,
-                owner_user_id=admin.id,  # <- CLAVE
                 seats_total=seats,
                 seats_used=0,
                 billing_id=None,
                 created_at=datetime.utcnow(),
             )
+            if HAS_OWNER:
+                kwargs["owner_user_id"] = admin.id
+            org = Organization(**kwargs)
             db.add(org); db.flush()
-            print(f"[init_db] Organización creada: {org_name} (seats_total={seats}, owner={admin.email})")
+            msg_owner = f", owner={admin.email}" if HAS_OWNER else ""
+            print(f"[init_db] Organización creada: {org_name} (seats_total={seats}{msg_owner})")
         else:
             changed = False
-            if getattr(org, "owner_user_id", None) is None:
+            if HAS_OWNER and getattr(org, "owner_user_id", None) is None:
                 org.owner_user_id = admin.id; changed = True
             if org.seats_total < 1:
                 org.seats_total = seats; changed = True
             if changed:
                 db.add(org)
-                print(f"[init_db] Organización actualizada: owner={admin.email}, seats_total={org.seats_total}")
+                print(f"[init_db] Organización actualizada: seats_total={org.seats_total}"
+                      f"{', owner='+admin.email if HAS_OWNER else ''}")
 
+        # Vincular admin como miembro/owner-side
         if getattr(admin, "org_id", None) != org.id:
             admin.org_id = org.id
             admin.is_org_admin = True
             db.add(admin)
 
+        # Recontar seats_used
         used = db.query(User).filter(User.org_id == org.id, User.is_active == True).count()  # noqa: E712
         org.seats_used = used; db.add(org)
 
@@ -372,6 +425,7 @@ def main():
     ensure_users_columns()
     ensure_org_schema()
     ensure_mail_accounts_columns()
+    ensure_report_downloads_columns()   # <<< importante antes de seeds
     seed_admin()
     seed_admin_org_if_requested()
     print("[init_db] OK")
