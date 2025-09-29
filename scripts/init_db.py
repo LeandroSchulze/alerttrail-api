@@ -61,7 +61,6 @@ def _safe_exec(sql: str):
 # Creación de tablas (idempotente)
 # ---------------------------------------------------------------------------
 def ensure_tables():
-    # Asegura que los modelos de rules se registren en Base antes del create_all
     try:
         import app.routers.rules  # registra UserRule y UserSetting (si existen)
     except Exception as e:
@@ -71,7 +70,7 @@ def ensure_tables():
 
 
 # ---------------------------------------------------------------------------
-# Migraciones ligeras (sin Alembic): USERS
+# Migraciones ligeras (USERS)
 # ---------------------------------------------------------------------------
 def ensure_users_columns():
     insp = inspect(engine)
@@ -120,25 +119,22 @@ def ensure_users_columns():
             ))
             print("[init_db] users.updated_at agregado y backfilled")
 
-        # Normalizaciones útiles
         conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
         conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
 
 
 # ---------------------------------------------------------------------------
-# Migraciones ligeras (sin Alembic): ORGS (users.org_id / is_org_admin + FK)
+# Migraciones ligeras (ORGANIZATIONS y ORG_INVITES)
 # ---------------------------------------------------------------------------
 def ensure_org_schema():
     insp = inspect(engine)
     dialect, BOOL_TRUE, BOOL_FALSE = _dialect_flags()
 
-    # Asegurar tablas nuevas si faltan (creadas por create_all)
     try:
         _ = insp.get_columns("organizations")
     except Exception:
         Base.metadata.create_all(bind=engine)
 
-    # Asegurar columnas en users
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
@@ -153,7 +149,6 @@ def ensure_org_schema():
         print("[init_db] Agregando columna users.is_org_admin ...")
         _safe_exec(f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL")
 
-    # FK solo en motores que lo soportan fácil por ALTER (Postgres, MySQL). En SQLite, lo omitimos.
     if engine.dialect.name != "sqlite":
         print("[init_db] Asegurando FK users.org_id -> organizations.id ...")
         _safe_exec(
@@ -162,7 +157,6 @@ def ensure_org_schema():
             "FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL"
         )
 
-    # Si la tabla organizations existiera desde antes sin columnas nuevas, agregarlas:
     try:
         ocols = {c["name"] for c in insp.get_columns("organizations")}
     except Exception:
@@ -178,7 +172,6 @@ def ensure_org_schema():
         _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
         print("[init_db] organizations.billing_id agregado")
 
-    # org_invites columnas mínimas si la tabla existe pero incompleta
     try:
         icols = {c["name"] for c in insp.get_columns("org_invites")}
     except Exception:
@@ -199,7 +192,7 @@ def ensure_org_schema():
 
 
 # ---------------------------------------------------------------------------
-# Migraciones ligeras (sin Alembic): MAIL_ACCOUNTS
+# Migraciones ligeras (MAIL_ACCOUNTS)
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
@@ -243,7 +236,6 @@ def ensure_mail_accounts_columns():
         conn.execute(text(
             "UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"
         ))
-        # Para SQLite/Postgres, 1/TRUE funciona con el default que definimos arriba
         conn.execute(text(
             "UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"
         ))
@@ -260,12 +252,10 @@ def ensure_mail_accounts_columns():
 # Seed / actualización de admin
 # ---------------------------------------------------------------------------
 def seed_admin():
-    # Defaults sensatos
     email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@alerttrail.com"))
     password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "changeme"
     name = os.getenv("ADMIN_NAME", "Admin")
     plan = (os.getenv("ADMIN_PLAN") or "PRO").upper()
-
     force_reset = truthy(os.getenv("ADMIN_FORCE_RESET")) or truthy(os.getenv("ADMIN_RESET_PASSWORD"))
 
     db = SessionLocal()
@@ -282,77 +272,49 @@ def seed_admin():
 
         if u:
             changed = False
-
-            # Flags y rol de admin
-            role_now = (getattr(u, "role", "") or "").lower()
-            if role_now != "admin":
+            if (getattr(u, "role", "") or "").lower() != "admin":
                 u.role = "admin"; changed = True
             if not bool(getattr(u, "is_admin", False)):
                 u.is_admin = True; changed = True
             if not bool(getattr(u, "is_superuser", False)):
                 u.is_superuser = True; changed = True
-
-            # Plan (si difiere)
             if (getattr(u, "plan", "") or "").upper() != plan:
                 u.plan = plan; changed = True
-
-            # Nombre (si falta)
             if not getattr(u, "name", None):
                 u.name = name; changed = True
-
-            # Activo
             if hasattr(u, "is_active") and not bool(getattr(u, "is_active", True)):
                 u.is_active = True; changed = True
 
-            # Password
             has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
             if force_reset or not has_hash:
                 set_password(u, password); changed = True
 
             if changed:
-                db.add(u)
-                db.commit()
-                print(f"[init_db] admin actualizado: {masked(email)} (plan={plan}) "
-                      f"{'[password RESET]' if (force_reset or not has_hash) else ''}")
+                db.add(u); db.commit()
+                print(f"[init_db] admin actualizado: {masked(email)} (plan={plan})")
             else:
                 print(f"[init_db] admin existe sin cambios: {masked(email)} (plan={plan})")
         else:
-            # Crear admin
             u = User(email=email, name=name)
-            if hasattr(u, "plan"):
-                u.plan = plan
-            if hasattr(u, "is_active"):
-                u.is_active = True
-            # rol y flags
-            if hasattr(u, "role"):
-                u.role = "admin"
-            if hasattr(u, "is_admin"):
-                u.is_admin = True
-            if hasattr(u, "is_superuser"):
-                u.is_superuser = True
-
+            if hasattr(u, "plan"): u.plan = plan
+            if hasattr(u, "is_active"): u.is_active = True
+            if hasattr(u, "role"): u.role = "admin"
+            if hasattr(u, "is_admin"): u.is_admin = True
+            if hasattr(u, "is_superuser"): u.is_superuser = True
             set_password(u, password)
-            db.add(u)
-            db.commit()
-            print(f"[init_db] admin creado: {masked(email)} (plan={plan}) [password SET]")
+            db.add(u); db.commit()
+            print(f"[init_db] admin creado: {masked(email)} (plan={plan})")
     except Exception as e:
-        db.rollback()
-        print(f"[init_db][ERROR] {e}")
-        raise
+        db.rollback(); print(f"[init_db][ERROR] {e}"); raise
     finally:
         db.close()
 
 
 # ---------------------------------------------------------------------------
-# Seed opcional: crear/adjuntar organización al admin
-#   - ADMIN_ORG_NAME: si está definido, crea/asegura la org y vincula al admin como is_org_admin
-#   - ADMIN_ORG_SEATS: opcional, por defecto 25
+# Seed organización con owner_user_id
 # ---------------------------------------------------------------------------
 def seed_admin_org_if_requested():
-    org_name = os.getenv("ADMIN_ORG_NAME", "").strip()
-    if not org_name:
-        return
-
+    org_name = os.getenv("ADMIN_ORG_NAME", "").strip() or "Tu Empresa S.A"
     seats = int(os.getenv("ADMIN_ORG_SEATS", "25"))
     email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@alerttrail.com"))
 
@@ -363,30 +325,41 @@ def seed_admin_org_if_requested():
             print("[init_db] seed_admin_org: admin no existe todavía, saltando")
             return
 
-        # Buscar o crear organización
         org = db.query(Organization).filter(Organization.name == org_name).first()
         if not org:
-            org = Organization(name=org_name, seats_total=seats, seats_used=0)
-            db.add(org)
-            db.flush()
-            print(f"[init_db] Organización creada: {org_name} (seats_total={seats})")
+            org = Organization(
+                name=org_name,
+                owner_user_id=admin.id,  # <- CLAVE
+                seats_total=seats,
+                seats_used=0,
+                billing_id=None,
+                created_at=datetime.utcnow(),
+            )
+            db.add(org); db.flush()
+            print(f"[init_db] Organización creada: {org_name} (seats_total={seats}, owner={admin.email})")
+        else:
+            changed = False
+            if getattr(org, "owner_user_id", None) is None:
+                org.owner_user_id = admin.id; changed = True
+            if org.seats_total < 1:
+                org.seats_total = seats; changed = True
+            if changed:
+                db.add(org)
+                print(f"[init_db] Organización actualizada: owner={admin.email}, seats_total={org.seats_total}")
 
-        # Vincular admin como org admin si no lo está
         if getattr(admin, "org_id", None) != org.id:
             admin.org_id = org.id
             admin.is_org_admin = True
             db.add(admin)
 
-        # Recontar seats_used de forma idempotente
         used = db.query(User).filter(User.org_id == org.id, User.is_active == True).count()  # noqa: E712
-        org.seats_used = used
-        db.add(org)
+        org.seats_used = used; db.add(org)
 
         db.commit()
-        print(f"[init_db] seed_admin_org: admin vinculado a '{org.name}' — seats_used={org.seats_used}/{org.seats_total}")
+        print(f"[init_db] seed_admin_org: admin vinculado a '{org.name}' — "
+              f"seats_used={org.seats_used}/{org.seats_total}")
     except Exception as e:
-        db.rollback()
-        print(f"[init_db][seed_admin_org ERROR] {e}")
+        db.rollback(); print(f"[init_db][seed_admin_org ERROR] {e}")
     finally:
         db.close()
 
