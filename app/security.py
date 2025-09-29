@@ -21,13 +21,13 @@ DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 SESSION_ONLY_COOKIES = True
 ACCESS_TOKEN_TTL_MIN = int(os.getenv("ACCESS_TOKEN_TTL_MIN", "60"))  # si SESSION_ONLY_COOKIES=False
 
-COOKIE_NAME    = os.getenv("COOKIE_NAME", "access_token")
-COOKIE_PATH    = "/"
-COOKIE_SECURE  = True           # HTTPS en Render
+COOKIE_NAME     = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_PATH     = "/"
+COOKIE_SECURE   = True            # HTTPS en Render
 COOKIE_HTTPONLY = True
 COOKIE_SAMESITE = "lax"
 # Si usás SIEMPRE www, podés dejarlo vacío (host-only). Para compartir apex/www: ".alerttrail.com"
-COOKIE_DOMAIN  = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
+COOKIE_DOMAIN   = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
 
 # ================== Password Hash (PBKDF2) ==================
 PBKDF2_ITER = int(os.getenv("PBKDF2_ITER", "260000"))
@@ -47,6 +47,7 @@ def get_password_hash(password: str) -> str:
     )
 
 def verify_password(password: str, stored: str) -> bool:
+    """Verifica contraseña contra PBKDF2 (formato propio) o bcrypt (legado)."""
     try:
         if not stored:
             return False
@@ -57,7 +58,7 @@ def verify_password(password: str, stored: str) -> bool:
                 return bcrypt.checkpw(password.encode("utf-8"), stored.encode("utf-8"))
             except Exception:
                 return False
-        # PBKDF2
+        # PBKDF2 (formato: pbkdf2$<iters>$<salt_b64>$<hash_b64>)
         parts = stored.split("$")
         if len(parts) == 4 and parts[0] == "pbkdf2":
             _, iters_s, salt_b64, dk_b64 = parts
@@ -91,7 +92,8 @@ def decode_token(token: str) -> Dict[str, Any]:
         if DEBUG_AUTH: print("[auth][debug] decode: invalid:", repr(e))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
-decode_access_token = decode_token  # alias
+# Alias común usado en algunas partes del código
+decode_access_token = decode_token
 
 # ================== Cookie helpers ==================
 def issue_access_cookie(response: Response, user_claims: Dict[str, Any]) -> str:
@@ -144,7 +146,7 @@ def clear_access_cookie(response: Response) -> None:
         kwargs["domain"] = COOKIE_DOMAIN
     response.delete_cookie(**kwargs)
 
-# ================== Auth dependency ==================
+# ================== Auth dependencies ==================
 def get_current_user_cookie(
     request: Request,
     db=None,                     # si viene, devolvemos el objeto User
@@ -205,3 +207,11 @@ def issue_access_cookie_for_user(response: Response, user_id: int, email: str, i
         "plan": plan,
     }
     return issue_access_cookie(response, claims)
+
+# --- Compatibilidad con routers antiguos ---
+def get_current_user(request: Request, db=None):
+    """
+    Alias para mantener compatibilidad con routers que aún importan
+    'get_current_user' desde app.security.
+    """
+    return get_current_user_cookie(request, db)
