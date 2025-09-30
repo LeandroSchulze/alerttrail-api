@@ -157,6 +157,13 @@ try:
 except Exception as e:
     print(f"[routers] No pude cargar legal: {e}")
 
+# --- Fallback si /mail/alerts/unread_count no existe (evita 404 en el dashboard) ---
+if not any(isinstance(r, APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
+    @app.get("/mail/alerts/unread_count")
+    def _fb_unread_count():
+        # Devolvemos ambas claves para compatibilidad con frontends distintos
+        return {"unread": 0, "count": 0}
+
 # === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_optional)):
@@ -172,5 +179,221 @@ def home(request: Request, user=Depends(get_current_user_optional)):
         </div>"""
         return HTMLResponse(html)
 
-# ... (el resto de tu main.py queda exactamente igual: login, register, logout, dashboard, handlers, health, etc.)
+# Alias clásico
+@app.get("/login", include_in_schema=False)
+def login_alias():
+    return RedirectResponse(url="/auth/login", status_code=302)
 
+# Compat: POST /login (form antiguo)
+@app.post("/login", include_in_schema=False)
+def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    email_norm = email.strip().lower()
+    user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+    hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+    if not user or not verify_password(password, hp or ""):
+        raise HTTPException(status_code=400, detail="Credenciales inválidas")
+    r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    return r
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    try:
+        return templates.TemplateResponse("register.html", {"request": request})
+    except TemplateNotFound:
+        html = """<!doctype html><meta charset='utf-8'>
+        <form method="post" action="/register" style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+          <h2>Crear cuenta</h2>
+          <input name="name" placeholder="Nombre" required>
+          <input name="email" type="email" placeholder="Email" required>
+          <input name="password" type="password" placeholder="Contraseña" required>
+          <button>Registrarme</button>
+        </form>"""
+        return HTMLResponse(html)
+
+@app.post("/register")
+def register_action(
+    response: Response,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    email_norm = email.strip().lower()
+    if db.query(User).filter(func.lower(User.email) == email_norm).first():
+        raise HTTPException(status_code=400, detail="Ese email ya está registrado")
+
+    user = User()
+    safe_fields = [
+        ("name", (name or "").strip() or "Usuario"),
+        ("email", email_norm),
+        ("role", "user"),
+        ("plan", "FREE"),
+        ("created_at", datetime.utcnow()),
+    ]
+    for field, value in safe_fields:
+        if hasattr(user, field):
+            setattr(user, field, value)
+
+    pw_hash = get_password_hash(password)
+    if hasattr(user, "hashed_password"):
+        setattr(user, "hashed_password", pw_hash)
+    elif hasattr(user, "password_hash"):
+        setattr(user, "password_hash", pw_hash)
+    elif hasattr(user, "password"):
+        setattr(user, "password", pw_hash)
+    else:
+        raise HTTPException(status_code=500, detail="Modelo User no tiene un campo de contraseña válido")
+
+    db.add(user); db.commit(); db.refresh(user)
+
+    r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": getattr(user, "email", email_norm)})
+    return r
+
+@app.get("/logout")
+def logout(_response: Response):
+    r = RedirectResponse(url="/")
+    clear_access_cookie(r)
+    return r
+
+# === Dashboard (versión robusta con fallback si falta el template) ===
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, db: Session = Depends(get_db)):
+    # 1) Autenticación robusta (redirige si no hay cookie válida)
+    try:
+        user = get_current_user_cookie(request, db)
+    except HTTPException as e:
+        if e.status_code in (401, 403):
+            return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
+        raise
+
+    role = (getattr(user, "role", "") or "").lower()
+    is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
+    is_org_admin = truthy(getattr(user, "is_org_admin", False))
+
+    user_ctx = {
+        "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
+        "email": getattr(user, "email", ""),
+        "plan": (getattr(user, "plan", None) or "FREE").upper(),
+        "is_org_admin": is_org_admin,
+        "org_id": getattr(user, "org_id", None),
+    }
+
+    try:
+        resp = templates.TemplateResponse(
+            "dashboard.html",
+            {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin}
+        )
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except TemplateNotFound:
+        html = f"""<!doctype html><meta charset='utf-8'>
+        <div style="font-family:system-ui;padding:24px">
+          <h1>Dashboard</h1>
+          <p>Hola, {user_ctx['name']}.</p>
+          <p>No encontré <code>dashboard.html</code>. Mostrando vista mínima.</p>
+          <ul>
+            <li>Email: {user_ctx['email']}</li>
+            <li>Plan: {user_ctx['plan']}</li>
+          </ul>
+          <p><a href="/logout">Cerrar sesión</a></p>
+        </div>"""
+        return HTMLResponse(html)
+
+# === Fallbacks de login si faltan ===
+def _route_exists(path: str) -> bool:
+    return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
+
+def _route_has_method(path: str, method: str) -> bool:
+    for r in app.routes:
+        if isinstance(r, APIRoute) and r.path == path:
+            if r.methods and method.upper() in r.methods:
+                return True
+    return False
+
+if not _route_has_method("/auth/login", "GET"):
+    @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
+    def _fb_auth_login_get(request: Request):
+        try:
+            resp = templates.TemplateResponse("login.html", {"request": request})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        except TemplateNotFound:
+            html = """<!doctype html><meta charset='utf-8'>
+            <title>Login — AlertTrail</title>
+            <form method="post" action="/auth/login/web"
+                  style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+              <h2>Iniciar sesión</h2>
+              <input name="email" type="email" placeholder="Email" required>
+              <input name="password" type="password" placeholder="Contraseña" required>
+              <button>Entrar</button>
+            </form>"""
+            return HTMLResponse(html)
+
+if not _route_has_method("/auth/login", "POST"):
+    @app.post("/auth/login", include_in_schema=False)
+    def _fb_auth_login_post(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+        hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+        if not user or not verify_password(password, hp or ""):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        r = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
+
+if not _route_exists("/auth/login/web"):
+    @app.post("/auth/login/web", include_in_schema=False)
+    def _fb_auth_login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+        hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+        if not user or not verify_password(password, hp or ""):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        r = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
+
+# === Handlers globales ===
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
+        path = request.url.path or ""
+        if not path.startswith("/auth"):
+            return RedirectResponse(url="/auth/login", status_code=302)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+from fastapi.responses import HTMLResponse as _HTMLResponse
+
+@app.exception_handler(Exception)
+async def unhandled_exc_handler(request: Request, exc: Exception):
+    import traceback; traceback.print_exc()
+    if "text/html" in (request.headers.get("accept") or ""):
+        return _HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
+    return JSONResponse({"detail": repr(exc)}, status_code=500)
+
+# === Health & HEAD ===
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.head("/")
+def head_root():
+    return Response(status_code=200)
+
+# === Log de rutas al iniciar ===
+@app.on_event("startup")
+def _log_routes():
+    paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
+    print("\n=== ROUTES ===")
+    for p in paths:
+        print(p)
+    print("==============\n")
+
+# === Scheduler opcional ===
+try:
+    from app.services.scheduler import start_background_scheduler
+    start_background_scheduler()
+except Exception:
+    pass
