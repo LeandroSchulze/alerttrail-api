@@ -1,5 +1,13 @@
 # scripts/init_db.py
-import os
+
+# --- PYTHONPATH fix para Render/CLI ---
+import os, sys
+HERE = os.path.dirname(os.path.abspath(__file__))          # /opt/render/project/src/scripts
+ROOT = os.path.abspath(os.path.join(HERE, ".."))           # /opt/render/project/src
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+# --------------------------------------
+
 from datetime import datetime
 from sqlalchemy import text, inspect, func
 from sqlalchemy.exc import ProgrammingError, OperationalError
@@ -121,7 +129,7 @@ def ensure_users_columns():
             ))
             print("[init_db] users.updated_at agregado y backfilled")
 
-        # columnas de verificación de correo (⚠️ las que faltaban)
+        # columnas de verificación de correo
         if "email_verified" not in cols:
             conn.execute(text(
                 f"ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
@@ -137,7 +145,6 @@ def ensure_users_columns():
             print("[init_db] users.verification_expires_at agregado")
 
         if "verification_attempts" not in cols:
-            # Default 0 por seguridad
             conn.execute(text("ALTER TABLE users ADD COLUMN verification_attempts INTEGER DEFAULT 0 NOT NULL"))
             print("[init_db] users.verification_attempts agregado")
 
@@ -145,7 +152,7 @@ def ensure_users_columns():
         conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
         conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
 
-    # Índice para búsquedas por email case-insensitive (SQLite: crea un índice simple)
+    # Índice para búsquedas por email (SQLite: índice simple)
     try:
         engine.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users(email)"))
     except Exception:
