@@ -38,8 +38,11 @@
     .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
     .btn-primary{display:inline-block;text-decoration:none;background:var(--brand);color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
     .btn-primary:hover{filter:brightness(1.05)}
-    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:#var(--text);background:#fff}
+    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);background:#fff}
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
+
+    footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center}
+    footer.page-footer a{color:var(--brand);text-decoration:none}
   </style>
 </head>
 <body>
@@ -195,10 +198,10 @@
     </div>
   </div>
 
-  <!-- ===== Footer con soporte (siempre visible) ===== -->
-  <footer class="plans-support-footer">
-    ¿Necesitás ayuda? Soporte:
-    <a href="mailto:admin.alerttrail@gmail.com">admin.alerttrail@gmail.com</a>
+  <!-- ===== Footer simple ===== -->
+  <footer class="page-footer">
+    <a href="/terms">Términos y Condiciones</a> ·
+    <a href="/privacy">Política de Privacidad</a>
   </footer>
 
   <!-- ===== Estilos del modal (aislados con prefijo plans-) ===== -->
@@ -227,33 +230,33 @@
     .plans-primary{display:inline-block;padding:10px 16px;border-radius:10px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700}
 
     .plans-footer{padding:14px 20px;border-top:1px solid #eef2f7;font-size:14px;background:#fafafa}
-
-    .plans-support-footer{margin-top:32px;padding:14px;text-align:center;font-size:14px;color:#334155;background:#f8fafc;border-top:1px solid #eef2f7}
-    .plans-support-footer a{font-weight:600}
   </style>
 
   <!-- Script para notificaciones -->
   <script>
-  let lastUnread = 0;
-  if ("Notification" in window) {
-    Notification.requestPermission().then(function (perm) { console.log("Permiso notificaciones:", perm); });
-  }
-  function showDesktopNotif(title, msg) {
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(title, { body: msg, icon: "/static/favicon.ico" });
+    let lastUnread = 0;
+    if ("Notification" in window) {
+      Notification.requestPermission().then(function (perm) { console.log("Permiso notificaciones:", perm); });
     }
-  }
-  async function checkAlerts() {
-    try {
-      const res = await fetch("/mail/alerts/unread_count");
-      if (!res.ok) return;
-      const data = await res.json();
-      const unread = data.unread || 0;
-      if (unread > lastUnread) { showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso."); }
-      lastUnread = unread;
-    } catch (e) { console.error("Error chequeando alertas", e); }
-  }
-  setInterval(checkAlerts, 30000); checkAlerts();
+    function showDesktopNotif(title, msg) {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(title, { body: msg, icon: "/static/favicon.ico" });
+      }
+    }
+    async function checkAlerts() {
+      try {
+        const res = await fetch("/mail/alerts/unread_count");
+        if (!res.ok) return;
+        const data = await res.json();
+        // acepta {unread:n} o {count:n}
+        const unread = (typeof data.unread === "number") ? data.unread
+                      : (typeof data.count === "number") ? data.count
+                      : 0;
+        if (unread > lastUnread) { showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso."); }
+        lastUnread = unread;
+      } catch (e) { console.error("Error chequeando alertas", e); }
+    }
+    setInterval(checkAlerts, 30000); checkAlerts();
   </script>
 
   <!-- ===== JS del modal (accesible, sin dependencias) ===== -->
