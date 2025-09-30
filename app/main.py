@@ -149,13 +149,28 @@ for name in ROUTER_MODULES:
     except Exception as e:
         print(f"[routers] No pude cargar {name}: {e}")
 
-# --- Nuevo: router de políticas / términos ---
+# --- router de políticas / términos ---
 try:
     from app.routers import legal
     app.include_router(legal.router)
     print("[routers] legal montado OK")
 except Exception as e:
     print(f"[routers] No pude cargar legal: {e}")
+
+# --- NUEVOS: mail de prueba y verificación por email ---
+try:
+    from app.routers import debug_mail
+    app.include_router(debug_mail.router)
+    print("[routers] debug_mail montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar debug_mail: {e}")
+
+try:
+    from app.routers import auth_email_verification
+    app.include_router(auth_email_verification.router)
+    print("[routers] auth_email_verification montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar auth_email_verification: {e}")
 
 # --- Fallback si /mail/alerts/unread_count no existe (evita 404 en el dashboard) ---
 if not any(isinstance(r, APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
@@ -192,6 +207,11 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
+
+    # 👉 Si querés forzar verificación antes del login, descomentá:
+    # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
+    #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
+
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return r
@@ -339,6 +359,11 @@ if not _route_has_method("/auth/login", "POST"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+
+        # 👉 Para forzar verificación previa al login, descomentá:
+        # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
+        #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
+
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
@@ -351,6 +376,11 @@ if not _route_exists("/auth/login/web"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+
+        # 👉 Para forzar verificación previa al login, descomentá:
+        # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
+        #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
+
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
