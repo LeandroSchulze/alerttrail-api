@@ -1,54 +1,57 @@
+# alembic/env.py
 import os
 from logging.config import fileConfig
+
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# Config Alembic
+# --- Alembic Config ---
 config = context.config
-
-# Loggers de alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# No usamos autogenerate ni target_metadata; ejecutamos scripts "a mano"
-target_metadata = None
+# === Database URL desde ENV (Render) con fallback a SQLite ===
+db_url = os.getenv("DATABASE_URL", "sqlite:////var/data/alerttrail.sqlite3").strip()
 
-def get_url():
-    # Prioriza ENV (Render: DATABASE_URL)
-    url = os.getenv("DATABASE_URL")
-    if url:
-        return url
-    # Si quisieras fallback, ponelo aquí
-    raise RuntimeError("DATABASE_URL no está definido")
+# Normaliza postgres:// -> postgresql:// (SQLAlchemy)
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-def run_migrations_offline():
-    url = get_url()
+# Expone a Alembic como sqlalchemy.url (lo estándar)
+config.set_main_option("sqlalchemy.url", db_url)
+
+# --- Metadata objetivo ---
+# Importá tu Base aquí para que Alembic “vea” los modelos
+from app.models import Base  # noqa: E402
+
+target_metadata = Base.metadata
+
+
+def run_migrations_offline() -> None:
+    """Modo offline: genera SQL sin conectarse."""
     context.configure(
-        url=url,
+        url=db_url,
         target_metadata=target_metadata,
         literal_binds=True,
-        compare_type=True,
+        dialect_opts={"paramstyle": "named"},
     )
     with context.begin_transaction():
         context.run_migrations()
 
-def run_migrations_online():
-    ini_section = config.get_section(config.config_ini_section) or {}
-    ini_section["sqlalchemy.url"] = get_url()
 
+def run_migrations_online() -> None:
+    """Modo online: se conecta y ejecuta migraciones."""
     connectable = engine_from_config(
-        ini_section,
-        prefix="",
+        config.get_section(config.config_ini_section),
+        prefix="sqlalchemy.",              # 👈 clave: usa *sqlalchemy.* y no ""
         poolclass=pool.NullPool,
     )
+
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()
