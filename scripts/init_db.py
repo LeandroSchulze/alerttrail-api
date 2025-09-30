@@ -45,7 +45,8 @@ def _dialect_flags():
     dialect = engine.dialect.name  # 'sqlite', 'postgresql', etc.
     bool_true = "1" if dialect == "sqlite" else "TRUE"
     bool_false = "0" if dialect == "sqlite" else "FALSE"
-    return dialect, bool_true, bool_false
+    now = "CURRENT_TIMESTAMP" if dialect == "sqlite" else "NOW()"
+    return dialect, bool_true, bool_false, now
 
 def _safe_exec(sql: str):
     with engine.connect() as conn:
@@ -74,7 +75,7 @@ def ensure_tables():
 # ---------------------------------------------------------------------------
 def ensure_users_columns():
     insp = inspect(engine)
-    dialect, BOOL_TRUE, _BOOL_FALSE = _dialect_flags()
+    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
@@ -82,6 +83,7 @@ def ensure_users_columns():
         return
 
     with engine.begin() as conn:
+        # columnas “base”
         if "is_active" not in cols:
             conn.execute(text(
                 f"ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
@@ -102,26 +104,52 @@ def ensure_users_columns():
 
         if "is_admin" not in cols:
             conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT {'0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
             ))
             print("[init_db] users.is_admin agregado")
 
         if "is_superuser" not in cols:
             conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT {'0' if dialect=='sqlite' else 'FALSE'} NOT NULL"
+                f"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
             ))
             print("[init_db] users.is_superuser agregado")
 
         if "updated_at" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
             conn.execute(text(
-                "UPDATE users SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+                f"UPDATE users SET updated_at = COALESCE(updated_at, created_at, {NOWFN})"
             ))
             print("[init_db] users.updated_at agregado y backfilled")
+
+        # columnas de verificación de correo (⚠️ las que faltaban)
+        if "email_verified" not in cols:
+            conn.execute(text(
+                f"ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
+            ))
+            print("[init_db] users.email_verified agregado")
+
+        if "verification_code" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN verification_code VARCHAR(128)"))
+            print("[init_db] users.verification_code agregado")
+
+        if "verification_expires_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN verification_expires_at DATETIME"))
+            print("[init_db] users.verification_expires_at agregado")
+
+        if "verification_attempts" not in cols:
+            # Default 0 por seguridad
+            conn.execute(text("ALTER TABLE users ADD COLUMN verification_attempts INTEGER DEFAULT 0 NOT NULL"))
+            print("[init_db] users.verification_attempts agregado")
 
         # Normalizaciones útiles
         conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
         conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
+
+    # Índice para búsquedas por email case-insensitive (SQLite: crea un índice simple)
+    try:
+        engine.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users(email)"))
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +157,7 @@ def ensure_users_columns():
 # ---------------------------------------------------------------------------
 def ensure_org_schema():
     insp = inspect(engine)
-    dialect, _TRUE, BOOL_FALSE = _dialect_flags()
+    dialect, _TRUE, BOOL_FALSE, _NOW = _dialect_flags()
 
     # Asegurar existencia de tablas
     try:
@@ -202,10 +230,13 @@ def ensure_org_schema():
 
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: MAIL_ACCOUNTS
+# Compatibilidad con esquemas antiguos:
+# - soporta imap_host e imap_server
+# - soporta enc_password y/o enc_blob (migra a enc_blob)
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
-    _dialect, BOOL_TRUE, _BOOL_FALSE = _dialect_flags()
+    _dialect, BOOL_TRUE, _BOOL_FALSE, NOWFN = _dialect_flags()
     try:
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
     except Exception:
@@ -213,37 +244,69 @@ def ensure_mail_accounts_columns():
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
 
     with engine.begin() as conn:
+        # host principal “nuevo”
         if "imap_server" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
                 "ADD COLUMN imap_server VARCHAR(255) DEFAULT 'imap.gmail.com' NOT NULL"
             ))
             print("[init_db] mail_accounts.imap_server agregado")
+
+        # compatibilidad: algunos registros viejos usan imap_host
+        if "imap_host" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN imap_host VARCHAR(255)"
+            ))
+            print("[init_db] mail_accounts.imap_host agregado")
+
         if "imap_port" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
                 "ADD COLUMN imap_port INTEGER DEFAULT 993 NOT NULL"
             ))
             print("[init_db] mail_accounts.imap_port agregado")
+
         if "use_ssl" not in cols:
             conn.execute(text(
                 f"ALTER TABLE mail_accounts ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
             ))
             print("[init_db] mail_accounts.use_ssl agregado")
+
+        # cifrado: preferimos enc_blob; mantenemos compatibilidad con enc_password
         if "enc_blob" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
             ))
             print("[init_db] mail_accounts.enc_blob agregado")
+
+        if "enc_password" not in cols:
+            # crear para evitar NOT NULL constraint en esquemas antiguos
+            conn.execute(text(
+                "ALTER TABLE mail_accounts ADD COLUMN enc_password TEXT DEFAULT '' NOT NULL"
+            ))
+            print("[init_db] mail_accounts.enc_password agregado (compat)")
+
         if "created_at" not in cols:
             conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
             print("[init_db] mail_accounts.created_at agregado")
 
-        conn.execute(text("UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"))
+        # Backfill y normalización
+        conn.execute(text(
+            "UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"
+        ))
         conn.execute(text("UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"))
         conn.execute(text("UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"))
         conn.execute(text("UPDATE mail_accounts SET enc_blob = COALESCE(enc_blob, '')"))
-        conn.execute(text("UPDATE mail_accounts SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
+        conn.execute(text("UPDATE mail_accounts SET enc_password = COALESCE(enc_password, '')"))
+        conn.execute(text(f"UPDATE mail_accounts SET created_at = COALESCE(created_at, {NOWFN})"))
+
+        # Si hay datos en enc_password y enc_blob está vacío, copia por compat
+        conn.execute(text(
+            "UPDATE mail_accounts SET enc_blob = CASE "
+            "WHEN (enc_blob IS NULL OR enc_blob='') THEN COALESCE(enc_password, '') "
+            "ELSE enc_blob END"
+        ))
         print("[init_db] mail_accounts backfill OK")
 
 
@@ -357,6 +420,9 @@ def seed_admin():
                 u.name = name; changed = True
             if hasattr(u, "is_active") and not bool(getattr(u, "is_active", True)):
                 u.is_active = True; changed = True
+            # si agregamos email_verified, el admin arranca verificado
+            if hasattr(u, "email_verified") and not bool(getattr(u, "email_verified", False)):
+                u.email_verified = True; changed = True
 
             has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
             if force_reset or not has_hash:
@@ -374,6 +440,7 @@ def seed_admin():
             if hasattr(u, "role"): u.role = "admin"
             if hasattr(u, "is_admin"): u.is_admin = True
             if hasattr(u, "is_superuser"): u.is_superuser = True
+            if hasattr(u, "email_verified"): u.email_verified = True
             set_password(u, password)
             db.add(u); db.commit()
             print(f"[init_db] admin creado: {masked(email)} (plan={plan})")
@@ -438,7 +505,10 @@ def seed_admin_org_if_requested():
             db.add(admin)
 
         # Recontar seats_used
-        used = db.query(User).filter(User.org_id == org.id, User.is_active == True).count()  # noqa: E712
+        try:
+            used = db.query(User).filter(User.org_id == org.id, User.is_active == True).count()  # noqa: E712
+        except Exception:
+            used = db.query(User).filter(User.org_id == org.id).count()
         org.seats_used = used; db.add(org)
 
         db.commit()
@@ -455,11 +525,11 @@ def seed_admin_org_if_requested():
 # ---------------------------------------------------------------------------
 def main():
     ensure_tables()
-    ensure_users_columns()
+    ensure_users_columns()          # <- agrega email_verified y campos de verificación
     ensure_org_schema()
-    ensure_mail_accounts_columns()
+    ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob
     ensure_report_downloads_columns()
-    ensure_allowed_ips_columns()   # importante antes de seeds
+    ensure_allowed_ips_columns()
     seed_admin()
     seed_admin_org_if_requested()
     print("[init_db] OK")
