@@ -37,6 +37,12 @@ class User(Base):
     org_id        = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     is_org_admin  = Column(Boolean, nullable=False, default=False)
 
+    # ================= Verificación por correo (nuevo) =================
+    email_verified            = Column(Boolean, nullable=False, default=False)
+    verification_code         = Column(String(12), nullable=True)             # p.ej. "123456"
+    verification_expires_at   = Column(DateTime, nullable=True)               # vence en ~15 min
+    verification_attempts     = Column(Integer, nullable=False, default=0)    # anti-bruteforce
+
     # Metadatos
     created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at    = Column(DateTime, nullable=True)
@@ -65,7 +71,10 @@ class User(Base):
     accepted_invites = relationship("OrgInvite", back_populates="used_by_user", lazy="selectin")
 
     def __repr__(self):
-        return f"<User id={self.id} email={self.email!r} role={self.role} plan={self.plan}>"
+        return (
+            f"<User id={self.id} email={self.email!r} role={self.role} "
+            f"plan={self.plan} email_verified={self.email_verified}>"
+        )
 
 
 # =========================
