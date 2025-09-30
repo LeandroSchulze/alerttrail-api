@@ -179,6 +179,14 @@ if not any(isinstance(r, APIRoute) and r.path == "/mail/alerts/unread_count" for
         # Devolvemos ambas claves para compatibilidad con frontends distintos
         return {"unread": 0, "count": 0}
 
+try:
+    from app.routers import auth_email_verification_web
+    app.include_router(auth_email_verification_web.router)
+    print("[routers] auth_email_verification_web montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar auth_email_verification_web: {e}")
+
+
 # === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_optional)):
