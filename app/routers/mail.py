@@ -1,10 +1,9 @@
-# app/routers/mail.py
 import os
 import imaplib
 import email
 from email.header import decode_header, make_header
 from datetime import datetime, timedelta
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,38 +12,39 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Session
 
+# IMPORT LAZY de cryptography para no romper el import del router
+# (si falla acá, el router no se monta y /mail queda 404)
+def _get_fernet():
+    from cryptography.fernet import Fernet  # import perezoso
+    import base64, hashlib
+    env_key = os.getenv("MAIL_CRYPT_KEY")
+    if env_key:
+        try:
+            return Fernet(env_key.encode() if isinstance(env_key, str) else env_key)
+        except Exception:
+            pass
+    seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
+    derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
+    return Fernet(derived)
+
 from app.database import Base, engine, get_db
 from app.security import get_current_user_cookie
 
 # ---- PRO guard (mail sólo PRO/BIZ) ----
 def _is_pro(u) -> bool:
-    # dejar pasar a admin siempre (útil para probar)
     if bool(getattr(u, "is_admin", False)):
         return True
-
-    # normalizar plan: None -> "", quitar espacios y bajar a minúsculas
     plan = ((getattr(u, "plan", "") or "")).strip().lower()
-
-    # compat: booleano heredado o alias de nombres
     if bool(getattr(u, "is_pro", False)):
         return True
-
     return plan in {"pro", "biz", "business", "empresa", "empresas"}
 
 def require_pro_user(request: Request, db: Session = Depends(get_db)):
-    """
-    Lee el usuario REAL desde la DB (no sólo claims) y valida PRO/BIZ.
-    Si no cumple, redirige a /billing con 303.
-    """
-    user = get_current_user_cookie(request, db=db)  # <- objeto models.User
+    user = get_current_user_cookie(request, db=db)
     if not user:
         raise HTTPException(status_code=303, detail="login", headers={"Location": "/auth/login"})
     if not _is_pro(user):
-        raise HTTPException(
-            status_code=303,
-            detail="Funcionalidad disponible sólo para PRO",
-            headers={"Location": "/billing?upgrade=mail"},
-        )
+        raise HTTPException(status_code=303, detail="Funcionalidad sólo PRO", headers={"Location": "/billing?upgrade=mail"})
     return user
 
 router = APIRouter(prefix="/mail", tags=["mail"], dependencies=[Depends(require_pro_user)])
@@ -59,36 +59,16 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 try:
     from app.services.pro_alerts import queue_or_push  # type: ignore
 except Exception:
-    queue_or_push = None  # si no existe el módulo, no rompemos
+    queue_or_push = None
 
 def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -> None:
-    """Envía alerta in-app si está disponible app.services.pro_alerts.queue_or_push."""
     if not queue_or_push:
         return
     try:
         msg = f"Correo sospechoso: {subject} — {sender} ({'; '.join(reasons)})"
-        # Ajustá los campos si tu servicio espera otros nombres
         queue_or_push(user_id=user_id, title="Alerta de correo", message=msg, level="warning")
     except Exception:
         pass
-
-# ---- Cifrado credenciales ----
-def _get_fernet() -> Fernet:
-    from cryptography.fernet import Fernet  # ← importar aquí
-    
-    """
-    Usa MAIL_CRYPT_KEY (Fernet urlsafe-base64) si está; si no, deriva de JWT_SECRET.
-    """
-    import base64, hashlib
-    env_key = os.getenv("MAIL_CRYPT_KEY")
-    if env_key:
-        try:
-            return Fernet(env_key.encode() if isinstance(env_key, str) else env_key)
-        except Exception:
-            pass
-    seed = (os.getenv("JWT_SECRET", "change-me") + "_mail").encode()
-    derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
-    return Fernet(derived)
 
 # ---- Modelos locales ----
 class MailAccount(Base):
@@ -114,7 +94,7 @@ class MailAlert(Base):
     msg_uid = Column(String, index=True)
     subject = Column(Text)
     sender = Column(String)
-    reason = Column(String)  # si en el futuro querés evitar truncados, cambiá a Text y migra la DB
+    reason = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
@@ -148,7 +128,6 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
                     if fn_d.endswith(ext):
                         reasons.append(f"Adjunto peligroso ({ext})")
                         break
-    # enlaces acortados en HTML
     try:
         from bs4 import BeautifulSoup
         for part in msg.walk():
@@ -169,7 +148,7 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
     f = _get_fernet()
     try:
         data = json.loads(f.decrypt(acct.enc_blob.encode()).decode())
-    except (InvalidToken, Exception):
+    except Exception:
         raise HTTPException(status_code=500, detail="No se pudo descifrar las credenciales")
 
     server = acct.imap_server or acct.imap_host or "imap.gmail.com"
@@ -179,9 +158,9 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
     M.login(data["username"], data["password"])
     return M
 
-# ---- Ruta índice para evitar 404 en /mail ----
-@router.get("", response_class=HTMLResponse, include_in_schema=False)   # captura /mail
-@router.get("/", response_class=HTMLResponse, include_in_schema=False)  # captura /mail/
+# ---- Índice /mail y /mail/ (evita 404) ----
+@router.get("", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def mail_index(request: Request):
     return RedirectResponse(url="/mail/scanner", status_code=302)
 
@@ -192,11 +171,6 @@ def connect_form(request: Request):
 
 @router.post("/connect", response_class=HTMLResponse)
 async def connect_submit(request: Request, db: Session = Depends(get_db)):
-    """
-    Acepta JSON o FormData:
-      JSON: {email_addr, username, password, imap_server?, imap_port?, use_ssl?}
-      Form: campos con mismos nombres (use_ssl presente => True)
-    """
     user = get_current_user_cookie(request, db)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -258,12 +232,12 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             acct = MailAccount(
                 user_id=user.id,
                 email=email_addr,
-                imap_host=imap_server,          # compat
+                imap_host=imap_server,
                 imap_server=imap_server,
                 imap_port=imap_port,
                 use_ssl=use_ssl,
                 enc_blob=blob,
-                enc_password=blob,              # compat
+                enc_password=blob,  # compat
             )
             db.add(acct)
         else:
@@ -338,7 +312,6 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         return HTMLResponse(f"<h2>Error escaneando: {e}</h2>", status_code=500)
 
-    # ---------- UI ----------
     def _chip_list(rs: List[str]) -> str:
         return "".join(f"<span class='tag'>{r}</span>" for r in rs)
 
@@ -389,7 +362,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
       .actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}}
       .btn{{display:inline-block;border-radius:10px;padding:10px 14px;font-weight:700;border:1px solid var(--line);background:#fff;color:var(--text)}}
       .btn:hover{{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}}
-      .btn-primary{{background:var(--brand);color:var(--text);border:0;color:#fff}}
+      .btn-primary{{background:var(--brand);color:#fff;border:0}}
       .btn-primary:hover{{filter:brightness(1.05)}}
       .list{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px}}
       .item{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}}
@@ -435,7 +408,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     """
     return HTMLResponse(html)
 
-# ---- Vista simple de alertas guardadas ----
+# ---- Alertas guardadas ----
 @router.get("/alerts", response_class=HTMLResponse)
 def list_alerts(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
@@ -471,7 +444,6 @@ def mark_all_read(request: Request, db: Session = Depends(get_db)):
         MailAlert.is_read == False  # noqa: E712
     ).update({MailAlert.is_read: True})
     db.commit()
-
 
 # ---- Helpers para cron / API ----
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
@@ -527,7 +499,6 @@ def _run_scan_all_accounts(db: Session) -> dict:
         total["errors"] += r["errors"]
     return total
 
-# ---- Endpoint cron seguro ----
 @router.get("/poll")
 def mail_poll(secret: str, db: Session = Depends(get_db)):
     if not MAIL_CRON_SECRET:
@@ -537,7 +508,6 @@ def mail_poll(secret: str, db: Session = Depends(get_db)):
     result = _run_scan_all_accounts(db)
     return {"status": "ok", "source": "cron", **result}
 
-# ---- Endpoint API manual ----
 @router.api_route("/scan", methods=["GET", "POST"])
 def mail_scan_api(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
