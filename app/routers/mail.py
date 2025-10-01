@@ -70,42 +70,53 @@ def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -
     except Exception:
         pass
 
-# ====== modelos locales ======
-class MailAccount(Base):
-    __tablename__ = "mail_accounts"
-    __table_args__ = {'extend_existing': True}
-
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    email = Column(String, nullable=False)
-
-    imap_host   = Column(String, nullable=False, default="imap.gmail.com")
-    imap_server = Column(String, nullable=False, default="imap.gmail.com")
-    imap_port   = Column(Integer, nullable=False, default=993)
-    use_ssl     = Column(Boolean, nullable=False, default=True)
-
-    enc_blob     = Column(Text, nullable=False, default="")  # JSON cifrado {username,password}
-    enc_password = Column(Text, nullable=False, default="")  # compat DBs viejas
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-class MailAlert(Base):
-    __tablename__ = "mail_alerts"
-    __table_args__ = {'extend_existing': True}
-
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    msg_uid = Column(String, index=True)
-    subject = Column(Text)
-    sender = Column(String)
-    reason = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    is_read = Column(Boolean, default=False)
-
+# ====== modelos (evitar doble mapeo) ======
+MODELS_FROM_APP = False
 try:
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    print(f"[mail] aviso creando tablas: {e}")
+    # Si ya existen en app.models, los reusamos para NO registrar la tabla dos veces
+    from app.models import MailAccount as MailAccount
+    from app.models import MailAlert as MailAlert
+    MODELS_FROM_APP = True
+except Exception:
+    MODELS_FROM_APP = False
+
+if not MODELS_FROM_APP:
+    class MailAccount(Base):
+        __tablename__ = "mail_accounts"
+        __table_args__ = {'extend_existing': True}
+
+        id = Column(Integer, primary_key=True)
+        user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+        email = Column(String, nullable=False)
+
+        imap_host   = Column(String, nullable=False, default="imap.gmail.com")
+        imap_server = Column(String, nullable=False, default="imap.gmail.com")
+        imap_port   = Column(Integer, nullable=False, default=993)
+        use_ssl     = Column(Boolean, nullable=False, default=True)
+
+        enc_blob     = Column(Text, nullable=False, default="")  # JSON cifrado {username,password}
+        enc_password = Column(Text, nullable=False, default="")  # compat DBs viejas
+
+        created_at = Column(DateTime, default=datetime.utcnow)
+
+    class MailAlert(Base):
+        __tablename__ = "mail_alerts"
+        __table_args__ = {'extend_existing': True}
+
+        id = Column(Integer, primary_key=True)
+        user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+        msg_uid = Column(String, index=True)
+        subject = Column(Text)
+        sender = Column(String)
+        reason = Column(String)
+        created_at = Column(DateTime, default=datetime.utcnow)
+        is_read = Column(Boolean, default=False)
+
+    # Crear tablas solo si definimos los modelos locales
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"[mail] aviso creando tablas: {e}")
 
 # ====== heurísticas ======
 SUS_ATTACH_EXTS = {".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"}
@@ -146,7 +157,7 @@ def _risky(msg: email.message.Message) -> Tuple[bool, List[str]]:
         pass
     return (len(reasons) > 0, reasons)
 
-def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
+def _imap_login(acct: "MailAccount") -> imaplib.IMAP4:
     import json
     f = _get_fernet()
     try:
@@ -418,7 +429,7 @@ def unread_count(request: Request, db: Session = Depends(get_db)):
 def mark_all_read(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
-        raise HTTPException(status_code=401, detail="No autenticado")
+        raise HTTPException(statuscode=401, detail="No autenticado")
     db.query(MailAlert).filter(MailAlert.user_id == user.id, MailAlert.is_read == False).update({MailAlert.is_read: True})
     db.commit()
 
