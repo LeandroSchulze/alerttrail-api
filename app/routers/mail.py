@@ -13,8 +13,6 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Session
 
-from cryptography.fernet import Fernet, InvalidToken
-
 from app.database import Base, engine, get_db
 from app.security import get_current_user_cookie
 
@@ -76,6 +74,8 @@ def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -
 
 # ---- Cifrado credenciales ----
 def _get_fernet() -> Fernet:
+    from cryptography.fernet import Fernet  # ← importar aquí
+    
     """
     Usa MAIL_CRYPT_KEY (Fernet urlsafe-base64) si está; si no, deriva de JWT_SECRET.
     """
