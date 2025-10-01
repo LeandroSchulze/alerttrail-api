@@ -1,4 +1,3 @@
-# app/routers/stats.py
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -9,6 +8,7 @@ from app.security import get_current_user_cookie
 router = APIRouter(tags=["stats"])
 
 def _is_admin(u) -> bool:
+    """Acepta admin por rol o por flags."""
     role = (getattr(u, "role", "") or "").lower()
     return bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False) or role == "admin")
 
@@ -20,6 +20,7 @@ def stats_home(request: Request, db: Session = Depends(get_db)):
     if not _is_admin(user):
         return RedirectResponse(url="/dashboard?err=perm", status_code=303)
 
+    # Página simple (placeholder) solo visible para admin
     html = """
     <!doctype html><html lang="es"><meta charset="utf-8"><title>Estadísticas</title>
     <body style="font-family:system-ui;background:#0b2133;color:#e5f2ff;margin:0">
