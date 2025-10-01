@@ -8,8 +8,19 @@ from app.security import get_current_user_cookie
 router = APIRouter(tags=["stats"])
 
 def _is_admin(u) -> bool:
+    """
+    Admin check minimalista:
+    - role == 'admin'  (texto)
+    - is_admin / is_superuser (booleanos)
+    - is_org_admin (nuevo: permite a Admin de organización entrar a /stats)
+    """
     role = (getattr(u, "role", "") or "").lower()
-    return bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False) or role == "admin")
+    return (
+        bool(getattr(u, "is_admin", False)) or
+        bool(getattr(u, "is_superuser", False)) or
+        bool(getattr(u, "is_org_admin", False)) or
+        role == "admin"
+    )
 
 @router.get("/stats", response_class=HTMLResponse)
 def stats_home(request: Request, db: Session = Depends(get_db)):
@@ -25,7 +36,7 @@ def stats_home(request: Request, db: Session = Depends(get_db)):
       <div style="max-width:980px;margin:40px auto;padding:0 16px">
         <a href="/dashboard" style="color:#93c5fd;text-decoration:none">&larr; Volver al dashboard</a>
         <h1 style="margin:16px 0 6px">Estadísticas</h1>
-        <p style="color:#bcd7f0">Sección visible solo para administradores.</p>
+        <p style="color:#bcd7f0">Sección visible para administradores.</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:12px">
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h3 style="margin:0 0 8px">Resumen</h3>
