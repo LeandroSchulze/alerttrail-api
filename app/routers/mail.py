@@ -40,7 +40,7 @@ def require_pro_user(request: Request, db: Session = Depends(get_db)):
     """
     user = get_current_user_cookie(request, db=db)  # <- objeto models.User
     if not user:
-        raise HTTPException(status_code=401, detail="No autenticado")
+        raise HTTPException(status_code=303, detail="login", headers={"Location": "/auth/login"})
     if not _is_pro(user):
         raise HTTPException(
             status_code=303,
@@ -180,7 +180,8 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
     return M
 
 # ---- Ruta índice para evitar 404 en /mail ----
-@router.get("/", response_class=HTMLResponse)
+@router.get("", response_class=HTMLResponse, include_in_schema=False)   # captura /mail
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)  # captura /mail/
 def mail_index(request: Request):
     return RedirectResponse(url="/mail/scanner", status_code=302)
 
@@ -388,7 +389,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
       .actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}}
       .btn{{display:inline-block;border-radius:10px;padding:10px 14px;font-weight:700;border:1px solid var(--line);background:#fff;color:var(--text)}}
       .btn:hover{{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}}
-      .btn-primary{{background:var(--brand);color:#fff;border:0}}
+      .btn-primary{{background:var(--brand);color:var(--text);border:0;color:#fff}}
       .btn-primary:hover{{filter:brightness(1.05)}}
       .list{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px}}
       .item{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}}
@@ -428,6 +429,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
 
         { (cards or empty_state) }
       </div>
+      <p class="muted" style="margin-top:14px">Soporte: <a href="mailto:admin.alerttrail@gmail.com" style="color:#2563eb;text-decoration:none">admin.alerttrail@gmail.com</a></p>
     </div>
     </html>
     """
