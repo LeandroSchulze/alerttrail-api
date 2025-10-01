@@ -1,6 +1,6 @@
 # app/routers/stats.py
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,19 +13,17 @@ def _is_admin(u) -> bool:
     role = (getattr(u, "role", "") or "").lower()
     return bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False) or role == "admin")
 
-def require_admin(request: Request, db: Session = Depends(get_db)):
+@router.get("/stats", response_class=HTMLResponse)
+def stats_home(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db=db)
     if not user:
         # sin sesión -> login
-        raise HTTPException(status_code=303, detail="login", headers={"Location": "/auth/login"})
+        return RedirectResponse(url="/auth/login", status_code=303)
     if not _is_admin(user):
         # con sesión pero no admin -> dashboard
-        raise HTTPException(status_code=303, detail="forbidden", headers={"Location": "/dashboard"})
-    return user
+        return RedirectResponse(url="/dashboard?err=perm", status_code=303)
 
-@router.get("/stats", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def stats_home(_: Request):
-    # Página simple (placeholder) solo visible para admin
+    # Página visible solo para admin
     html = """
     <!doctype html><html lang="es"><meta charset="utf-8"><title>Estadísticas</title>
     <body style="font-family:system-ui;background:#0b2133;color:#e5f2ff;margin:0">
