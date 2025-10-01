@@ -1,5 +1,5 @@
-import requests
 # app/routers/billing.py
+import requests
 import os
 from typing import Optional, Tuple
 
@@ -18,6 +18,10 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ======== ENV & helpers ========
 BASE_URL = (os.getenv("BASE_URL") or "https://www.alerttrail.com").rstrip("/")
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+
+# Templates locales (evita NameError si no están en globals)
+APP_DIR = os.path.dirname(os.path.dirname(__file__))
+TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 
 
 def _parse_float(v: Optional[str], default: float) -> float:
@@ -324,6 +328,7 @@ def failure_page(request: Request):
 def pending_page(request: Request):
     return HTMLResponse("<h2>Pago pendiente</h2><p>Te avisaremos cuando se acredite.</p><a href='/dashboard'>Volver al dashboard</a>")
 
+
 # ---------- baja manual ----------
 @router.post("/downgrade")
 def downgrade(current_user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
@@ -337,13 +342,8 @@ def downgrade(current_user=Depends(get_current_user_cookie), db: Session = Depen
     db.commit()
     return RedirectResponse(url="/billing", status_code=303)
 
-# ====== Estado de suscripción ======
-from fastapi.responses import HTMLResponse
-from ..security import get_current_user_cookie
-from ..database import get_db
-from sqlalchemy.orm import Session
-import os, json
 
+# ====== Estado de suscripción ======
 def _mp_headers():
     token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
     if not token:
@@ -353,7 +353,7 @@ def _mp_headers():
 @router.get("/status", response_class=HTMLResponse)
 def billing_status(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
     from fastapi.templating import Jinja2Templates
-    templates = Jinja2Templates(directory=TEMPLATES_DIR) if 'TEMPLATES_DIR' in globals() else Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
+    templates = Jinja2Templates(directory=TEMPLATES_DIR)
     plan = getattr(user, "plan", "FREE")
     mp_error = None; mp_info = None
     try:
@@ -395,20 +395,27 @@ def billing_status(request: Request, db: Session = Depends(get_db), user=Depends
 
     return templates.TemplateResponse("billing_status.html", {"request": request,"user": user,"plan": plan,"mp_info": mp_info,"mp_error": mp_error})
 
+
 @router.get("/subscribe", response_class=HTMLResponse)
 def billing_subscribe_landing():
+    """
+    Landing intermedia que muestra 2 links correctos:
+      - /payments/subscribe?plan=PRO
+      - /payments/subscribe?plan=BIZ&seats=<incluidos>
+    """
     inc = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
     return HTMLResponse(
         "<h2>Suscripción mensual</h2>"
         "<p>Elegí tu plan para configurar el débito automático:</p>"
-        '<p><a href="/payments/billing/subscribe?plan=PRO">Suscribirme a PRO</a></p>'
-        f'<p><a href="/payments/billing/subscribe?plan=EMPRESAS&seats={inc}">Suscribirme a EMPRESAS (incluye {inc} asientos)</a></p>'
+        '<p><a href="/payments/subscribe?plan=PRO">Suscribirme a PRO</a></p>'
+        f'<p><a href="/payments/subscribe?plan=BIZ&seats={inc}">Suscribirme a EMPRESAS (incluye {inc} asientos)</a></p>'
     )
+
 
 from .payments import Subscription
 @router.get("/subscriptions", response_class=HTMLResponse)
 def billing_subscriptions(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
     from fastapi.templating import Jinja2Templates
-    templates = Jinja2Templates(directory=TEMPLATES_DIR) if 'TEMPLATES_DIR' in globals() else Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
+    templates = Jinja2Templates(directory=TEMPLATES_DIR)
     rows = db.query(Subscription).filter(Subscription.user_id == getattr(user,"id",None)).order_by(Subscription.updated_at.desc()).limit(50).all()
     return templates.TemplateResponse("billing_subscriptions.html", {"request": request, "user": user, "subs": rows})
