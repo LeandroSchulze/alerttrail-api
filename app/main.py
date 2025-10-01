@@ -198,6 +198,10 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
+# ===== Alias mínimo para Suscripciones (arregla /admin/subscriptions 404) =====
+@app.get("/admin/subscriptions", include_in_schema=False)
+def _alias_admin_subscriptions():
+    return RedirectResponse(url="/billing", status_code=302)
 
 # === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
@@ -408,10 +412,32 @@ if not _route_exists("/auth/login/web"):
 # === Handlers globales ===
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
-    if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
+    """
+    Solo los 401 (no autenticado) redirigen al login.
+    Los 403 (no autorizado) muestran una página HTML para evitar loops de login.
+    """
+    accept = (request.headers.get("accept") or "")
+    wants_html = "text/html" in accept
+
+    # 401 → login
+    if exc.status_code == 401 and wants_html:
         path = request.url.path or ""
         if not path.startswith("/auth"):
             return RedirectResponse(url="/auth/login", status_code=302)
+
+    # 403 → página simple (sin redirigir)
+    if exc.status_code == 403 and wants_html:
+        body = (
+            "<!doctype html><meta charset='utf-8'>"
+            "<div style='font-family:system-ui;padding:24px'>"
+            "<h2>Acceso denegado</h2>"
+            f"<p style='color:#475569'>{exc.detail or 'No autorizado'}</p>"
+            "<p><a href='/dashboard' style='color:#2563eb;text-decoration:none'>&larr; Volver</a></p>"
+            "</div>"
+        )
+        return HTMLResponse(body, status_code=403)
+
+    # Resto → JSON
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 from fastapi.responses import HTMLResponse as _HTMLResponse
