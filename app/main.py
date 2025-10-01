@@ -186,6 +186,15 @@ try:
 except Exception as e:
     print(f"[routers] No pude cargar auth_email_verification_web: {e}")
 
+# --- Montaje explícito de mail (línea de vida si falló en el bucle) ---
+try:
+    from app.routers import mail
+    app.include_router(mail.router)
+    print("[routers] mail montado OK (fallback explícito)")
+except Exception as e:
+    print(f"[routers] ERROR montando mail (explícito): {e}")
+
+
 
 # === Rutas públicas ===
 @app.get("/", response_class=HTMLResponse)
