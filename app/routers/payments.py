@@ -25,7 +25,7 @@ BASE_URL = os.getenv("BASE_URL", "https://www.alerttrail.com").rstrip("/")
 # Precios base (USD)
 PRO_PRICE_USD = float(os.getenv("PRO_PRICE_USD", "10"))
 BIZ_PRICE_USD = float(os.getenv("BIZ_PRICE_USD", "99"))
-BIZ_INCLUDED_SEATS = int(os.getenv("BIZ_INCLUDED_SEATS", "3"))
+BIZ_INCLUDED_SEATS = int(os.getenv("BIZ_INCLUDED_SEATS", "25"))  # ← default 25
 BIZ_EXTRA_SEAT_USD = float(os.getenv("BIZ_EXTRA_SEAT_USD", "3"))
 
 # Conversión opcional a ARS
@@ -172,7 +172,7 @@ def payments_subscribe(
         plan=plan_norm,
         seats=seats if plan_norm == "BIZ" else 1,
         currency=currency,
-        amount=int(round(amount)),   # entero simple; si querés, guarda con 2 decimales en string
+        amount=int(round(amount)),   # entero simple
         next_payment_date=(data.get("auto_recurring") or {}).get("next_payment_date") or "",
         external_reference=external_ref,
         raw=json.dumps(data, ensure_ascii=False)
@@ -205,35 +205,33 @@ def payments_subscribe(
 
 
 @router.post("/payments/webhook")
-def payments_webhook(request: Request, db: Session = Depends(get_db)):
+async def payments_webhook(request: Request, db: Session = Depends(get_db)):
     """
     Webhook de Mercado Pago. MP envía cambios de estado de preapproval.
     Actualizamos la suscripción y, si está 'authorized', ponemos el plan del usuario.
     """
     _require_mp_token()
+
+    # Intentamos leer JSON del body (MP puede enviar body vacío + query params)
     try:
-        # MP puede enviar JSON o query-params con id/type
-        body = {}
-        try:
-            body = request.json()
-        except Exception:
-            pass
-
-        # Render/Starlette: request.json() es async; manejarlo:
-        if callable(getattr(body, "__await__", None)):
-            body = request._body if hasattr(request, "_body") else {}
-
-        # Si no logramos body por sync, probamos async de forma segura:
-        # (en FastAPI, lo correcto sería: body = await request.json(), pero aquí somos sync)
+        body = await request.json()
     except Exception:
         body = {}
 
     # Soportar tanto JSON como query params
     params = dict(request.query_params)
-    preapproval_id = params.get("id") or (body.get("data", {}) if isinstance(body, dict) else {}).get("id")
-    topic = params.get("type") or params.get("topic") or body.get("type") if isinstance(body, dict) else None
+    preapproval_id = (
+        params.get("id")
+        or ((body.get("data") or {}).get("id") if isinstance(body, dict) else None)
+        or (body.get("id") if isinstance(body, dict) else None)
+    )
+    topic = (
+        params.get("type") or params.get("topic")
+        or (body.get("type") if isinstance(body, dict) else None)
+        or (body.get("action") if isinstance(body, dict) else None)
+    )
 
-    # Cuando el topic es 'preapproval', consultamos el detalle
+    # Cuando el topic es 'preapproval', consultamos el detalle (igual consultamos si hay id)
     if preapproval_id:
         try:
             detail = _mp_get_preapproval(preapproval_id)
@@ -247,7 +245,7 @@ def payments_webhook(request: Request, db: Session = Depends(get_db)):
 
         # Actualizar sub local
         sub = db.query(Subscription).filter(Subscription.preapproval_id == preapproval_id).first()
-        if not sub:
+        if not sub and ext_ref:
             # Intento de localizar por external_reference
             sub = db.query(Subscription).filter(Subscription.external_reference == ext_ref).first()
 
@@ -272,7 +270,7 @@ def payments_webhook(request: Request, db: Session = Depends(get_db)):
                 except Exception:
                     db.rollback()
 
-        return {"ok": True, "status": status_mp, "preapproval_id": preapproval_id}
+        return {"ok": True, "status": status_mp, "preapproval_id": preapproval_id, "topic": topic or ""}
 
     # Si no hay id, no sabemos qué actualizar
     return {"ok": False, "ignored": True, "reason": "sin id"}
