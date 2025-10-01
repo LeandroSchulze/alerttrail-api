@@ -228,6 +228,10 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
 
+    # 👉 Si querés forzar verificación antes del login, descomentá:
+    # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
+    #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
+
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return r
@@ -293,9 +297,10 @@ def logout(_response: Response):
     clear_access_cookie(r)
     return r
 
-# === Dashboard ===
+# === Dashboard (versión robusta con fallback si falta el template) ===
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
+    # 1) Autenticación robusta (redirige si no hay cookie válida)
     try:
         user = get_current_user_cookie(request, db)
     except HTTPException as e:
@@ -336,7 +341,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         </div>"""
         return HTMLResponse(html)
 
-# === Fallbacks de login ===
+# === Fallbacks de login si faltan ===
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
@@ -347,4 +352,98 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# ... (resto del archivo: fallbacks de login, exception handlers, health, startup, scheduler)
+if not _route_has_method("/auth/login", "GET"):
+    @app.get("/auth/login", include_in_schema=False, response_class=HTMLResponse)
+    def _fb_auth_login_get(request: Request):
+        try:
+            resp = templates.TemplateResponse("login.html", {"request": request})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        except TemplateNotFound:
+            html = """<!doctype html><meta charset='utf-8'>
+            <title>Login — AlertTrail</title>
+            <form method="post" action="/auth/login/web"
+                  style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
+              <h2>Iniciar sesión</h2>
+              <input name="email" type="email" placeholder="Email" required>
+              <input name="password" type="password" placeholder="Contraseña" required>
+              <button>Entrar</button>
+            </form>"""
+            return HTMLResponse(html)
+
+if not _route_has_method("/auth/login", "POST"):
+    @app.post("/auth/login", include_in_schema=False)
+    def _fb_auth_login_post(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+        hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+        if not user or not verify_password(password, hp or ""):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+
+        # 👉 Para forzar verificación previa al login, descomentá:
+        # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
+        #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
+
+        r = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
+
+if not _route_exists("/auth/login/web"):
+    @app.post("/auth/login/web", include_in_schema=False)
+    def _fb_auth_login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(func.lower(User.email) == email_norm).first()
+        hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
+        if not user or not verify_password(password, hp or ""):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+
+        # 👉 Para forzar verificación previa al login, descomentá:
+        # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
+        #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
+
+        r = RedirectResponse(url="/dashboard", status_code=303)
+        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        return r
+
+# === Handlers globales ===
+@app.exception_handler(HTTPException)
+async def http_exc_handler(request: Request, exc: HTTPException):
+    if exc.status_code in (401, 403) and "text/html" in (request.headers.get("accept") or ""):
+        path = request.url.path or ""
+        if not path.startswith("/auth"):
+            return RedirectResponse(url="/auth/login", status_code=302)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+from fastapi.responses import HTMLResponse as _HTMLResponse
+
+@app.exception_handler(Exception)
+async def unhandled_exc_handler(request: Request, exc: Exception):
+    import traceback; traceback.print_exc()
+    if "text/html" in (request.headers.get("accept") or ""):
+        return _HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
+    return JSONResponse({"detail": repr(exc)}, status_code=500)
+
+# === Health & HEAD ===
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.head("/")
+def head_root():
+    return Response(status_code=200)
+
+# === Log de rutas al iniciar ===
+@app.on_event("startup")
+def _log_routes():
+    paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
+    print("\n=== ROUTES ===")
+    for p in paths:
+        print(p)
+    print("==============\n")
+
+# === Scheduler opcional ===
+try:
+    from app.services.scheduler import start_background_scheduler
+    start_background_scheduler()
+except Exception:
+    pass
