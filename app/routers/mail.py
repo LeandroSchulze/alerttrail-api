@@ -12,10 +12,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Session
 
-# IMPORT LAZY de cryptography para no romper el import del router
-# (si falla acá, el router no se monta y /mail queda 404)
+from app.database import Base, engine, get_db
+from app.security import get_current_user_cookie
+
+# ====== helpers de cifrado ======
 def _get_fernet():
-    from cryptography.fernet import Fernet  # import perezoso
+    # import perezoso: evita que falle el import del módulo y no se monte el router
+    from cryptography.fernet import Fernet
     import base64, hashlib
     env_key = os.getenv("MAIL_CRYPT_KEY")
     if env_key:
@@ -27,10 +30,7 @@ def _get_fernet():
     derived = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
     return Fernet(derived)
 
-from app.database import Base, engine, get_db
-from app.security import get_current_user_cookie
-
-# ---- PRO guard (mail sólo PRO/BIZ) ----
+# ====== guard de plan ======
 def _is_pro(u) -> bool:
     if bool(getattr(u, "is_admin", False)):
         return True
@@ -49,13 +49,13 @@ def require_pro_user(request: Request, db: Session = Depends(get_db)):
 
 router = APIRouter(prefix="/mail", tags=["mail"], dependencies=[Depends(require_pro_user)])
 
-# ---- Templates ----
+# ====== templates ======
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# ---- Alerta in-app (opcional) ----
+# ====== alertas in-app opcionales ======
 try:
     from app.services.pro_alerts import queue_or_push  # type: ignore
 except Exception:
@@ -70,20 +70,20 @@ def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -
     except Exception:
         pass
 
-# ---- Modelos locales ----
+# ====== modelos locales ======
 class MailAccount(Base):
     __tablename__ = "mail_accounts"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email = Column(String, nullable=False)
 
-    imap_host   = Column(String, nullable=False, default="imap.gmail.com")  # compat legado
+    imap_host   = Column(String, nullable=False, default="imap.gmail.com")
     imap_server = Column(String, nullable=False, default="imap.gmail.com")
     imap_port   = Column(Integer, nullable=False, default=993)
     use_ssl     = Column(Boolean, nullable=False, default=True)
 
     enc_blob     = Column(Text, nullable=False, default="")  # JSON cifrado {username,password}
-    enc_password = Column(Text, nullable=False, default="")  # legado (NOT NULL en DBs viejas)
+    enc_password = Column(Text, nullable=False, default="")  # compat DBs viejas
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -98,13 +98,12 @@ class MailAlert(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
 
-# Crear tablas si no existen
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
     print(f"[mail] aviso creando tablas: {e}")
 
-# ---- Heurísticas de riesgo ----
+# ====== heurísticas ======
 SUS_ATTACH_EXTS = {".exe", ".js", ".scr", ".bat", ".cmd", ".vbs", ".html", ".htm", ".zip", ".rar"}
 SUS_SUBJECT_WORDS = {"suspend","suspendida","password","contraseña","verify","verificar","urgente","factura","pago","bloqueada","blocked"}
 
@@ -153,18 +152,17 @@ def _imap_login(acct: MailAccount) -> imaplib.IMAP4:
 
     server = acct.imap_server or acct.imap_host or "imap.gmail.com"
     port = acct.imap_port or 993
-
     M = imaplib.IMAP4_SSL(server, port) if acct.use_ssl else imaplib.IMAP4(server, port)
     M.login(data["username"], data["password"])
     return M
 
-# ---- Índice /mail y /mail/ (evita 404) ----
-@router.get("", response_class=HTMLResponse, include_in_schema=False)
-@router.get("/", response_class=HTMLResponse, include_in_schema=False)
-def mail_index(request: Request):
+# ====== índice /mail y /mail/ (evita 404) ======
+@router.get("", response_class=HTMLResponse, include_in_schema=False)   # /mail
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)  # /mail/
+def mail_index(_request: Request):
     return RedirectResponse(url="/mail/scanner", status_code=302)
 
-# ---- UI Conectar casilla ----
+# ====== UI conectar ======
 @router.get("/connect", response_class=HTMLResponse)
 def connect_form(request: Request):
     return templates.TemplateResponse("mail_connect.html", {"request": request})
@@ -203,8 +201,7 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
-        # Test de login
-        stage = "test-imap"
+        # test de login
         try:
             M = imaplib.IMAP4_SSL(imap_server, imap_port) if use_ssl else imaplib.IMAP4(imap_server, imap_port)
             M.login(username, password)
@@ -216,13 +213,11 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
-        # Cifrado y commit
-        stage = "encrypt"
+        # cifrado + upsert
         import json
         f = _get_fernet()
         blob = f.encrypt(json.dumps({"username": username, "password": password}).encode()).decode()
 
-        stage = "db-commit"
         acct = db.query(MailAccount).filter(
             MailAccount.user_id == user.id,
             MailAccount.email == email_addr
@@ -237,7 +232,7 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
                 imap_port=imap_port,
                 use_ssl=use_ssl,
                 enc_blob=blob,
-                enc_password=blob,  # compat
+                enc_password=blob,
             )
             db.add(acct)
         else:
@@ -249,21 +244,12 @@ async def connect_submit(request: Request, db: Session = Depends(get_db)):
             acct.enc_password= blob
 
         db.commit()
-
-        return templates.TemplateResponse(
-            "mail_connect.html",
-            {"request": request, "ok": True, "email_addr": email_addr},
-        )
-
+        return templates.TemplateResponse("mail_connect.html", {"request": request, "ok": True, "email_addr": email_addr})
     except Exception as e:
         import traceback; traceback.print_exc()
-        return templates.TemplateResponse(
-            "mail_connect.html",
-            {"request": request, "error": f"Fallo en etapa '{stage}': {e}"},
-            status_code=500,
-        )
+        return templates.TemplateResponse("mail_connect.html", {"request": request, "error": f"Fallo en etapa '{stage}': {e}"}, status_code=500)
 
-# ---- Escaneo manual UI ----
+# ====== scanner UI ======
 @router.get("/scanner", response_class=HTMLResponse)
 def manual_scan(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
@@ -301,11 +287,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
                     MailAlert.msg_uid == uid_str
                 ).first()
                 if not exists:
-                    db.add(MailAlert(
-                        user_id=user.id, msg_uid=uid_str,
-                        subject=subject, sender=sender,
-                        reason="; ".join(reasons),
-                    ))
+                    db.add(MailAlert(user_id=user.id, msg_uid=uid_str, subject=subject, sender=sender, reason="; ".join(reasons)))
                     db.commit()
                     _notify_alert(user_id=user.id, subject=subject, sender=sender, reasons=reasons)
         M.logout()
@@ -348,13 +330,11 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
       *{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--text);
       font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial}}
       .container{{max-width:1100px;margin:0 auto;padding:16px}}
-      .topbar{{position:sticky;top:0;background:#fffccf00;backdrop-filter:saturate(1.2) blur(6px);
-              border-bottom:1px solid var(--line)}}
+      .topbar{{position:sticky;top:0;background:#fffccf00;backdrop-filter:saturate(1.2) blur(6px);border-bottom:1px solid var(--line)}}
       .topbar-inner{{display:flex;align-items:center;justify-content:space-between;padding:12px 16px}}
       .brand{{display:flex;align-items:center;gap:.55rem;font-weight:800;letter-spacing:.2px}}
       .dot{{width:10px;height:10px;border-radius:999px;background:var(--brand)}}
-      .pill{{display:flex;align-items:center;gap:.4rem;background:#eef2ff;color:#1e3a8a;border:1px solid #dbeafe;
-            padding:8px 10px;border-radius:999px;font-weight:600}}
+      .pill{{display:flex;align-items:center;gap:.4rem;background:#eef2ff;color:#1e3a8a;border:1px solid #dbeafe;padding:8px 10px;border-radius:999px;font-weight:600}}
       a.btn,a.btn:visited{{text-decoration:none}}
       h1{{margin:18px 0 6px;font-size:1.6rem}}
       .muted{{color:var(--muted)}}
@@ -371,8 +351,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
       .subject{{margin:0;font-size:1rem}}
       .sender{{margin:.25rem 0 .5rem;color:var(--muted)}}
       .tags{{display:flex;flex-wrap:wrap;gap:6px}}
-      .tag{{background:var(--chip);border:1px solid var(--line);color:var(--muted);
-            border-radius:999px;padding:6px 10px;font-size:.85rem}}
+      .tag{{background:var(--chip);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 10px;font-size:.85rem}}
       .empty{{text-align:center;padding:36px 16px;border:1px dashed var(--line);border-radius:16px;background:#fff}}
       .empty .icon{{font-size:36px;margin-bottom:6px}}
       .header-block{{display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:space-between}}
@@ -408,7 +387,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
     """
     return HTMLResponse(html)
 
-# ---- Alertas guardadas ----
+# ====== alertas ======
 @router.get("/alerts", response_class=HTMLResponse)
 def list_alerts(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
@@ -428,10 +407,7 @@ def unread_count(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-    count = db.query(MailAlert).filter(
-        MailAlert.user_id == user.id,
-        MailAlert.is_read == False  # noqa: E712
-    ).count()
+    count = db.query(MailAlert).filter(MailAlert.user_id == user.id, MailAlert.is_read == False).count()
     return {"unread": int(count)}
 
 @router.post("/alerts/mark_all_read")
@@ -439,13 +415,10 @@ def mark_all_read(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-    db.query(MailAlert).filter(
-        MailAlert.user_id == user.id,
-        MailAlert.is_read == False  # noqa: E712
-    ).update({MailAlert.is_read: True})
+    db.query(MailAlert).filter(MailAlert.user_id == user.id, MailAlert.is_read == False).update({MailAlert.is_read: True})
     db.commit()
 
-# ---- Helpers para cron / API ----
+# ====== cron & API ======
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
 
 def _scan_account(db: Session, acct: MailAccount) -> dict:
@@ -470,16 +443,9 @@ def _scan_account(db: Session, acct: MailAccount) -> dict:
                 subject = _decode_hdr(msg.get("Subject", ""))
                 sender = _decode_hdr(msg.get("From", ""))
                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-                exists = db.query(MailAlert).filter(
-                    MailAlert.user_id == acct.user_id,
-                    MailAlert.msg_uid == uid_str
-                ).first()
+                exists = db.query(MailAlert).filter(MailAlert.user_id == acct.user_id, MailAlert.msg_uid == uid_str).first()
                 if not exists:
-                    db.add(MailAlert(
-                        user_id=acct.user_id, msg_uid=uid_str,
-                        subject=subject, sender=sender,
-                        reason="; ".join(reasons),
-                    ))
+                    db.add(MailAlert(user_id=acct.user_id, msg_uid=uid_str, subject=subject, sender=sender, reason="; ".join(reasons)))
                     db.commit()
                     _notify_alert(user_id=acct.user_id, subject=subject, sender=sender, reasons=reasons)
                 alerts += 1
@@ -513,10 +479,9 @@ def mail_scan_api(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-
     acct = db.query(MailAccount).filter(MailAccount.user_id == user.id).order_by(MailAccount.id.desc()).first()
     if not acct:
         raise HTTPException(status_code=404, detail="No hay casillas vinculadas")
-
     result = _scan_account(db, acct)
     return {"status": "ok", "source": "manual", **result}
+
