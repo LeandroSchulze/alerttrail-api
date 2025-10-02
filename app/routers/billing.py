@@ -192,4 +192,185 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     )
     downgrade_btn = (
         "<form method='post' action='/billing/downgrade'>"
-        "<button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;color:#3a2a00;font-weight:700;cursor:pointer'>Bajar a FREE</button></form>
+        "<button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;color:#3a2a00;font-weight:700;cursor:pointer'>Bajar a FREE</button></form>"
+    ) if not is_free else ""
+
+    html = f"""
+    <!doctype html><html lang="es"><meta charset="utf-8"><title>Plan | AlertTrail</title>
+    <body style="font-family:system-ui;background:#0b2133;color:#e5f2ff;margin:0">
+      <div style="max-width:980px;margin:40px auto;padding:0 16px">
+        <p><a href="/dashboard" style="color:#9ed0ff;text-decoration:none">← Volver al dashboard</a></p>
+        <h1 style="margin:0 0 16px">Tu plan</h1>
+        <div style="display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+          <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
+            <h2 style="margin:0 0 8px">{current_title}</h2>
+            <p style="margin:0 0 12px;color:#bcd7f0">Estado actual: <b>{plan}</b></p>
+            {downgrade_btn}
+          </div>
+          <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
+            <h2 style="margin:0 0 8px">PRO</h2>
+            <ul style="color:#bcd7f0;margin:6px 0 12px"><li>Funciones avanzadas</li><li>Integraciones clave</li></ul>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">{pro_cta}</div>
+          </div>
+          <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
+            <h2 style="margin:0 0 8px">EMPRESAS</h2>
+            <ul style="color:#bcd7f0;margin:6px 0 12px">
+              <li>Todo PRO + capacidades de equipo</li>
+              <li><b>{seats}</b> asientos incluidos</li>
+              <li>Asiento adicional: <b>USD {extra_usd:.2f}</b> (~${extra_ars:,.0f} ARS)</li>
+            </ul>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">{biz_cta}</div>
+          </div>
+        </div>
+        <div style="margin-top:22px"><a href="/billing/subscriptions" style="color:#9ed0ff">Ver mis suscripciones</a></div>
+      </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+# ---------- Crear/ir a suscripción ----------
+@router.post("/checkout")
+def billing_checkout(
+    request: Request,
+    plan: str = Query(..., regex="^(?i)(PRO|BIZ)$"),
+    seats: int = Query(1, ge=1),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    return RedirectResponse(url=f"/payments/subscribe?plan={plan.upper()}&seats={seats}", status_code=303)
+
+# ---------- Downgrade rápido ----------
+@router.post("/downgrade")
+def billing_downgrade(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    try:
+        u = db.query(models.User).get(_as_user_attr(user).id)
+        if not u:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        _set_plan(u, "FREE")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return RedirectResponse(url="/billing", status_code=303)
+
+# ---------- Vista de suscripciones ----------
+@router.get("/subscriptions", response_class=HTMLResponse, name="billing_subscriptions")
+def billing_subscriptions(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+    email: Optional[str] = Query(None),
+):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    user = _as_user_attr(user)
+
+    # asegurar tabla
+    try:
+        _ = db.query(Subscription).first()
+    except OperationalError as e:
+        if "no such table: subscriptions" in str(e).lower():
+            _ensure_subscriptions_table(db)
+        else:
+            raise
+
+    # Construir query
+    q = db.query(Subscription)
+    if getattr(user, "role", "user") != "admin":
+        q = q.filter(Subscription.user_id == getattr(user, "id", None))
+    else:
+        # si viene ?email= filtrar por el user_id de ese email
+        if email:
+            target = db.query(models.User).filter(models.User.email.ilike(email)).first()
+            if target:
+                q = q.filter(Subscription.user_id == target.id)
+            else:
+                q = q.filter(Subscription.user_id == -1)  # no resultados
+
+    rows = q.order_by(Subscription.updated_at.desc()).limit(100).all()
+
+    # Render con template si existe, si no fallback con formularios admin
+    try:
+        return templates.TemplateResponse(
+            "billing_subscriptions.html",
+            {"request": request, "user": user, "subs": rows, "email": email or ""},
+        )
+    except TemplateNotFound:
+        th_user = "<th>Usuario</th>" if getattr(user, "role", "user") == "admin" else ""
+        def td_user(r):
+            return f"<td>{getattr(r, 'user_id', '-') or '-'}</td>" if getattr(user, "role", "user") == "admin" else ""
+        body = "".join(
+            f"<tr>{td_user(r)}"
+            f"<td>{r.preapproval_id}</td>"
+            f"<td>{(r.plan or '').upper()}</td>"
+            f"<td><span style='background:#103a2f;color:#bfffe5;padding:3px 8px;border-radius:8px'>{(r.status or '').lower()}</span></td>"
+            f"<td>{r.currency} {r.amount}</td>"
+            f"<td>{r.next_payment_date or '-'}</td>"
+            f"<td><a href='/billing/subscriptions/sync?preapproval_id={r.preapproval_id}' style='color:#9ed0ff'>Actualizar</a></td>"
+            f"</tr>"
+            for r in rows
+        )
+        admin_tools = ""
+        if getattr(user, "role", "user") == "admin":
+            admin_tools = """
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+              <form method="get" action="/billing/subscriptions">
+                <input type="email" name="email" placeholder="filtrar por email" style="padding:8px;border-radius:8px;border:1px solid #133954;background:#0b1f2f;color:#eaf3ff" />
+                <button style="padding:8px 12px;border-radius:8px;border:0;background:#0ea5e9;color:#03131c;font-weight:700">Filtrar</button>
+              </form>
+              <form method="get" action="/billing/subscriptions/sync">
+                <input type="text" name="preapproval_id" placeholder="preapproval_id" style="padding:8px;border-radius:8px;border:1px solid #133954;background:#0b1f2f;color:#eaf3ff" />
+                <button style="padding:8px 12px;border-radius:8px;border:0;background:#10b981;color:#06241f;font-weight:700">Sincronizar</button>
+              </form>
+            </div>
+            """
+        html = f"""
+        <!doctype html><html lang="es"><meta charset="utf-8"><title>Suscripciones | AlertTrail</title>
+        <body style="font-family:system-ui;background:#0b1f2f;color:#eaf3ff;margin:0">
+          <div style="max-width:980px;margin:40px auto;padding:0 16px">
+            <p><a href="/dashboard" style="color:#9ed0ff;text-decoration:none">← Volver al dashboard</a></p>
+            <h1>Suscripciones</h1>
+            {admin_tools}
+            <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
+              {"<p>No hay suscripciones registradas.</p>" if not rows else
+              f"<table style='width:100%;border-collapse:collapse'><thead><tr>{th_user}<th>Preapproval ID</th><th>Plan</th><th>Estado</th><th>Monto</th><th>Próximo pago</th><th>Acciones</th></tr></thead><tbody>{body}</tbody></table>"}
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(html)
+
+# ---------- Acción: sync por preapproval_id y volver a la tabla ----------
+@router.get("/subscriptions/sync")
+def billing_subscriptions_sync(
+    preapproval_id: str = Query(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    # asegurar tabla
+    try:
+        _ = db.query(Subscription).first()
+    except OperationalError as e:
+        if "no such table: subscriptions" in str(e).lower():
+            _ensure_subscriptions_table(db)
+        else:
+            raise
+    # hacer sync y volver a la lista
+    try:
+        _sync_preapproval(db, preapproval_id=preapproval_id)
+    except Exception:
+        # aunque falle, no bloquear la UX: volvemos a la página
+        pass
+    return RedirectResponse(url="/billing/subscriptions", status_code=303)
