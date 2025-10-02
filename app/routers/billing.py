@@ -1,6 +1,7 @@
 # app/routers/billing.py
 import os
 from typing import Optional, Tuple
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
@@ -14,8 +15,7 @@ from app.database import get_db
 from app import models
 from app.security import get_current_user_cookie
 
-# Importamos el modelo Subscription definido en payments.py
-# (para listar suscripciones en /billing/subscriptions)
+# Usamos el modelo Subscription definido en payments.py para listar suscripciones
 from .payments import Subscription
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -29,7 +29,7 @@ APP_DIR = os.path.dirname(os.path.dirname(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-
+# ---------- Helpers ----------
 def _parse_float(v: Optional[str], default: float) -> float:
     try:
         if v is None or v == "":
@@ -38,10 +38,8 @@ def _parse_float(v: Optional[str], default: float) -> float:
     except Exception:
         return default
 
-
 def _is_pro(u) -> bool:
     return bool(getattr(u, "is_pro", False)) or (getattr(u, "plan", "free") or "free").lower() in {"pro", "biz"}
-
 
 def _set_plan(u: models.User, plan: str):
     """Guarda 'PRO' o 'BIZ' (o 'FREE'). Marca is_pro=True para PRO o BIZ."""
@@ -51,25 +49,32 @@ def _set_plan(u: models.User, plan: str):
     if hasattr(u, "is_pro"):
         u.is_pro = (p in {"pro", "biz"})
 
-
 def _sdk() -> mercadopago.SDK:
     if not MP_ACCESS_TOKEN:
         raise RuntimeError("Falta MP_ACCESS_TOKEN en variables de entorno")
     return mercadopago.SDK(MP_ACCESS_TOKEN)
 
+def _as_user_attr(obj):
+    """
+    Convierte dicts en objeto con atributos (incluye 'id' derivado de 'user_id'/'uid').
+    Evita errores en plantillas que usan user.id / user.role, etc.
+    """
+    if isinstance(obj, dict):
+        d = dict(obj)
+        if "id" not in d:
+            d["id"] = d.get("user_id") or d.get("uid")
+        if "role" not in d and d.get("is_admin"):
+            d["role"] = "admin"
+        return SimpleNamespace(**d)
+    return obj
 
 def _compute_price_pro() -> Tuple[str, float, str]:
     """
-    PRO:
-      - Label para UI
-      - Monto ARS (para Mercado Pago)
-      - Título de la preferencia
+    PRO: label UI, monto ARS para MP, título
     """
     currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
     price = _parse_float(os.getenv("PLAN_PRICE"), 10.0)
     usd_ars = _parse_float(os.getenv("USD_ARS"), 600.0)
-
-    # overrides PRO en ARS (prioridad)
     override_mp = os.getenv("MP_PRICE_ARS") or os.getenv("PRO_PRICE_ARS")
 
     if currency == "USD":
@@ -78,31 +83,19 @@ def _compute_price_pro() -> Tuple[str, float, str]:
     else:
         mp_amount_ars = _parse_float(override_mp, price)
         label = f"Mejorar a PRO (${mp_amount_ars:,.0f}/mes)".replace(",", ".")
-
     title = "AlertTrail PRO - 1 mes"
     return label, float(mp_amount_ars), title
 
-
 def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
     """
-    BIZ/EMPRESAS:
-      - Label para UI
-      - Monto ARS (para Mercado Pago)
-      - Título de la preferencia
-      - Asientos incluidos
-      - Precio extra seat USD y ARS (para mostrar en UI)
+    BIZ/EMPRESAS: label UI, monto ARS, título, seats incluidos, precio extra (USD/ARS)
     """
     seats = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
-
     currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
     price_usd = _parse_float(os.getenv("BIZ_PRICE_USD"), 99.0)
     usd_ars = _parse_float(os.getenv("USD_ARS"), 600.0)
-
-    # extra seat
     extra_usd = _parse_float(os.getenv("BIZ_EXTRA_SEAT_USD"), 3.0)
     extra_ars_override = os.getenv("BIZ_EXTRA_SEAT_ARS")
-
-    # override total ARS para el abono BIZ
     override_biz_ars = os.getenv("BIZ_PRICE_ARS")
 
     if currency == "USD":
@@ -120,21 +113,22 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
             f"Plan EMPRESAS (${mp_amount_ars:,.0f}/mes · {seats} asientos, "
             f"adicional ~${extra_ars:,.0f}/asiento)".replace(",", ".")
         )
-
     title = "AlertTrail EMPRESAS - 1 mes"
     return label, float(mp_amount_ars), title, seats, float(extra_usd), float(extra_ars)
 
 
 # ---------- UI ----------
-@router.get("", response_class=HTMLResponse)
+@router.get("", response_class=HTMLResponse, name="billing_page")
 def billing_page(request: Request, db: Session = Depends(get_db)):
-    # Usuario REAL desde DB
+    # Usuario REAL desde DB (o dict si proviene del token)
     try:
         user = get_current_user_cookie(request, db=db)
     except Exception:
         return RedirectResponse(url="/auth/login", status_code=303)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+
+    user = _as_user_attr(user)
 
     plan = (getattr(user, "plan", "FREE") or "FREE").upper()
     is_pro = _is_pro(user)
@@ -145,10 +139,8 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     pro_label, _, _ = _compute_price_pro()
     biz_label, _, _, seats, extra_usd, extra_ars = _compute_price_biz()
 
-    # Título dinámico de la tarjeta izquierda (tu plan actual)
     current_title = plan  # "FREE", "PRO" o "BIZ"
 
-    # CTAs condicionales
     pro_cta = (
         "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;"
         "color:#a7f3d0;font-weight:700'>Plan activo</span>"
@@ -167,7 +159,6 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         f"color:#03131c;font-weight:700;cursor:pointer'>{biz_label}</button></form>"
     )
 
-    # Botón de bajar a FREE solo si hoy estás en PRO/BIZ
     downgrade_btn = (
         "<form method='post' action='/billing/downgrade'>"
         "<button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;"
@@ -181,14 +172,12 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         <p><a href="/dashboard" style="color:#9ed0ff;text-decoration:none">← Volver al dashboard</a></p>
         <h1 style="margin:0 0 16px">Tu plan</h1>
         <div style="display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
-          <!-- Tarjeta actual -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h2 style="margin:0 0 8px">{current_title}</h2>
             <p style="margin:0 0 12px;color:#bcd7f0">Estado actual: <b>{plan}</b></p>
             {downgrade_btn}
           </div>
 
-          <!-- Tarjeta PRO -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h2 style="margin:0 0 8px">PRO</h2>
             <ul style="color:#bcd7f0;margin:6px 0 12px">
@@ -198,7 +187,6 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
             <div style="display:flex;gap:10px;flex-wrap:wrap">{pro_cta}</div>
           </div>
 
-          <!-- Tarjeta EMPRESAS -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h2 style="margin:0 0 8px">EMPRESAS</h2>
             <ul style="color:#bcd7f0;margin:6px 0 12px">
@@ -219,7 +207,6 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     """
     return HTMLResponse(html)
 
-
 # ---------- Crear/ir a suscripción ----------
 @router.post("/checkout")
 def billing_checkout(
@@ -229,14 +216,9 @@ def billing_checkout(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_cookie),
 ):
-    """
-    Redirige al flujo de Mercado Pago reutilizando el endpoint /payments/subscribe.
-    """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
-    # Redirigimos al router de payments (que crea el preapproval y redirige a MP)
     return RedirectResponse(url=f"/payments/subscribe?plan={plan.upper()}&seats={seats}", status_code=303)
-
 
 # ---------- Downgrade rápido (parche local) ----------
 @router.post("/downgrade")
@@ -245,14 +227,10 @@ def billing_downgrade(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_cookie),
 ):
-    """
-    Parche rápido para bajar a FREE en la app.
-    (La cancelación/pausa real de la suscripción en MP se hace con /payments/cancel)
-    """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
     try:
-        u = db.query(models.User).get(user.id)
+        u = db.query(models.User).get(_as_user_attr(user).id)
         if not u:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         _set_plan(u, "FREE")
@@ -262,9 +240,8 @@ def billing_downgrade(
         raise
     return RedirectResponse(url="/billing", status_code=303)
 
-
 # ---------- Vista de suscripciones (HTML) ----------
-@router.get("/subscriptions", response_class=HTMLResponse)
+@router.get("/subscriptions", response_class=HTMLResponse, name="billing_subscriptions")
 def billing_subscriptions(
     request: Request,
     db: Session = Depends(get_db),
@@ -272,41 +249,39 @@ def billing_subscriptions(
 ):
     """
     Lista suscripciones. Si el usuario NO es admin, muestra sólo las propias.
-    Usa template billing_subscriptions.html si existe, con fallback HTML.
+    Soporta user como ORM o dict (lo convertimos a objeto con atributos).
     """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
 
+    user = _as_user_attr(user)
+
     q = db.query(Subscription)
     if getattr(user, "role", "user") != "admin":
-        q = q.filter(Subscription.user_id == user.id)
+        q = q.filter(Subscription.user_id == getattr(user, "id", None))
 
     rows = q.order_by(Subscription.updated_at.desc()).limit(100).all()
 
-    # Intentar template primero
     try:
         return templates.TemplateResponse(
             "billing_subscriptions.html",
             {"request": request, "user": user, "subs": rows},
         )
     except TemplateNotFound:
-        # Fallback HTML si no hay template
         th_user = "<th>Usuario</th>" if getattr(user, "role", "user") == "admin" else ""
-        td_user = lambda r: f"<td>{getattr(r, 'user_id', '-') or '-'}</td>" if getattr(user, "role", "user") == "admin" else ""
+        def td_user(r):
+            return f"<td>{getattr(r, 'user_id', '-') or '-'}</td>" if getattr(user, "role", "user") == "admin" else ""
         body = "".join(
-            f"<tr>"
-            f"{td_user(r)}"
+            f"<tr>{td_user(r)}"
             f"<td>{r.preapproval_id}</td>"
             f"<td>{(r.plan or '').upper()}</td>"
-            f"<td><span style='background:#103a2f;color:#bfffe5;padding:3px 8px;border-radius:8px'>"
-            f"{(r.status or '').lower()}</span></td>"
+            f"<td><span style='background:#103a2f;color:#bfffe5;padding:3px 8px;border-radius:8px'>{(r.status or '').lower()}</span></td>"
             f"<td>{r.currency} {r.amount}</td>"
             f"<td>{r.next_payment_date or '-'}</td>"
             f"<td><a href='/payments/status?preapproval_id={r.preapproval_id}' style='color:#9ed0ff'>Actualizar</a></td>"
             f"</tr>"
             for r in rows
         )
-
         html = f"""
         <!doctype html><html lang="es"><meta charset="utf-8"><title>Suscripciones | AlertTrail</title>
         <body style="font-family:system-ui;background:#0b1f2f;color:#eaf3ff;margin:0">
