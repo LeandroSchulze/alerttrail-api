@@ -304,6 +304,61 @@
       tabBizBtn?.addEventListener('click', ()=>activateTab('biz'));
     })();
   </script>
+
+  <!-- ===== Popup automático de correos sospechosos ===== -->
+  <script>
+    (function(){
+      const POLL_MS = 10000;
+      const seenKey = (id) => "mail_alert_seen_" + id;
+
+      function showAlertModal(a){
+        if (document.getElementById('mail-alert-modal')) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'mail-alert-modal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999';
+        const card = document.createElement('div');
+        card.style.cssText = 'background:#0f2a42;color:#eaf3ff;border:1px solid #133954;border-radius:14px;max-width:560px;width:92%;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)';
+        card.innerHTML = `
+          <h3 style="margin:0 0 6px">⚠️ Posible correo sospechoso</h3>
+          <p style="margin:0 0 2px"><b>De:</b> ${a.from_email || '-'}</p>
+          <p style="margin:0 10px 8px 0;word-break:break-word;"><b>Asunto:</b> ${a.subject || '-'}</p>
+          <p style="margin:0 0 14px;color:#bcd7f0">${(a.snippet || '').replace(/</g,'&lt;').slice(0,280)}</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+            <a href="${a.link || '/mail/scanner'}" class="btn-primary" style="padding:10px 14px;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;text-decoration:none">Ver en Scanner</a>
+            <button id="mail-alert-dismiss" style="padding:10px 14px;border-radius:10px;background:#133954;color:#cfe6ff;border:0;cursor:pointer">Descartar</button>
+          </div>
+        `;
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+
+        const dismiss = () => {
+          try { localStorage.setItem(seenKey(a.id), '1'); } catch(_){}
+          fetch(`/alerts/${a.id}/ack`, {method:'POST'}).catch(()=>{});
+          overlay.remove();
+        };
+        document.getElementById('mail-alert-dismiss').onclick = dismiss;
+        overlay.addEventListener('click', (e)=>{ if(e.target === overlay) dismiss(); });
+      }
+
+      async function poll(){
+        try{
+          const r = await fetch('/alerts/pending', {headers:{'accept':'application/json'}});
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d && d.ok && d.pending && d.alert) {
+            const a = d.alert;
+            if (!localStorage.getItem(seenKey(a.id))) {
+              showAlertModal(a);
+            }
+          }
+        }catch(_){}
+      }
+
+      setInterval(poll, POLL_MS);
+      setTimeout(poll, 1000);
+    })();
+  </script>
 </body>
 </html>
+
 
