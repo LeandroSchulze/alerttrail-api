@@ -1,10 +1,11 @@
 # app/routers/billing.py
-import requests
 import os
 from typing import Optional, Tuple
 
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.templating import Jinja2Templates
+from jinja2 import TemplateNotFound
 from sqlalchemy.orm import Session
 
 import mercadopago
@@ -13,15 +14,20 @@ from app.database import get_db
 from app import models
 from app.security import get_current_user_cookie
 
+# Importamos el modelo Subscription definido en payments.py
+# (para listar suscripciones en /billing/subscriptions)
+from .payments import Subscription
+
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 # ======== ENV & helpers ========
 BASE_URL = (os.getenv("BASE_URL") or "https://www.alerttrail.com").rstrip("/")
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
 
-# Templates locales (evita NameError si no están en globals)
+# Templates
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 def _parse_float(v: Optional[str], default: float) -> float:
@@ -156,7 +162,7 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#082f49;"
         "color:#bae6fd;font-weight:700'>Plan activo</span>"
         if is_biz else
-        f"<form method='post' action='/billing/checkout?plan=BIZ'>"
+        f"<form method='post' action='/billing/checkout?plan=BIZ&seats={seats}'>"
         f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#0ea5e9;"
         f"color:#03131c;font-weight:700;cursor:pointer'>{biz_label}</button></form>"
     )
@@ -172,15 +178,13 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     <!doctype html><html lang="es"><meta charset="utf-8"><title>Plan | AlertTrail</title>
     <body style="font-family:system-ui;background:#0b2133;color:#e5f2ff;margin:0">
       <div style="max-width:980px;margin:40px auto;padding:0 16px">
-        <a href="/dashboard" style="color:#93c5fd;text-decoration:none">&larr; Volver al dashboard</a>
-        <h1 style="margin:16px 0 6px">Tu plan</h1>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px">
-          <!-- Tarjeta de plan actual -->
+        <p><a href="/dashboard" style="color:#9ed0ff;text-decoration:none">← Volver al dashboard</a></p>
+        <h1 style="margin:0 0 16px">Tu plan</h1>
+        <div style="display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+          <!-- Tarjeta actual -->
           <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
             <h2 style="margin:0 0 8px">{current_title}</h2>
-            <p style="margin:6px 0">Estado actual: <b>{plan}</b></p>
-            <p style='margin:6px 0;color:#bcd7f0'>Funciones básicas.</p>
+            <p style="margin:0 0 12px;color:#bcd7f0">Estado actual: <b>{plan}</b></p>
             {downgrade_btn}
           </div>
 
@@ -205,217 +209,116 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
             <div style="display:flex;gap:10px;flex-wrap:wrap">{biz_cta}</div>
           </div>
         </div>
+
+        <div style="margin-top:22px">
+          <a href="/billing/subscriptions" style="color:#9ed0ff">Ver mis suscripciones</a>
+        </div>
       </div>
-    </body></html>
+    </body>
+    </html>
     """
     return HTMLResponse(html)
 
 
-# ---------- Iniciar Checkout Pro / Empresas ----------
-@router.api_route("/checkout", methods=["GET", "POST"])
-def checkout(request: Request, current_user=Depends(get_current_user_cookie)):
+# ---------- Crear/ir a suscripción ----------
+@router.post("/checkout")
+def billing_checkout(
+    request: Request,
+    plan: str = Query(..., regex="^(?i)(PRO|BIZ)$"),
+    seats: int = Query(1, ge=1),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
     """
-    Acepta GET y POST. Usa query param ?plan=PRO|BIZ (default PRO).
+    Redirige al flujo de Mercado Pago reutilizando el endpoint /payments/subscribe.
     """
-    if not current_user:
-        return RedirectResponse(url="/auth/login", status_code=303)
-
-    plan = (request.query_params.get("plan") or "PRO").upper()
-    if plan not in {"PRO", "BIZ"}:
-        plan = "PRO"
-
-    if plan == "PRO":
-        _, mp_amount_ars, title = _compute_price_pro()
-    else:
-        _, mp_amount_ars, title, _, _, _ = _compute_price_biz()
-
-    sdk = _sdk()
-    pref = {
-        "items": [{
-            "title": title,
-            "quantity": 1,
-            "unit_price": mp_amount_ars,   # Monto en ARS
-            "currency_id": "ARS",
-        }],
-        "payer": {
-            "email": getattr(current_user, "email", None),
-        },
-        # Mandamos el plan en external_reference
-        "external_reference": f"user:{getattr(current_user, 'id', '')}:plan:{plan}",
-        "back_urls": {
-            "success": f"{BASE_URL}/billing/success",
-            "failure": f"{BASE_URL}/billing/failure",
-            "pending": f"{BASE_URL}/billing/pending",
-        },
-        "auto_return": "approved",
-        "notification_url": f"{BASE_URL}/billing/ipn",  # webhook
-    }
-
-    resp = sdk.preference().create(pref)
-    init_point = resp["response"].get("init_point") or resp["response"].get("sandbox_init_point")
-    if not init_point:
-        raise HTTPException(status_code=500, detail="No se pudo crear la preferencia de pago")
-    return RedirectResponse(url=init_point, status_code=303)
-
-
-# ---------- Webhook (IPN/Webhook de MP) ----------
-@router.post("/ipn")
-async def mp_ipn(request: Request, db: Session = Depends(get_db)):
-    """
-    Mercado Pago envía notificaciones aquí cuando cambia el estado del pago.
-    Validamos consultando la API con el payment_id y activamos PRO/BIZ si está 'approved'.
-    """
-    try:
-        qp = request.query_params
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-
-        topic = qp.get("type") or (body.get("type") if isinstance(body, dict) else None)
-        payment_id = qp.get("id") or ((body.get("data") or {}).get("id") if isinstance(body, dict) else None)
-
-        # Solo pagos
-        if str(topic).lower() != "payment" or not payment_id:
-            return PlainTextResponse("ignored", status_code=200)
-
-        sdk = _sdk()
-        payment = sdk.payment().get(payment_id)
-        pr = payment.get("response", {}) or {}
-        status_mp = (pr.get("status") or "").lower()
-        ext = pr.get("external_reference") or ""
-
-        if status_mp == "approved" and ext.startswith("user:"):
-            # form: user:<id>:plan:<PRO|BIZ>
-            user_id: Optional[int] = None
-            plan = "PRO"
-            try:
-                parts = ext.split(":")
-                if len(parts) >= 4:
-                    user_id = int(parts[1])
-                    plan = parts[3].upper()
-            except Exception:
-                pass
-
-            if user_id:
-                user = db.query(models.User).filter(models.User.id == user_id).first()
-                if user:
-                    _set_plan(user, "BIZ" if plan == "BIZ" else "PRO")
-                    db.add(user)
-                    db.commit()
-
-        # Siempre 200; MP reintenta si no recibe 200
-        return PlainTextResponse("ok", status_code=200)
-
-    except Exception:
-        # No devolvemos 500 para evitar reintentos infinitos
-        return PlainTextResponse("ok", status_code=200)
-
-
-# ---------- páginas de retorno ----------
-@router.get("/success", response_class=HTMLResponse)
-def success_page(request: Request, current_user=Depends(get_current_user_cookie)):
-    return HTMLResponse(
-        "<h2>¡Pago aprobado!</h2><p>Si tu plan aún no muestra el cambio, refrescá en unos segundos.</p>"
-        "<a href='/dashboard'>Volver al dashboard</a>"
-    )
-
-@router.get("/failure", response_class=HTMLResponse)
-def failure_page(request: Request):
-    return HTMLResponse("<h2>Pago rechazado o cancelado</h2><a href='/billing'>Volver a Plan</a>", status_code=400)
-
-@router.get("/pending", response_class=HTMLResponse)
-def pending_page(request: Request):
-    return HTMLResponse("<h2>Pago pendiente</h2><p>Te avisaremos cuando se acredite.</p><a href='/dashboard'>Volver al dashboard</a>")
-
-
-# ---------- baja manual ----------
-@router.post("/downgrade")
-def downgrade(current_user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
-    if not current_user:
-        return RedirectResponse(url="/auth/login", status_code=303)
-    user = db.query(models.User).filter(models.User.id == getattr(current_user, "id")).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    _set_plan(user, "free")
-    db.add(user)
-    db.commit()
+        return RedirectResponse(url="/auth/login", status_code=303)
+    # Redirigimos al router de payments (que crea el preapproval y redirige a MP)
+    return RedirectResponse(url=f"/payments/subscribe?plan={plan.upper()}&seats={seats}", status_code=303)
+
+
+# ---------- Downgrade rápido (parche local) ----------
+@router.post("/downgrade")
+def billing_downgrade(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    """
+    Parche rápido para bajar a FREE en la app.
+    (La cancelación/pausa real de la suscripción en MP se hace con /payments/cancel)
+    """
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    try:
+        u = db.query(models.User).get(user.id)
+        if not u:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        _set_plan(u, "FREE")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return RedirectResponse(url="/billing", status_code=303)
 
 
-# ====== Estado de suscripción ======
-def _mp_headers():
-    token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
-    if not token:
-        raise HTTPException(status_code=500, detail="Falta MP_ACCESS_TOKEN")
-    return {"Authorization": f"Bearer {token}"}
-
-@router.get("/status", response_class=HTMLResponse)
-def billing_status(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
-    from fastapi.templating import Jinja2Templates
-    templates = Jinja2Templates(directory=TEMPLATES_DIR)
-    plan = getattr(user, "plan", "FREE")
-    mp_error = None; mp_info = None
-    try:
-        token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
-        if token and getattr(user, "email", None):
-            q = f"https://api.mercadopago.com/preapproval/search?payer_email={user.email}"
-            r = requests.get(q, headers={"Authorization": f"Bearer {token}"})
-            if r.status_code == 200:
-                js = r.json() or {}
-                items = js.get("results") or []
-                if isinstance(items, list) and items:
-                    for it in items:
-                        if "AlertTrail" in (it.get("reason") or ""):
-                            mp_info = {
-                                "preapproval_id": it.get("id"),
-                                "status": (it.get("status") or "").lower(),
-                                "reason": it.get("reason"),
-                                "next_payment_date": it.get("next_payment_date"),
-                                "payer_email": user.email,
-                                "auto_recurring": it.get("auto_recurring") or {},
-                            }
-                            break
-                    if not mp_info:
-                        it = items[0]
-                        mp_info = {
-                            "preapproval_id": it.get("id"),
-                            "status": (it.get("status") or "").lower(),
-                            "reason": it.get("reason"),
-                            "next_payment_date": it.get("next_payment_date"),
-                            "payer_email": user.email,
-                            "auto_recurring": it.get("auto_recurring") or {},
-                        }
-            else:
-                mp_error = "Error consultando Mercado Pago"
-        else:
-            mp_error = "Sin token de MP o sin email de usuario."
-    except Exception as e:
-        mp_error = str(e)
-
-    return templates.TemplateResponse("billing_status.html", {"request": request,"user": user,"plan": plan,"mp_info": mp_info,"mp_error": mp_error})
-
-
-@router.get("/subscribe", response_class=HTMLResponse)
-def billing_subscribe_landing():
-    """
-    Landing intermedia que muestra 2 links correctos:
-      - /payments/subscribe?plan=PRO
-      - /payments/subscribe?plan=BIZ&seats=<incluidos>
-    """
-    inc = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
-    return HTMLResponse(
-        "<h2>Suscripción mensual</h2>"
-        "<p>Elegí tu plan para configurar el débito automático:</p>"
-        '<p><a href="/payments/subscribe?plan=PRO">Suscribirme a PRO</a></p>'
-        f'<p><a href="/payments/subscribe?plan=BIZ&seats={inc}">Suscribirme a EMPRESAS (incluye {inc} asientos)</a></p>'
-    )
-
-
-from .payments import Subscription
+# ---------- Vista de suscripciones (HTML) ----------
 @router.get("/subscriptions", response_class=HTMLResponse)
-def billing_subscriptions(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
-    from fastapi.templating import Jinja2Templates
-    templates = Jinja2Templates(directory=TEMPLATES_DIR)
-    rows = db.query(Subscription).filter(Subscription.user_id == getattr(user,"id",None)).order_by(Subscription.updated_at.desc()).limit(50).all()
-    return templates.TemplateResponse("billing_subscriptions.html", {"request": request, "user": user, "subs": rows})
+def billing_subscriptions(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    """
+    Lista suscripciones. Si el usuario NO es admin, muestra sólo las propias.
+    Usa template billing_subscriptions.html si existe, con fallback HTML.
+    """
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    q = db.query(Subscription)
+    if getattr(user, "role", "user") != "admin":
+        q = q.filter(Subscription.user_id == user.id)
+
+    rows = q.order_by(Subscription.updated_at.desc()).limit(100).all()
+
+    # Intentar template primero
+    try:
+        return templates.TemplateResponse(
+            "billing_subscriptions.html",
+            {"request": request, "user": user, "subs": rows},
+        )
+    except TemplateNotFound:
+        # Fallback HTML si no hay template
+        th_user = "<th>Usuario</th>" if getattr(user, "role", "user") == "admin" else ""
+        td_user = lambda r: f"<td>{getattr(r, 'user_id', '-') or '-'}</td>" if getattr(user, "role", "user") == "admin" else ""
+        body = "".join(
+            f"<tr>"
+            f"{td_user(r)}"
+            f"<td>{r.preapproval_id}</td>"
+            f"<td>{(r.plan or '').upper()}</td>"
+            f"<td><span style='background:#103a2f;color:#bfffe5;padding:3px 8px;border-radius:8px'>"
+            f"{(r.status or '').lower()}</span></td>"
+            f"<td>{r.currency} {r.amount}</td>"
+            f"<td>{r.next_payment_date or '-'}</td>"
+            f"<td><a href='/payments/status?preapproval_id={r.preapproval_id}' style='color:#9ed0ff'>Actualizar</a></td>"
+            f"</tr>"
+            for r in rows
+        )
+
+        html = f"""
+        <!doctype html><html lang="es"><meta charset="utf-8"><title>Suscripciones | AlertTrail</title>
+        <body style="font-family:system-ui;background:#0b1f2f;color:#eaf3ff;margin:0">
+          <div style="max-width:980px;margin:40px auto;padding:0 16px">
+            <p><a href="/dashboard" style="color:#9ed0ff;text-decoration:none">← Volver al dashboard</a></p>
+            <h1>Suscripciones</h1>
+            <div style="background:#0f2a42;border:1px solid #133954;border-radius:14px;padding:18px">
+              {"<p>No hay suscripciones registradas.</p>" if not rows else
+              f"<table style='width:100%;border-collapse:collapse'><thead><tr>{th_user}<th>Preapproval ID</th><th>Plan</th><th>Estado</th><th>Monto</th><th>Próximo pago</th><th>Acciones</th></tr></thead><tbody>{body}</tbody></table>"}
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(html)
