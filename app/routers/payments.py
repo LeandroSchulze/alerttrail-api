@@ -37,16 +37,19 @@ def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
       - PRO_PRICE_USD (default 10.0)
       - BIZ_PRICE_USD (default 25.0)
       - BIZ_EXTRA_SEAT_USD (default 5.0)  # por asiento adicional
+      - BIZ_INCLUDED_SEATS (default 25)   # asientos incluidos en EMPRESAS
     """
-    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
-    pro_price = float(os.getenv("PRO_PRICE_USD") or os.getenv("PLAN_PRICE") or 10.0)
-    biz_base = float(os.getenv("BIZ_PRICE_USD") or 25.0)
-    biz_extra = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 5.0)
-    plan_norm = (plan or "PRO").upper()
+    currency   = (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    pro_price  = float(os.getenv("PRO_PRICE_USD") or os.getenv("PLAN_PRICE") or 10.0)
+    biz_base   = float(os.getenv("BIZ_PRICE_USD") or 25.0)
+    biz_extra  = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 5.0)
+    included   = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
+    plan_norm  = (plan or "PRO").upper()
 
     if plan_norm == "BIZ":
-        # asientos totales = seats; se cobra base + extras (a partir del 2do asiento)
-        extras = max(0, (seats or 1) - 1)
+        # Se cobran extras recién por arriba de los asientos incluidos
+        total_seats = max(int(seats or included), 1)
+        extras = max(0, total_seats - included)
         amount = biz_base + extras * biz_extra
     else:
         amount = pro_price
