@@ -4,10 +4,12 @@ from typing import Optional, Tuple
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import TemplateNotFound
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 import mercadopago
 
@@ -16,15 +18,15 @@ from app import models
 from app.security import get_current_user_cookie
 
 # Usamos el modelo Subscription definido en payments.py para listar suscripciones
+# (si no existe la tabla, la creamos en caliente más abajo)
 from .payments import Subscription
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-# ======== ENV & helpers ========
+# ======== ENV & templates ========
 BASE_URL = (os.getenv("BASE_URL") or "https://www.alerttrail.com").rstrip("/")
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
 
-# Templates
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -42,7 +44,6 @@ def _is_pro(u) -> bool:
     return bool(getattr(u, "is_pro", False)) or (getattr(u, "plan", "free") or "free").lower() in {"pro", "biz"}
 
 def _set_plan(u: models.User, plan: str):
-    """Guarda 'PRO' o 'BIZ' (o 'FREE'). Marca is_pro=True para PRO o BIZ."""
     p = (plan or "free").lower()
     if hasattr(u, "plan"):
         u.plan = p.upper() if p in ("free", "pro", "biz") else p
@@ -55,10 +56,7 @@ def _sdk() -> mercadopago.SDK:
     return mercadopago.SDK(MP_ACCESS_TOKEN)
 
 def _as_user_attr(obj):
-    """
-    Convierte dicts en objeto con atributos (incluye 'id' derivado de 'user_id'/'uid').
-    Evita errores en plantillas que usan user.id / user.role, etc.
-    """
+    """Convierte dict en objeto con attrs (id/role) para evitar AttributeError en plantillas."""
     if isinstance(obj, dict):
         d = dict(obj)
         if "id" not in d:
@@ -68,15 +66,66 @@ def _as_user_attr(obj):
         return SimpleNamespace(**d)
     return obj
 
+def _ensure_subscriptions_table(db: Session):
+    """
+    Crea la tabla subscriptions si no existe (sqlite/postgres).
+    Evita que /billing/subscriptions reviente con 'no such table'.
+    """
+    eng = db.get_bind()
+    dialect = getattr(eng.dialect, "name", "sqlite")
+    if dialect == "sqlite":
+        ddl = """
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            preapproval_id VARCHAR UNIQUE,
+            status VARCHAR,
+            "plan" VARCHAR,
+            seats INTEGER DEFAULT 1,
+            currency VARCHAR DEFAULT 'USD',
+            amount INTEGER,
+            next_payment_date VARCHAR,
+            external_reference VARCHAR,
+            raw TEXT,
+            created_at DATETIME,
+            updated_at DATETIME
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_preapproval_id ON subscriptions(preapproval_id);
+        CREATE INDEX IF NOT EXISTS ix_subscriptions_user_id ON subscriptions(user_id);
+        CREATE INDEX IF NOT EXISTS ix_subscriptions_status ON subscriptions(status);
+        """
+    else:  # postgres y similares
+        ddl = """
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            preapproval_id VARCHAR UNIQUE,
+            status VARCHAR,
+            "plan" VARCHAR,
+            seats INTEGER DEFAULT 1,
+            currency VARCHAR DEFAULT 'USD',
+            amount INTEGER,
+            next_payment_date VARCHAR,
+            external_reference VARCHAR,
+            raw TEXT,
+            created_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_preapproval_id ON subscriptions(preapproval_id);
+        CREATE INDEX IF NOT EXISTS ix_subscriptions_user_id ON subscriptions(user_id);
+        CREATE INDEX IF NOT EXISTS ix_subscriptions_status ON subscriptions(status);
+        """
+    for stmt in ddl.split(";"):
+        s = stmt.strip()
+        if s:
+            db.execute(text(s))
+    db.commit()
+
 def _compute_price_pro() -> Tuple[str, float, str]:
-    """
-    PRO: label UI, monto ARS para MP, título
-    """
     currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
     price = _parse_float(os.getenv("PLAN_PRICE"), 10.0)
     usd_ars = _parse_float(os.getenv("USD_ARS"), 600.0)
     override_mp = os.getenv("MP_PRICE_ARS") or os.getenv("PRO_PRICE_ARS")
-
     if currency == "USD":
         mp_amount_ars = _parse_float(override_mp, round(price * usd_ars))
         label = f"Mejorar a PRO (USD {price:.2f}/mes · ~${mp_amount_ars:,.0f} ARS)".replace(",", ".")
@@ -87,9 +136,6 @@ def _compute_price_pro() -> Tuple[str, float, str]:
     return label, float(mp_amount_ars), title
 
 def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
-    """
-    BIZ/EMPRESAS: label UI, monto ARS, título, seats incluidos, precio extra (USD/ARS)
-    """
     seats = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
     currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
     price_usd = _parse_float(os.getenv("BIZ_PRICE_USD"), 99.0)
@@ -97,7 +143,6 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
     extra_usd = _parse_float(os.getenv("BIZ_EXTRA_SEAT_USD"), 3.0)
     extra_ars_override = os.getenv("BIZ_EXTRA_SEAT_ARS")
     override_biz_ars = os.getenv("BIZ_PRICE_ARS")
-
     if currency == "USD":
         mp_amount_ars = _parse_float(override_biz_ars, round(price_usd * usd_ars))
         extra_ars = _parse_float(extra_ars_override, round(extra_usd * usd_ars))
@@ -116,18 +161,15 @@ def _compute_price_biz() -> Tuple[str, float, str, int, float, float]:
     title = "AlertTrail EMPRESAS - 1 mes"
     return label, float(mp_amount_ars), title, seats, float(extra_usd), float(extra_ars)
 
-
 # ---------- UI ----------
 @router.get("", response_class=HTMLResponse, name="billing_page")
 def billing_page(request: Request, db: Session = Depends(get_db)):
-    # Usuario REAL desde DB (o dict si proviene del token)
     try:
         user = get_current_user_cookie(request, db=db)
     except Exception:
         return RedirectResponse(url="/auth/login", status_code=303)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
-
     user = _as_user_attr(user)
 
     plan = (getattr(user, "plan", "FREE") or "FREE").upper()
@@ -138,8 +180,7 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
 
     pro_label, _, _ = _compute_price_pro()
     biz_label, _, _, seats, extra_usd, extra_ars = _compute_price_biz()
-
-    current_title = plan  # "FREE", "PRO" o "BIZ"
+    current_title = plan
 
     pro_cta = (
         "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;"
@@ -149,7 +190,6 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#10b981;"
         f"color:#06241f;font-weight:700;cursor:pointer'>{pro_label}</button></form>"
     )
-
     biz_cta = (
         "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#082f49;"
         "color:#bae6fd;font-weight:700'>Plan activo</span>"
@@ -158,7 +198,6 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
         f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#0ea5e9;"
         f"color:#03131c;font-weight:700;cursor:pointer'>{biz_label}</button></form>"
     )
-
     downgrade_btn = (
         "<form method='post' action='/billing/downgrade'>"
         "<button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;"
@@ -220,7 +259,7 @@ def billing_checkout(
         return RedirectResponse(url="/auth/login", status_code=303)
     return RedirectResponse(url=f"/payments/subscribe?plan={plan.upper()}&seats={seats}", status_code=303)
 
-# ---------- Downgrade rápido (parche local) ----------
+# ---------- Downgrade rápido ----------
 @router.post("/downgrade")
 def billing_downgrade(
     request: Request,
@@ -240,27 +279,34 @@ def billing_downgrade(
         raise
     return RedirectResponse(url="/billing", status_code=303)
 
-# ---------- Vista de suscripciones (HTML) ----------
+# ---------- Vista de suscripciones ----------
 @router.get("/subscriptions", response_class=HTMLResponse, name="billing_subscriptions")
 def billing_subscriptions(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_cookie),
 ):
-    """
-    Lista suscripciones. Si el usuario NO es admin, muestra sólo las propias.
-    Soporta user como ORM o dict (lo convertimos a objeto con atributos).
-    """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
 
     user = _as_user_attr(user)
 
-    q = db.query(Subscription)
-    if getattr(user, "role", "user") != "admin":
-        q = q.filter(Subscription.user_id == getattr(user, "id", None))
-
-    rows = q.order_by(Subscription.updated_at.desc()).limit(100).all()
+    # Si la tabla no existe, la creamos y reintentamos
+    try:
+        q = db.query(Subscription)
+        if getattr(user, "role", "user") != "admin":
+            q = q.filter(Subscription.user_id == getattr(user, "id", None))
+        rows = q.order_by(Subscription.updated_at.desc()).limit(100).all()
+    except OperationalError as e:
+        if "no such table: subscriptions" in str(e).lower():
+            _ensure_subscriptions_table(db)
+            # Reintento tras crear la tabla
+            q = db.query(Subscription)
+            if getattr(user, "role", "user") != "admin":
+                q = q.filter(Subscription.user_id == getattr(user, "id", None))
+            rows = q.order_by(Subscription.updated_at.desc()).limit(100).all()
+        else:
+            raise
 
     try:
         return templates.TemplateResponse(
