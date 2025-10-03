@@ -6,14 +6,15 @@ from email.header import decode_header, make_header
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
+import asyncio
 from fastapi import APIRouter, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Session
 
-from app.database import Base, engine, get_db
+from app.database import Base, engine, get_db, SessionLocal
 from app.security import get_current_user_cookie
 
 # ====== helpers de cifrado ======
@@ -56,24 +57,9 @@ TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# ====== alertas in-app opcionales ======
-try:
-    from app.services.pro_alerts import queue_or_push  # type: ignore
-except Exception:
-    queue_or_push = None
-
-def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -> None:
-    if not queue_or_push:
-        return
-    try:
-        msg = f"Correo sospechoso: {subject} — {sender} ({'; '.join(reasons)})"
-        queue_or_push(user_id=user_id, title="Alerta de correo", message=msg, level="warning")
-    except Exception:
-        pass
-
 # ====== MODELOS ======
 # Fuente de verdad: MailAccount vive en app.models (ya está definido allí)
-from app.models import MailAccount
+from app.models import MailAccount, User  # 👈 importamos User para buscar el usuario al notificar
 
 # MailAlert sólo existe aquí
 class MailAlert(Base):
@@ -333,7 +319,7 @@ def manual_scan(request: Request, db: Session = Depends(get_db)):
       .actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}}
       .btn{{display:inline-block;border-radius:10px;padding:10px 14px;font-weight:700;border:1px solid var(--line);background:#fff;color:var(--text)}}
       .btn:hover{{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}}
-      .btn-primary{{background:var(--brand);color:#fff;border:0}}
+      .btn-primary{{background:var(--brand);color:var(--fff);border:0}}
       .btn-primary:hover{{filter:brightness(1.05)}}
       .list{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:12px}}
       .item{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}}
@@ -409,8 +395,63 @@ def mark_all_read(request: Request, db: Session = Depends(get_db)):
     db.query(MailAlert).filter(MailAlert.user_id == user.id, MailAlert.is_read == False).update({MailAlert.is_read: True})
     db.commit()
 
+# ====== SSE: stream de alertas en tiempo real ======
+@router.get("/alerts/stream")
+async def alerts_stream(request: Request, db: Session = Depends(get_db)):
+    """
+    Emite eventos SSE cuando cambia el conteo de alertas no leídas del usuario.
+    El dashboard puede abrir EventSource('/mail/alerts/stream') para recibir 'mail_alert'.
+    """
+    user = get_current_user_cookie(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    async def eventgen():
+        try:
+            last = db.query(MailAlert).filter(
+                MailAlert.user_id == user.id, MailAlert.is_read == False
+            ).count()
+            while True:
+                if await request.is_disconnected():
+                    break
+                await asyncio.sleep(5)
+                curr = db.query(MailAlert).filter(
+                    MailAlert.user_id == user.id, MailAlert.is_read == False
+                ).count()
+                if curr > last:
+                    # notificar cantidad nueva (el front refresca /alerts/pending si quiere el detalle)
+                    yield f'data: {{"type":"mail_alert","new": {curr - last}}}\n\n'
+                    last = curr
+        except Exception as e:
+            # cerramos el stream silenciosamente
+            yield f'data: {{"type":"error","message":"{str(e)}"}}\n\n'
+
+    return StreamingResponse(eventgen(), media_type="text/event-stream")
+
 # ====== cron & API ======
 MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
+
+def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -> None:
+    """
+    Encola o envía una push (si el user está habilitado PRO + push) cuando aparece un correo riesgoso.
+    """
+    msg = f"Correo sospechoso: {subject} — {sender} ({'; '.join(reasons)})"
+    db = None
+    try:
+        # Import perezoso para evitar fallos al importar el módulo si falta algo en otros contextos
+        from app.services.pro_alerts import queue_or_push as pro_push  # firma: (db, user, title, body, url)
+        db = SessionLocal()
+        user = db.query(User).get(user_id)  # SQLAlchemy 1.x
+        if user:
+            pro_push(db, user, title="Alerta de correo", body=msg, url="/mail/alerts")
+    except Exception as e:
+        print("[mail][_notify_alert] error:", e)
+    finally:
+        try:
+            if db:
+                db.close()
+        except Exception:
+            pass
 
 def _scan_account(db: Session, acct: MailAccount) -> dict:
     scans = alerts = errors = 0
