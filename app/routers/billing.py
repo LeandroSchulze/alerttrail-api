@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-import mercadopago
+# ⚠️ IMPORT RESILIENTE: si el SDK no está, igual montamos el router
+try:
+    import mercadopago  # type: ignore
+except Exception as _mp_err:
+    mercadopago = None
+    print("[billing] mercadopago SDK no disponible:", _mp_err)
 
 from app.database import get_db
 from app import models
@@ -49,9 +54,16 @@ def _set_plan(u: models.User, plan: str):
     if hasattr(u, "is_pro"):
         u.is_pro = (p in {"pro", "biz"})
 
-def _sdk() -> mercadopago.SDK:
+def _sdk():
+    """
+    Devuelve el SDK de MP o lanza HTTP 503 si falta algo.
+    NOTA: hoy este router redirige a /payments/subscribe, pero dejamos
+    el helper por si más adelante se usa SDK desde acá.
+    """
+    if mercadopago is None:
+        raise HTTPException(status_code=503, detail="SDK Mercado Pago no instalado")
     if not MP_ACCESS_TOKEN:
-        raise RuntimeError("Falta MP_ACCESS_TOKEN en variables de entorno")
+        raise HTTPException(status_code=503, detail="MP_ACCESS_TOKEN no configurado")
     return mercadopago.SDK(MP_ACCESS_TOKEN)
 
 def _as_user_attr(obj):
@@ -240,6 +252,7 @@ def billing_checkout(
 ):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    # Redirigimos al flujo real en payments.py (este router no llama SDK directo)
     return RedirectResponse(url=f"/payments/subscribe?plan={plan.upper()}&seats={seats}", status_code=303)
 
 # ---------- Downgrade rápido ----------
@@ -370,7 +383,7 @@ def billing_subscriptions_sync(
     # hacer sync y volver a la lista
     try:
         _sync_preapproval(db, preapproval_id=preapproval_id)
-    except Exception:
+    except Exception as e:
         # aunque falle, no bloquear la UX: volvemos a la página
-        pass
+        print("[billing] sync fallo:", e)
     return RedirectResponse(url="/billing/subscriptions", status_code=303)
