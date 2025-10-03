@@ -363,6 +363,65 @@ def billing_subscriptions(
         """
         return HTMLResponse(html)
 
+# ---------- Acción: sync de la ÚLTIMA suscripción conocida ----------
+@router.get("/subscriptions/sync_latest")
+def billing_subscriptions_sync_latest(
+    email: Optional[str] = Query(None, description="Solo admins: email del usuario a sincronizar"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    """
+    Sincroniza el último registro de suscripción (por updated_at desc) del usuario.
+    - Si el caller es admin y pasa ?email=, sincroniza la del dueño de ese email.
+    - Si no encuentra filas en DB para ese usuario, simplemente redirige a la lista.
+    """
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    caller = _as_user_attr(user)
+
+    # Aseguramos tabla si hace falta
+    try:
+        _ = db.query(Subscription).first()
+    except OperationalError as e:
+        if "no such table: subscriptions" in str(e).lower():
+            _ensure_subscriptions_table(db)
+        else:
+            raise
+
+    # Resolver target user
+    target_user = None
+    target_email = None
+    if getattr(caller, "role", "user") == "admin" and email:
+        target_user = db.query(models.User).filter(models.User.email.ilike(email)).first()
+        target_email = email
+    if not target_user:
+        target_user = db.query(models.User).get(getattr(caller, "id", None))
+        target_email = getattr(target_user, "email", None) if target_user else None
+    if not target_user:
+        return RedirectResponse(url="/billing/subscriptions", status_code=303)
+
+    # Buscar la última fila conocida para ese usuario y sincronizar
+    row = (
+        db.query(Subscription)
+        .filter(Subscription.user_id == target_user.id)
+        .order_by(Subscription.updated_at.desc(), Subscription.id.desc())
+        .first()
+    )
+    if row and row.preapproval_id:
+        try:
+            _sync_preapproval(db, preapproval_id=row.preapproval_id)
+        except Exception as e:
+            print("[billing] sync_latest fallo:", e)
+
+    # Volver a la vista (si es admin y había email, conservamos el filtro)
+    redir = "/billing/subscriptions"
+    if getattr(caller, "role", "user") == "admin" and target_email:
+        redir += f"?email={target_email}"
+    return RedirectResponse(url=redir, status_code=303)
+
+
+
+
 # ---------- Acción: sync por preapproval_id y volver a la tabla ----------
 @router.get("/subscriptions/sync")
 def billing_subscriptions_sync(
