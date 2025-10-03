@@ -344,6 +344,10 @@ def billing_subscriptions(
                 <input type="text" name="preapproval_id" placeholder="preapproval_id" style="padding:8px;border-radius:8px;border:1px solid #133954;background:#0b1f2f;color:#eaf3ff" />
                 <button style="padding:8px 12px;border-radius:8px;border:0;background:#10b981;color:#06241f;font-weight:700">Sincronizar</button>
               </form>
+              <form method="get" action="/billing/subscriptions/import_by_email" title="Crear/actualizar a partir del email en MP">
+                <input type="email" name="email" placeholder="importar por email (MercadoPago)" style="padding:8px;border-radius:8px;border:1px solid #133954;background:#0b1f2f;color:#eaf3ff" required />
+                <button style="padding:8px 12px;border-radius:8px;border:0;background:#22c55e;color:#06241f;font-weight:700">Importar de MP</button>
+              </form>
             </div>
             """
         html = f"""
@@ -419,8 +423,78 @@ def billing_subscriptions_sync_latest(
         redir += f"?email={target_email}"
     return RedirectResponse(url=redir, status_code=303)
 
+# ---------- Acción: importar desde Mercado Pago por email (solo admin) ----------
+@router.get("/subscriptions/import_by_email")
+def billing_subscriptions_import_by_email(
+    email: str = Query(..., description="Email del usuario en Mercado Pago"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    """
+    Busca preaprobaciones en Mercado Pago por email y sincroniza la más reciente.
+    Crea la fila local si no existía aún. Solo para admins.
+    """
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    caller = _as_user_attr(user)
+    if getattr(caller, "role", "user") != "admin":
+        raise HTTPException(status_code=403, detail="Solo admins")
 
+    # asegurar tabla
+    try:
+        _ = db.query(Subscription).first()
+    except OperationalError as e:
+        if "no such table: subscriptions" in str(e).lower():
+            _ensure_subscriptions_table(db)
+        else:
+            raise
 
+    if not MP_ACCESS_TOKEN:
+        raise HTTPException(status_code=503, detail="MP_ACCESS_TOKEN no configurado")
+
+    # Consulta directa al API de MP (evitamos depender del SDK aquí)
+    import json, urllib.parse, urllib.request
+    url = "https://api.mercadopago.com/preapproval/search"
+    params = urllib.parse.urlencode({"payer_email": email})
+    req = urllib.request.Request(
+        f"{url}?{params}",
+        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Accept": "application/json"},
+    )
+
+    preapproval_id = None
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+        results = (data.get("results") or data.get("data") or []) if isinstance(data, dict) else []
+        # Tomamos la más reciente
+        try:
+            results.sort(key=lambda x: x.get("date_created") or x.get("last_modified") or "", reverse=True)
+        except Exception:
+            pass
+        if results:
+            preapproval_id = results[0].get("id") or results[0].get("preapproval_id")
+    except Exception as e:
+        print("[billing] import_by_email error:", e)
+
+    if preapproval_id:
+        try:
+            _sync_preapproval(db, preapproval_id=preapproval_id)
+        except Exception as e:
+            print("[billing] import_by_email sync fallo:", e)
+
+        # Si la fila quedó sin user_id, intentamos asignarla por email
+        try:
+            row = db.query(Subscription).filter(Subscription.preapproval_id == preapproval_id).first()
+            if row and not getattr(row, "user_id", None):
+                u = db.query(models.User).filter(models.User.email.ilike(email)).first()
+                if u:
+                    row.user_id = u.id
+                    db.commit()
+        except Exception as e:
+            print("[billing] import_by_email post-assign fallo:", e)
+
+    # Volvemos a la lista con el filtro de ese email
+    return RedirectResponse(url=f"/billing/subscriptions?email={email}", status_code=303)
 
 # ---------- Acción: sync por preapproval_id y volver a la tabla ----------
 @router.get("/subscriptions/sync")
