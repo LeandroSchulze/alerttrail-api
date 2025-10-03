@@ -13,10 +13,15 @@ from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
-# ------------------------------------------------------------------------------
-# 1) Modelo de datos: preferimos app.models.Alert si existe.
-#    Si no existe, definimos un modelo local COMPATIBLE con mail.py (mail_alerts).
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------
+# helper para obtener el id del usuario (objeto o dict)
+def _uid(u):
+    if isinstance(u, dict):
+        return u.get("id") or u.get("uid") or u.get("sub")
+    return getattr(u, "id", None)
+# ------------------------------------------------------------------
+
+# 1) Modelo de datos…
 try:
     from app.models import Alert as ORMAlert, User  # si tu proyecto lo define
     Alert = ORMAlert
@@ -28,13 +33,12 @@ except Exception:
 
     class Alert(LocalBase):
         __tablename__ = "mail_alerts"
-        # columnas compatibles con la tabla creada en app/routers/mail.py
         id = Column(Integer, primary_key=True)
         user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-        msg_uid = Column(String, index=True)        # idempotencia opcional (usamos como ext_key si viene)
+        msg_uid = Column(String, index=True)
         subject = Column(Text, default="")
-        sender = Column(String, default="")         # ≈ from_email
-        reason = Column(String, default="")         # ≈ snippet / motivos
+        sender = Column(String, default="")
+        reason = Column(String, default="")
         created_at = Column(DateTime, default=dt.datetime.utcnow)
         is_read = Column(Boolean, default=False)
 
@@ -43,9 +47,7 @@ except Exception:
     except Exception:
         pass
 
-# ------------------------------------------------------------------------------
-# 2) Helper para crear alertas desde el scanner/cron con mapeo de campos
-# ------------------------------------------------------------------------------
+# 2) Helper create_alert (sin cambios relevantes)
 def create_alert(
     db: Session,
     *,
@@ -53,15 +55,10 @@ def create_alert(
     subject: str,
     from_email: str,
     snippet: str = "",
-    score: int = 0,                  # ignorado si la tabla no lo soporta
-    link: str = "/mail/scanner",     # idem
-    ext_key: Optional[str] = None,   # usamos msg_uid si está disponible
+    score: int = 0,
+    link: str = "/mail/scanner",
+    ext_key: Optional[str] = None,
 ):
-    """
-    Crea una alerta de forma segura contra esquemas distintos.
-    Usa ext_key como msg_uid si existe la columna (idempotencia).
-    """
-    # idempotencia por ext_key -> msg_uid si la columna existe
     if hasattr(Alert, "msg_uid") and ext_key:
         existing = (
             db.query(Alert)
@@ -71,7 +68,6 @@ def create_alert(
         if existing:
             return existing
 
-    # armamos kwargs sólo con columnas soportadas por el modelo/tabla actual
     fields = {"user_id": user_id, "subject": (subject or "")[:250]}
     if hasattr(Alert, "sender"):
         fields["sender"] = (from_email or "")[:250]
@@ -79,8 +75,6 @@ def create_alert(
         fields["reason"] = (snippet or "")[:5000]
     if ext_key and hasattr(Alert, "msg_uid"):
         fields["msg_uid"] = ext_key
-    # si tu modelo real tuviera from_email/snippet/link/score/ext_key,
-    # también los seteamos (esto cubre el caso de app.models.Alert distinto)
     if hasattr(Alert, "from_email"):
         fields["from_email"] = (from_email or "")[:250]
     if hasattr(Alert, "snippet"):
@@ -97,21 +91,17 @@ def create_alert(
     db.commit()
     return a
 
-# ------------------------------------------------------------------------------
-# 3) Endpoint de compatibilidad: unread-count (con tu firma original)
-# ------------------------------------------------------------------------------
+# 3) unread-count
 @router.get("/unread-count")
 def unread_count(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-    count = db.query(Alert).filter(Alert.user_id == user.id, Alert.is_read == False).count()
+    uid = _uid(user)
+    count = db.query(Alert).filter(Alert.user_id == uid, Alert.is_read == False).count()
     return {"count": int(count)}
 
-# ------------------------------------------------------------------------------
-# 4) PUSH HTTP (para cron/worker): crear alerta vía request
-#    Seguridad mínima con token de cabecera: X-Alert-Push-Token
-# ------------------------------------------------------------------------------
+# 4) PUSH HTTP (igual que tu versión)
 ALERT_PUSH_TOKEN = (os.getenv("ALERT_PUSH_TOKEN") or "").strip()
 
 @router.post("/push", response_class=JSONResponse)
@@ -131,7 +121,6 @@ def push_alert(
     if ALERT_PUSH_TOKEN and token != ALERT_PUSH_TOKEN:
         raise HTTPException(status_code=403, detail="Token inválido")
 
-    # Resolver usuario
     u = None
     if user_id:
         u = db.query(User).get(user_id)
@@ -153,24 +142,22 @@ def push_alert(
     )
     return {"ok": True, "id": a.id}
 
-# ------------------------------------------------------------------------------
-# 5) PENDING: el frontend pregunta si hay alerta pendiente (no leída)
-# ------------------------------------------------------------------------------
+# 5) pending (usa _uid para evitar AttributeError)
 @router.get("/pending", response_class=JSONResponse)
 def pending_alert(db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
-    if not user:
+    uid = _uid(user)
+    if not uid:
         return JSONResponse({"ok": False, "reason": "unauthorized"}, status_code=401)
 
     a = (
         db.query(Alert)
-        .filter(Alert.user_id == user.id, Alert.is_read == False)
+        .filter(Alert.user_id == uid, Alert.is_read == False)
         .order_by(Alert.id.desc())
         .first()
     )
     if not a:
         return {"ok": True, "pending": False}
 
-    # Fallbacks para distintos esquemas
     from_email = getattr(a, "from_email", None) or getattr(a, "sender", "") or ""
     snippet = getattr(a, "snippet", None) or getattr(a, "reason", "") or ""
     link = getattr(a, "link", "/mail/scanner") or "/mail/scanner"
@@ -197,15 +184,14 @@ def pending_alert(db: Session = Depends(get_db), user=Depends(get_current_user_c
         },
     }
 
-# ------------------------------------------------------------------------------
-# 6) ACK: marcar alerta como leída
-# ------------------------------------------------------------------------------
+# 6) ACK (usa _uid)
 @router.post("/{alert_id}/ack", response_class=JSONResponse)
 def ack_alert(alert_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
-    if not user:
+    uid = _uid(user)
+    if not uid:
         return JSONResponse({"ok": False, "reason": "unauthorized"}, status_code=401)
 
-    a = db.query(Alert).filter(Alert.id == alert_id, Alert.user_id == user.id).first()
+    a = db.query(Alert).filter(Alert.id == alert_id, Alert.user_id == uid).first()
     if not a:
         raise HTTPException(status_code=404, detail="Alerta no encontrada")
 
