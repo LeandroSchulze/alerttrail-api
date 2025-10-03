@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, declarative_base
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 
 from app.database import get_db, SessionLocal
 from app.security import get_current_user_cookie
@@ -14,38 +14,29 @@ from app.security import get_current_user_cookie
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 # ------------------------------------------------------------------------------
-# 1) Modelo de datos
-#    - Si existe app.models.Alert lo usamos.
-#    - Si NO existe, definimos uno local (tabla: mail_alerts) y la creamos.
+# 1) Modelo de datos: preferimos app.models.Alert si existe.
+#    Si no existe, definimos un modelo local COMPATIBLE con mail.py (mail_alerts).
 # ------------------------------------------------------------------------------
 try:
-    from app.models import Alert as ORMAlert, User  # preferencia por tu modelo
-except Exception:
-    ORMAlert = None
-    from app.models import User  # igual intentamos User
-
-if ORMAlert is not None:
+    from app.models import Alert as ORMAlert, User  # si tu proyecto lo define
     Alert = ORMAlert
     LocalBase = None
-else:
+except Exception:
+    from app.models import User  # igual intentamos User
     LocalBase = declarative_base()
     _engine = SessionLocal().get_bind() if hasattr(SessionLocal, "get_bind") else SessionLocal().bind
 
     class Alert(LocalBase):
         __tablename__ = "mail_alerts"
-        __table_args__ = (UniqueConstraint("ext_key", name="uq_mail_alerts_extkey"),)
-
+        # columnas compatibles con la tabla creada en app/routers/mail.py
         id = Column(Integer, primary_key=True)
         user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-        subject = Column(String, default="")
-        from_email = Column(String, default="")
-        snippet = Column(Text, default="")
-        score = Column(Integer, default=0)     # riesgo / heurística
-        link = Column(String, default="/mail/scanner")
+        msg_uid = Column(String, index=True)        # idempotencia opcional (usamos como ext_key si viene)
+        subject = Column(Text, default="")
+        sender = Column(String, default="")         # ≈ from_email
+        reason = Column(String, default="")         # ≈ snippet / motivos
+        created_at = Column(DateTime, default=dt.datetime.utcnow)
         is_read = Column(Boolean, default=False)
-        ext_key = Column(String, nullable=True, index=True)  # idempotencia opcional
-        created_at = Column(DateTime, default=lambda: dt.datetime.now(dt.timezone.utc))
-        updated_at = Column(DateTime, default=lambda: dt.datetime.now(dt.timezone.utc))
 
     try:
         LocalBase.metadata.create_all(_engine)
@@ -53,7 +44,7 @@ else:
         pass
 
 # ------------------------------------------------------------------------------
-# 2) Helper para crear alertas desde el scanner (sin HTTP)
+# 2) Helper para crear alertas desde el scanner/cron con mapeo de campos
 # ------------------------------------------------------------------------------
 def create_alert(
     db: Session,
@@ -62,33 +53,49 @@ def create_alert(
     subject: str,
     from_email: str,
     snippet: str = "",
-    score: int = 0,
-    link: str = "/mail/scanner",
-    ext_key: Optional[str] = None,
+    score: int = 0,                  # ignorado si la tabla no lo soporta
+    link: str = "/mail/scanner",     # idem
+    ext_key: Optional[str] = None,   # usamos msg_uid si está disponible
 ):
     """
-    Crea una alerta. Si se pasa ext_key y ya existe, se devuelve la existente (idempotente).
-    Usar desde tu código Python del scanner: create_alert(db, user_id=..., subject=..., from_email=...)
+    Crea una alerta de forma segura contra esquemas distintos.
+    Usa ext_key como msg_uid si existe la columna (idempotencia).
     """
-    # Si el modelo tiene ext_key, probamos idempotencia
-    if hasattr(Alert, "ext_key") and ext_key:
-        existing = db.query(Alert).filter(Alert.ext_key == ext_key).first()
+    # idempotencia por ext_key -> msg_uid si la columna existe
+    if hasattr(Alert, "msg_uid") and ext_key:
+        existing = (
+            db.query(Alert)
+            .filter(Alert.user_id == user_id, Alert.msg_uid == ext_key)
+            .first()
+        )
         if existing:
             return existing
 
-    alert = Alert(
-        user_id=user_id,
-        subject=(subject or "")[:250],
-        from_email=(from_email or "")[:250],
-        snippet=(snippet or "")[:5000],
-        score=int(score or 0),
-        link=link or "/mail/scanner",
-    )
-    if hasattr(alert, "ext_key"):
-        alert.ext_key = ext_key
-    db.add(alert)
+    # armamos kwargs sólo con columnas soportadas por el modelo/tabla actual
+    fields = {"user_id": user_id, "subject": (subject or "")[:250]}
+    if hasattr(Alert, "sender"):
+        fields["sender"] = (from_email or "")[:250]
+    if hasattr(Alert, "reason"):
+        fields["reason"] = (snippet or "")[:5000]
+    if ext_key and hasattr(Alert, "msg_uid"):
+        fields["msg_uid"] = ext_key
+    # si tu modelo real tuviera from_email/snippet/link/score/ext_key,
+    # también los seteamos (esto cubre el caso de app.models.Alert distinto)
+    if hasattr(Alert, "from_email"):
+        fields["from_email"] = (from_email or "")[:250]
+    if hasattr(Alert, "snippet"):
+        fields["snippet"] = (snippet or "")[:5000]
+    if hasattr(Alert, "link"):
+        fields["link"] = link or "/mail/scanner"
+    if hasattr(Alert, "score"):
+        fields["score"] = int(score or 0)
+    if hasattr(Alert, "ext_key") and ext_key:
+        fields["ext_key"] = ext_key
+
+    a = Alert(**fields)  # type: ignore
+    db.add(a)
     db.commit()
-    return alert
+    return a
 
 # ------------------------------------------------------------------------------
 # 3) Endpoint de compatibilidad: unread-count (con tu firma original)
@@ -98,11 +105,8 @@ def unread_count(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-    # Si no hay modelo (raro), devolvemos 0
-    if Alert is None:
-        return {"count": 0}
     count = db.query(Alert).filter(Alert.user_id == user.id, Alert.is_read == False).count()
-    return {"count": count}
+    return {"count": int(count)}
 
 # ------------------------------------------------------------------------------
 # 4) PUSH HTTP (para cron/worker): crear alerta vía request
@@ -166,17 +170,30 @@ def pending_alert(db: Session = Depends(get_db), user=Depends(get_current_user_c
     if not a:
         return {"ok": True, "pending": False}
 
+    # Fallbacks para distintos esquemas
+    from_email = getattr(a, "from_email", None) or getattr(a, "sender", "") or ""
+    snippet = getattr(a, "snippet", None) or getattr(a, "reason", "") or ""
+    link = getattr(a, "link", "/mail/scanner") or "/mail/scanner"
+
+    created = getattr(a, "created_at", None)
+    created_iso = None
+    if created:
+        try:
+            created_iso = created.isoformat()
+        except Exception:
+            created_iso = str(created)
+
     return {
         "ok": True,
         "pending": True,
         "alert": {
             "id": a.id,
             "subject": getattr(a, "subject", "") or "",
-            "from_email": getattr(a, "from_email", "") or "",
-            "snippet": (getattr(a, "snippet", "") or "")[:500],
+            "from_email": from_email,
+            "snippet": snippet[:500],
             "score": int(getattr(a, "score", 0) or 0),
-            "link": getattr(a, "link", "/mail/scanner") or "/mail/scanner",
-            "created_at": (a.created_at.isoformat() if getattr(a, "created_at", None) else None),
+            "link": link,
+            "created_at": created_iso,
         },
     }
 
