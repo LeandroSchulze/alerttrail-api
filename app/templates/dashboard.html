@@ -38,7 +38,7 @@
     .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
     .btn-primary{display:inline-block;text-decoration:none;background:var(--brand);color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
     .btn-primary:hover{filter:brightness(1.05)}
-    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--text);background:#fff}
+    .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:#0f172a;background:#fff;cursor:pointer}
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
 
     footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center}
@@ -81,6 +81,8 @@
           <a class="btn-primary" href="/billing">Cambiar plan</a>
           <!-- Botón para abrir el modal de planes -->
           <button id="openPlansModal" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
+          <!-- 🔔 Activar notificaciones (Web Push) -->
+          <button id="btnPush" class="btn-outline" type="button">🔔 Activar notificaciones</button>
           {% if user.is_org_admin and user.org_id %}
             <a class="btn-outline" href="/org/admin">Admin de organización</a>
           {% endif %}
@@ -233,7 +235,7 @@
     .plans-footer{padding:14px 20px;border-top:1px solid #eef2f7;font-size:14px;background:#fafafa}
   </style>
 
-  <!-- Script para notificaciones -->
+  <!-- Script para notificaciones (desktop) -->
   <script>
     let lastUnread = 0;
     if ("Notification" in window) {
@@ -249,7 +251,6 @@
         const res = await fetch("/mail/alerts/unread_count");
         if (!res.ok) return;
         const data = await res.json();
-        // acepta {unread:n} o {count:n}
         const unread = (typeof data.unread === "number") ? data.unread
                       : (typeof data.count === "number") ? data.count
                       : 0;
@@ -260,52 +261,7 @@
     setInterval(checkAlerts, 30000); checkAlerts();
   </script>
 
-  <!-- ===== JS del modal (accesible, sin dependencias) ===== -->
-  <script>
-    (function(){
-      const modal = document.getElementById('plansModal');
-      const openBtn1 = document.getElementById('openPlansModal');
-      const openBtn2 = document.getElementById('openPlansModal2');
-      const closeBtn = document.getElementById('closePlansModal');
-      const tabProBtn = document.getElementById('tab-pro-btn');
-      const tabBizBtn = document.getElementById('tab-biz-btn');
-      const tabPro = document.getElementById('tab-pro');
-      const tabBiz = document.getElementById('tab-biz');
-
-      function openModal(){
-        modal.classList.add('is-open');
-        modal.setAttribute('aria-hidden','false');
-        tabProBtn.focus();
-      }
-      function closeModal(){
-        modal.classList.remove('is-open');
-        modal.setAttribute('aria-hidden','true');
-        (openBtn1 || openBtn2)?.focus();
-      }
-      function activateTab(which){
-        if (which === 'pro'){
-          tabProBtn.classList.add('is-active'); tabProBtn.setAttribute('aria-selected','true');
-          tabBizBtn.classList.remove('is-active'); tabBizBtn.setAttribute('aria-selected','false');
-          tabPro.hidden = false; tabBiz.hidden = true;
-        } else {
-          tabBizBtn.classList.add('is-active'); tabBizBtn.setAttribute('aria-selected','true');
-          tabProBtn.classList.remove('is-active'); tabProBtn.setAttribute('aria-selected','false');
-          tabBiz.hidden = false; tabPro.hidden = true;
-        }
-      }
-
-      openBtn1?.addEventListener('click', openModal);
-      openBtn2?.addEventListener('click', openModal);
-      closeBtn?.addEventListener('click', closeModal);
-      modal?.addEventListener('click', (e)=>{ if(e.target === modal) closeModal(); });
-      document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modal.classList.contains('is-open')) closeModal(); });
-
-      tabProBtn?.addEventListener('click', ()=>activateTab('pro'));
-      tabBizBtn?.addEventListener('click', ()=>activateTab('biz'));
-    })();
-  </script>
-
-  <!-- ===== Popup automático de correos sospechosos ===== -->
+  <!-- ===== JS del modal (accesible, sin dependencias) + SSE ===== -->
   <script>
     (function(){
       const POLL_MS = 10000;
@@ -320,11 +276,11 @@
         card.style.cssText = 'background:#0f2a42;color:#eaf3ff;border:1px solid #133954;border-radius:14px;max-width:560px;width:92%;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)';
         card.innerHTML = `
           <h3 style="margin:0 0 6px">⚠️ Posible correo sospechoso</h3>
-          <p style="margin:0 0 2px"><b>De:</b> ${a.from_email || '-'}</p>
-          <p style="margin:0 10px 8px 0;word-break:break-word;"><b>Asunto:</b> ${a.subject || '-'}</p>
-          <p style="margin:0 0 14px;color:#bcd7f0">${(a.snippet || '').replace(/</g,'&lt;').slice(0,280)}</p>
+          <p style="margin:0 0 2px"><b>De:</b> \${a.from_email || '-'}</p>
+          <p style="margin:0 10px 8px 0;word-break:break-word;"><b>Asunto:</b> \${a.subject || '-'}</p>
+          <p style="margin:0 0 14px;color:#bcd7f0">\${(a.snippet || '').replace(/</g,'&lt;').slice(0,280)}</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
-            <a href="${a.link || '/mail/scanner'}" class="btn-primary" style="padding:10px 14px;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;text-decoration:none">Ver en Scanner</a>
+            <a href="\${a.link || '/mail/scanner'}" class="btn-primary" style="padding:10px 14px;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;text-decoration:none">Ver en Scanner</a>
             <button id="mail-alert-dismiss" style="padding:10px 14px;border-radius:10px;background:#133954;color:#cfe6ff;border:0;cursor:pointer">Descartar</button>
           </div>
         `;
@@ -333,7 +289,7 @@
 
         const dismiss = () => {
           try { localStorage.setItem(seenKey(a.id), '1'); } catch(_){}
-          fetch(`/alerts/${a.id}/ack`, {method:'POST'}).catch(()=>{});
+          fetch(`/alerts/\${a.id}/ack`, {method:'POST'}).catch(()=>{});
           overlay.remove();
         };
         document.getElementById('mail-alert-dismiss').onclick = dismiss;
@@ -354,11 +310,34 @@
         }catch(_){}
       }
 
+      // Polling cada 10s (fallback)
       setInterval(poll, POLL_MS);
       setTimeout(poll, 1000);
+
+      // 🔴 Tiempo real con SSE (requiere backend /mail/alerts/stream)
+      try{
+        const es = new EventSource('/mail/alerts/stream');
+        es.onmessage = (e)=>{
+          try{
+            const data = JSON.parse(e.data || '{}');
+            if (data.type === 'mail_alert') {
+              // refrescamos modal + desktop notif
+              poll();
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification("Nueva alerta de correo", { body: "Se detectó un correo sospechoso.", icon: "/static/favicon.ico" });
+              }
+            }
+          }catch(_){}
+        };
+        es.onerror = ()=>{ /* silencioso: fallback a polling */ };
+      }catch(_){}
     })();
+  </script>
+
+  <!-- ===== Web Push: botón para activar (usa /static/push.js) ===== -->
+  <script type="module">
+    import { enablePush } from "/static/push.js";
+    document.getElementById("btnPush")?.addEventListener("click", enablePush);
   </script>
 </body>
 </html>
-
-
