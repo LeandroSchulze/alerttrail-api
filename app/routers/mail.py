@@ -497,6 +497,17 @@ def _run_scan_all_accounts(db: Session) -> dict:
         total["errors"] += r["errors"]
     return total
 
+# 👇👇 Agregar en app/routers/mail.py
+from sqlalchemy.orm import Session
+
+def scan_all_inboxes(db: Session) -> dict:
+    """
+    Alias que usa el scheduler. Ejecuta el mismo escaneo que /mail/poll
+    sobre TODAS las casillas configuradas.
+    """
+    return _run_scan_all_accounts(db)
+
+
 @router.get("/poll")
 def mail_poll(secret: str, db: Session = Depends(get_db)):
     if not MAIL_CRON_SECRET:
