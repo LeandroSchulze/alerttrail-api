@@ -1,10 +1,5 @@
 # scripts/init_db.py
 
-# scripts/init_db.py (arriba, junto con otros imports)
-import app.models_push           # crea tabla push_subscriptions
-import app.models_pro_alerts     # crea pro_alert_prefs, pro_alert_queue, pro_alert_state
-
-
 # --- PYTHONPATH fix para Render/CLI ---
 import os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))          # /opt/render/project/src/scripts
@@ -12,6 +7,10 @@ ROOT = os.path.abspath(os.path.join(HERE, ".."))           # /opt/render/project
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 # --------------------------------------
+
+# scripts/init_db.py (arriba, junto con otros imports)
+import app.models_push           # crea tabla push_subscriptions
+import app.models_pro_alerts     # crea pro_alert_prefs, pro_alert_queue, pro_alert_state
 
 from datetime import datetime
 from sqlalchemy import text, inspect, func
