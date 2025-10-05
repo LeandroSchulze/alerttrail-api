@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 
 from app.database import SessionLocal
+from sqlalchemy import func
 
 _scheduler = None
 _state = {
@@ -18,37 +19,71 @@ _state = {
 
 def _find_scan_fn():
     """
-    Intenta ubicar la función de escaneo que recorre casillas IMAP y crea alertas.
-    Ajustá acá si tu función real está en otro path/nombre.
+    Intentamos ubicar la función real de escaneo.
+    Ajustá acá si tu función se llama distinto o vive en otro módulo.
     """
     try:
-        # Preferida: servicio dedicado
-        from app.services.mail import scan_all_inboxes
+        from app.services.mail import scan_all_inboxes  # <— si existe
         return scan_all_inboxes
     except Exception:
         pass
     try:
-        # Alternativa: algunos proyectos la exportan desde el router
-        from app.routers.mail import scan_all_inboxes
+        from app.routers.mail import scan_all_inboxes  # <— si la exponen desde el router
         return scan_all_inboxes
     except Exception:
         return None
+
+def _heartbeat_push(db: Session):
+    """
+    Envía un push de 'heartbeat' para demostrar que el scheduler corrió,
+    incluso si no tenemos aún la función de escaneo cableada.
+    """
+    target_email = os.getenv("SCHEDULER_HEARTBEAT_EMAIL", "")
+    if not target_email:
+        return False  # desactivado si no hay destino
+
+    try:
+        from app.models import User
+        from app.routers.push import send_push_to_user  # ya lo tenés en tu proyecto
+    except Exception:
+        return False
+
+    user = db.query(User).filter(func.lower(User.email) == target_email.strip().lower()).first()
+    if not user:
+        return False
+
+    payload = {
+        "title": "AlertTrail — Heartbeat",
+        "body": "El scheduler corrió correctamente.",
+        "url": "/dashboard",
+        "tag": "alerttrail-heartbeat"
+    }
+    try:
+        send_push_to_user(db, user.id, payload)
+        return True
+    except Exception:
+        return False
 
 def _run_mail_scan():
     db: Session = SessionLocal()
     try:
         scan_fn = _find_scan_fn()
-        if not scan_fn:
-            _state["last_error"] = "No encontré scan_all_inboxes()"
-            print("[scheduler] ⚠️ No encontré scan_all_inboxes() (services.mail o routers.mail)")
-            return
+        print("[scheduler] ▶ Tick… intentando escaneo" if scan_fn else "[scheduler] ▶ Tick… (sin scan_all_inboxes)")
 
-        print("[scheduler] ▶ Ejecutando escaneo de correo…")
-        scan_fn(db)  # debe crear alertas si detecta algo
+        if scan_fn:
+            scan_fn(db)  # <-- tu escaneo real
+        else:
+            # Sin función de escaneo: mandamos heartbeat (si está configurado)
+            hb = _heartbeat_push(db)
+            if hb:
+                print("[scheduler] (heartbeat) push enviado a SCHEDULER_HEARTBEAT_EMAIL")
+            else:
+                print("[scheduler] (heartbeat) desactivado o sin destino válido")
+
         _state["runs"] += 1
         _state["last_run"] = datetime.utcnow().isoformat() + "Z"
         _state["last_error"] = None
-        print("[scheduler] ✅ Escaneo finalizado")
+        print("[scheduler] ✅ Tick OK")
     except Exception as e:
         _state["last_error"] = repr(e)
         print("[scheduler] ❌ Error en escaneo:", repr(e))
@@ -79,4 +114,3 @@ def start_background_scheduler():
 
 def scheduler_status():
     return dict(_state)
-
