@@ -465,6 +465,7 @@ def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -
 
 def _scan_account(db: Session, acct: MailAccount) -> dict:
     scans = alerts = errors = 0
+    auth_failed = False
     try:
         M = _imap_login(acct)
         M.select("INBOX")
@@ -485,17 +486,27 @@ def _scan_account(db: Session, acct: MailAccount) -> dict:
                 subject = _decode_hdr(msg.get("Subject", ""))
                 sender = _decode_hdr(msg.get("From", ""))
                 uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-                exists = db.query(MailAlert).filter(MailAlert.user_id == acct.user_id, MailAlert.msg_uid == uid_str).first()
+                exists = db.query(MailAlert).filter(
+                    MailAlert.user_id == acct.user_id,
+                    MailAlert.msg_uid == uid_str
+                ).first()
                 if not exists:
-                    db.add(MailAlert(user_id=acct.user_id, msg_uid=uid_str, subject=subject, sender=sender, reason="; ".join(reasons)))
+                    db.add(MailAlert(user_id=acct.user_id, msg_uid=uid_str,
+                                     subject=subject, sender=sender,
+                                     reason="; ".join(reasons)))
                     db.commit()
                     _notify_alert(user_id=acct.user_id, subject=subject, sender=sender, reasons=reasons)
                 alerts += 1
         M.logout()
+    except imaplib.IMAP4.error as e:
+        errors += 1
+        auth_failed = "AUTHENTICATIONFAILED" in str(e).upper()
+        print(f"[mail][_scan_account] account_id={getattr(acct,'id',None)} email={getattr(acct,'email',None)} IMAP error: {e!r}")
     except Exception as e:
         errors += 1
-        print(f"[mail][_scan_account] error: {e}")
-    return {"scans": scans, "alerts": alerts, "errors": errors}
+        print(f"[mail][_scan_account] account_id={getattr(acct,'id',None)} email={getattr(acct,'email',None)} error: {e!r}")
+    return {"scans": scans, "alerts": alerts, "errors": errors, "_auth_failed": auth_failed}
+
 
 def _run_scan_all_accounts(db: Session) -> dict:
     total = {"scans": 0, "alerts": 0, "errors": 0}
