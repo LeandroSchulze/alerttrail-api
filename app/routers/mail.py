@@ -443,17 +443,42 @@ MAIL_CRON_SECRET = os.getenv("MAIL_CRON_SECRET", "")
 
 def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -> None:
     """
-    Encola o envía una push (si el user está habilitado PRO + push) cuando aparece un correo riesgoso.
+    Notifica cuando aparece un correo riesgoso.
+    1) Intenta vía pro_alerts.queue_or_push (si existe en tu proyecto).
+    2) Fallback confiable: WebPush directo al usuario.
     """
     msg = f"Correo sospechoso: {subject} — {sender} ({'; '.join(reasons)})"
     db = None
     try:
-        # Import perezoso para evitar fallos al importar el módulo si falta algo en otros contextos
-        from app.services.pro_alerts import queue_or_push as pro_push  # firma: (db, user, title, body, url)
         db = SessionLocal()
-        user = db.query(User).get(user_id)  # SQLAlchemy 1.x
-        if user:
-            pro_push(db, user, title="Alerta de correo", body=msg, url="/mail/alerts")
+        user = db.query(User).get(user_id)
+        if not user:
+            return
+
+        pushed = False
+        # 1) Intento de integración existente (no rompe si no está)
+        try:
+            from app.services.pro_alerts import queue_or_push as pro_push  # firma esperada: (db, user, title, body, url) -> bool/None
+            r = pro_push(db, user, title="Alerta de correo", body=msg, url="/mail/alerts")
+            pushed = bool(r)
+        except Exception as e:
+            print("[mail][_notify_alert] pro_push error:", e)
+
+        # 2) Fallback WebPush directo
+        if not pushed:
+            try:
+                from app.routers.push import send_push_to_user
+                payload = {
+                    "title": "AlertTrail — Alerta de correo",
+                    "body": msg,
+                    "url": "/mail/alerts",
+                    "tag": "mail-alert"
+                }
+                ok = send_push_to_user(db, user.id, payload)
+                print(f"[mail][_notify_alert] webpush {'OK' if ok else 'sin subs'} for user_id={user.id}")
+            except Exception as e:
+                print("[mail][_notify_alert] webpush fallback error:", e)
+
     except Exception as e:
         print("[mail][_notify_alert] error:", e)
     finally:
@@ -462,6 +487,7 @@ def _notify_alert(user_id: int, subject: str, sender: str, reasons: List[str]) -
                 db.close()
         except Exception:
             pass
+
 
 def _scan_account(db: Session, acct: MailAccount) -> dict:
     scans = alerts = errors = 0
