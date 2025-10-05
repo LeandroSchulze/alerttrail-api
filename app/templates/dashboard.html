@@ -183,7 +183,7 @@
         <div class="plans-price">US$ 99<span class="plans-price-per">/mes</span></div>
         <ul class="plans-list">
           <li>Incluye <strong>todo lo del PRO</strong></li>
-          <li><strong>10 cuentas</strong> de usuario incluidas</li>
+          <li><strong>25 cuentas</strong> de usuario incluidas</li>
           <li><strong>Asiento adicional</strong>: US$ 3/mes</li>
           <li><strong>Estadísticas</strong> para toda la organización</li>
           <li><strong>Soporte prioritario</strong></li>
@@ -269,27 +269,36 @@
 
       function showAlertModal(a){
         if (document.getElementById('mail-alert-modal')) return;
+
+        // Construimos el href del botón:
+        const scannerHref = (a && a.link)
+          ? a.link
+          : `/mail/scanner${(a && a.id) ? `?id=${encodeURIComponent(a.id)}` : ''}`;
+
         const overlay = document.createElement('div');
         overlay.id = 'mail-alert-modal';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999';
+
         const card = document.createElement('div');
         card.style.cssText = 'background:#0f2a42;color:#eaf3ff;border:1px solid #133954;border-radius:14px;max-width:560px;width:92%;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)';
+
         card.innerHTML = `
           <h3 style="margin:0 0 6px">⚠️ Posible correo sospechoso</h3>
-          <p style="margin:0 0 2px"><b>De:</b> \${a.from_email || '-'}</p>
-          <p style="margin:0 10px 8px 0;word-break:break-word;"><b>Asunto:</b> \${a.subject || '-'}</p>
-          <p style="margin:0 0 14px;color:#bcd7f0">\${(a.snippet || '').replace(/</g,'&lt;').slice(0,280)}</p>
+          <p style="margin:0 0 2px"><b>De:</b> ${a?.from_email || '-'}</p>
+          <p style="margin:0 10px 8px 0;word-break:break-word;"><b>Asunto:</b> ${a?.subject || '-'}</p>
+          <p style="margin:0 0 14px;color:#bcd7f0">${(a?.snippet || '').toString().replace(/</g,'&lt;').slice(0,280)}</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
-            <a href="\${a.link || '/mail/scanner'}" class="btn-primary" style="padding:10px 14px;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;text-decoration:none">Ver en Scanner</a>
+            <a href="${scannerHref}" class="btn-primary" style="padding:10px 14px;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;text-decoration:none">Ver en Scanner</a>
             <button id="mail-alert-dismiss" style="padding:10px 14px;border-radius:10px;background:#133954;color:#cfe6ff;border:0;cursor:pointer">Descartar</button>
           </div>
         `;
+
         overlay.appendChild(card);
         document.body.appendChild(overlay);
 
         const dismiss = () => {
           try { localStorage.setItem(seenKey(a.id), '1'); } catch(_){}
-          fetch(`/alerts/\${a.id}/ack`, {method:'POST'}).catch(()=>{});
+          fetch(`/alerts/${a.id}/ack`, {method:'POST'}).catch(()=>{});
           overlay.remove();
         };
         document.getElementById('mail-alert-dismiss').onclick = dismiss;
@@ -338,6 +347,33 @@
   <script type="module">
     import { enablePush } from "/static/push.js";
     document.getElementById("btnPush")?.addEventListener("click", enablePush);
+
+    // ===== Modal accesible: abrir/cerrar y tabs =====
+    const modal = document.getElementById('plansModal');
+    const open1 = document.getElementById('openPlansModal');
+    const open2 = document.getElementById('openPlansModal2');
+    const closeBtn = document.getElementById('closePlansModal');
+    const tabProBtn = document.getElementById('tab-pro-btn');
+    const tabBizBtn = document.getElementById('tab-biz-btn');
+    const tabPro = document.getElementById('tab-pro');
+    const tabBiz = document.getElementById('tab-biz');
+
+    function openModal(){ modal.classList.add('is-open'); modal.removeAttribute('aria-hidden'); }
+    function closeModal(){ modal.classList.remove('is-open'); modal.setAttribute('aria-hidden','true'); }
+
+    open1?.addEventListener('click', openModal);
+    open2?.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    modal?.addEventListener('click', (e)=>{ if(e.target === modal) closeModal(); });
+
+    tabProBtn?.addEventListener('click', ()=>{
+      tabProBtn.classList.add('is-active'); tabBizBtn.classList.remove('is-active');
+      tabPro.classList.add('is-active'); tabPro.removeAttribute('hidden'); tabBiz.classList.remove('is-active'); tabBiz.setAttribute('hidden','true');
+    });
+    tabBizBtn?.addEventListener('click', ()=>{
+      tabBizBtn.classList.add('is-active'); tabProBtn.classList.remove('is-active');
+      tabBiz.classList.add('is-active'); tabBiz.removeAttribute('hidden'); tabPro.classList.remove('is-active'); tabPro.setAttribute('hidden','true');
+    });
   </script>
 </body>
 </html>
