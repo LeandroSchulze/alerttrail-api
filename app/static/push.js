@@ -23,9 +23,10 @@ export async function enablePush(){
     const perm = await Notification.requestPermission();
     if(perm!=='granted'){ alert('Permiso de notificaciones denegado.'); return; }
 
-    // 👇 ahora el SW vive en /sw.js (scope "/")
+    // ✅ SW en raíz (scope "/") para notificar con el sitio cerrado
     const reg = await navigator.serviceWorker.register('/sw.js');
 
+    // Reutilizamos suscripción si ya existe
     let sub = await reg.pushManager.getSubscription();
     if(!sub){
       const vapid = await getVapidKey();
@@ -35,8 +36,10 @@ export async function enablePush(){
       });
     }
 
-    const res = await fetch('/push/subscribe',{
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(sub)
+    const res = await fetch('/push/subscribe', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(sub)
     });
     if(!res.ok) throw new Error('No se pudo registrar la suscripción');
 
