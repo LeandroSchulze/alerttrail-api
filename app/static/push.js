@@ -18,15 +18,14 @@ async function getVapidKey(){
 export async function enablePush(){
   try{
     if(!('serviceWorker' in navigator) || !('PushManager' in window)){
-      alert('Este navegador no soporta notificaciones push.');
-      return;
+      alert('Este navegador no soporta notificaciones push.'); return;
     }
     const perm = await Notification.requestPermission();
     if(perm!=='granted'){ alert('Permiso de notificaciones denegado.'); return; }
 
-    const reg = await navigator.serviceWorker.register('/static/sw.js');
+    // 👇 ahora el SW vive en /sw.js (scope "/")
+    const reg = await navigator.serviceWorker.register('/sw.js');
 
-    // Reutilizar o crear suscripción
     let sub = await reg.pushManager.getSubscription();
     if(!sub){
       const vapid = await getVapidKey();
@@ -36,13 +35,10 @@ export async function enablePush(){
       });
     }
 
-    // Enviar/actualizar en backend
     const res = await fetch('/push/subscribe',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(sub)
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(sub)
     });
-    if(!res.ok){ throw new Error('No se pudo registrar la suscripción'); }
+    if(!res.ok) throw new Error('No se pudo registrar la suscripción');
 
     alert('Notificaciones activadas ✅');
   }catch(e){
