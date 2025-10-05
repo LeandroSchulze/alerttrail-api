@@ -17,6 +17,16 @@ from sqlalchemy.orm import Session
 from app.database import Base, engine, get_db, SessionLocal
 from app.security import get_current_user_cookie
 
+from datetime import datetime, timedelta  # ya lo tenés
+import imaplib  # ya lo tenés
+
+# backoff in-memory para auth fallidas (no toca DB)
+_AUTH_FAILS = {}       # account_id -> int
+_AUTH_BACKOFF_UNTIL = {}  # account_id -> datetime
+_MAX_FAILS = 3
+_BACKOFF_MINUTES = 60
+
+
 # ====== helpers de cifrado ======
 def _get_fernet():
     # import perezoso
