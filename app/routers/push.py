@@ -1,5 +1,5 @@
 # app/routers/push.py
-import json, os
+import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -13,10 +13,17 @@ router = APIRouter(prefix="/push", tags=["push"])
 
 @router.get("/pubkey")
 def pubkey():
-    return {"vapid_public_key": get_vapid_public_key()}
+    pk = get_vapid_public_key()
+    if not pk:
+        raise HTTPException(status_code=500, detail="Falta VAPID_PUBLIC_KEY en el servidor")
+    return {"vapid_public_key": pk}
 
 @router.post("/subscribe")
-async def subscribe(req: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
+async def subscribe(
+    req: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_cookie)
+):
     data = await req.json()
     endpoint = data.get("endpoint")
     keys = (data.get("keys") or {})
@@ -25,25 +32,47 @@ async def subscribe(req: Request, db: Session = Depends(get_db), user: User = De
     if not (endpoint and p256dh and auth):
         raise HTTPException(status_code=400, detail="Suscripción inválida")
 
-    existing = db.query(PushSubscription).filter_by(user_id=user.id, endpoint=endpoint).first()
-    if not existing:
+    existing = db.query(PushSubscription).filter_by(endpoint=endpoint).first()
+    if existing:
+        # Actualizamos dueño y claves por si cambiaron
+        existing.user_id = user.id
+        existing.p256dh = p256dh
+        existing.auth = auth
+    else:
         ps = PushSubscription(user_id=user.id, endpoint=endpoint, p256dh=p256dh, auth=auth)
-        db.add(ps); db.commit()
+        db.add(ps)
+    db.commit()
+    return {"ok": True}
+
+@router.post("/unsubscribe")
+async def unsubscribe(
+    req: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_cookie)
+):
+    data = await req.json()
+    endpoint = data.get("endpoint")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="endpoint requerido")
+    row = db.query(PushSubscription).filter_by(endpoint=endpoint).first()
+    if row:
+        db.delete(row)
+        db.commit()
     return {"ok": True}
 
 @router.post("/send-test")
 def send_test(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
-    # Solo PRO
-    if getattr(user, "plan", "").upper() != "PRO":
-        raise HTTPException(status_code=403, detail="Solo usuarios PRO")
+    plan = (getattr(user, "plan", "") or "").upper()
+    if plan not in ("PRO", "BIZ", "EMPRESAS", "EMPRESA"):
+        raise HTTPException(status_code=403, detail="Solo usuarios PRO o EMPRESAS")
     sub = db.query(PushSubscription).filter_by(user_id=user.id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="No hay suscripción registrada")
     subscription = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
-    ok = send_web_push(subscription, {"title":"AlertTrail PRO","body":"Notificación de prueba","url":"/dashboard"})
-    return {"sent": ok}
+    ok = send_web_push(subscription, {"title":"AlertTrail","body":"Notificación de prueba","url":"/mail/scanner"})
+    return {"sent": bool(ok)}
 
-# Página de prueba sencilla (sin tocar tu dashboard)
+# Página de prueba simple (no toca tu dashboard)
 @router.get("/test-page", response_class=HTMLResponse)
 def test_page():
     html = """
@@ -75,7 +104,7 @@ async function enablePush(){
 async function testPush(){
   const r = await fetch('/push/send-test',{method:'POST'});
   const d = await r.json();
-  alert(d.sent ? 'Test enviado (mirá la notificación)' : 'Falló el envío');
+  alert(d.sent ? 'Test enviado (mirá la notificación)' : (d.detail || 'Falló el envío'));
 }
 </script>
 <style>
@@ -85,9 +114,9 @@ button+button{margin-left:.5rem}
 </style>
 </head>
 <body>
-  <h1>AlertTrail — Prueba de Notificaciones PRO</h1>
-  <p>1) Hacé clic en <b>Activar notificaciones</b> y aceptá el permiso del navegador.</p>
-  <p>2) Luego probá con <b>Enviar prueba</b> (tu usuario debe ser PRO).</p>
+  <h1>AlertTrail — Prueba de Notificaciones</h1>
+  <p>1) Activá notificaciones y aceptá el permiso del navegador.</p>
+  <p>2) Luego presioná Enviar prueba (tu usuario debe ser PRO o EMPRESAS).</p>
   <div>
     <button onclick="enablePush()">🔔 Activar notificaciones</button>
     <button onclick="testPush()">▶ Enviar prueba</button>
