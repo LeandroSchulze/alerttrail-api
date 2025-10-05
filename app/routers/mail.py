@@ -509,17 +509,37 @@ def _scan_account(db: Session, acct: MailAccount) -> dict:
 
 
 def _run_scan_all_accounts(db: Session) -> dict:
+    now = datetime.utcnow()
     total = {"scans": 0, "alerts": 0, "errors": 0}
     accounts = db.query(MailAccount).all()
     for acct in accounts:
+        aid = getattr(acct, "id", None)
+
+        # backoff: si hubo demasiadas fallas de auth, saltar hasta que pase el tiempo
+        until = _AUTH_BACKOFF_UNTIL.get(aid)
+        if until and now < until:
+            remain = int((until - now).total_seconds() // 60)
+            print(f"[mail][_run_scan_all_accounts] skip account_id={aid} email={acct.email} por backoff ({remain} min restantes)")
+            continue
+
         r = _scan_account(db, acct)
-        total["scans"] += r["scans"]
-        total["alerts"] += r["alerts"]
-        total["errors"] += r["errors"]
+        for k in ("scans", "alerts", "errors"):
+            total[k] += r.get(k, 0)
+
+        if r.get("_auth_failed"):
+            _AUTH_FAILS[aid] = _AUTH_FAILS.get(aid, 0) + 1
+            if _AUTH_FAILS[aid] >= _MAX_FAILS:
+                _AUTH_BACKOFF_UNTIL[aid] = now + timedelta(minutes=_BACKOFF_MINUTES)
+                print(f"[mail][_run_scan_all_accounts] AUTH fail x{_AUTH_FAILS[aid]} → backoff { _BACKOFF_MINUTES } min para account_id={aid} email={acct.email}")
+        else:
+            # si hubo éxito, reseteamos contadores para ese account
+            if aid in _AUTH_FAILS:
+                _AUTH_FAILS[aid] = 0
+            if aid in _AUTH_BACKOFF_UNTIL:
+                _AUTH_BACKOFF_UNTIL.pop(aid, None)
+
     return total
 
-# 👇👇 Agregar en app/routers/mail.py
-from sqlalchemy.orm import Session
 
 def scan_all_inboxes(db: Session) -> dict:
     """
