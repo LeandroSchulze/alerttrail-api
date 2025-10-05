@@ -473,3 +473,11 @@ try:
     start_background_scheduler()
 except Exception:
     pass
+
+
+# Fallback opcional para /mail/scanner → /mail
+from fastapi.responses import RedirectResponse
+@app.get("/mail/scanner", include_in_schema=False)
+def _scanner_fallback():
+  return RedirectResponse(url="/mail", status_code=302)
+
