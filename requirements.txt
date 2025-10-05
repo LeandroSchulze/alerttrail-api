@@ -15,3 +15,5 @@ mercadopago==2.2.1
 pywebpush
 requests  
 beautifulsoup4>=4.12
+APScheduler==3.10.4
+
