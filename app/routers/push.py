@@ -13,7 +13,7 @@ from ..utils.push import get_vapid_public_key, send_web_push
 router = APIRouter(prefix="/push", tags=["push"])
 
 # ---------------------------
-# Helper público para enviar push a un usuario (lo usa el scheduler)
+# Helper público para enviar push a un usuario (lo usa mail._notify_alert)
 # ---------------------------
 def send_push_to_user(db: Session, user_id: int, payload: dict) -> bool:
     """
@@ -34,8 +34,8 @@ def send_push_to_user(db: Session, user_id: int, payload: dict) -> bool:
         try:
             ok = send_web_push(subscription, payload)
             ok_any = ok_any or bool(ok)
-        except Exception as _:
-            # Si falla por suscripción inválida, la dejamos como está para minimizar cambios.
+        except Exception:
+            # Si falla por suscripción inválida, la dejamos para no borrar nada sin confirmación.
             # (Podemos limpiar 410 Gone más adelante si querés).
             continue
     return ok_any
@@ -130,7 +130,7 @@ async function enablePush(){
   if(!('serviceWorker' in navigator) || !('PushManager' in window)){ alert('Sin soporte Push'); return; }
   const perm = await Notification.requestPermission();
   if(perm!=='granted'){ alert('Permiso denegado'); return; }
-  // 👇 scope raíz
+  // ✅ scope raíz
   const reg = await navigator.serviceWorker.register('/sw.js');
   const kp = await fetch('/push/pubkey').then(r=>r.json());
   let sub = await reg.pushManager.getSubscription();
@@ -166,4 +166,5 @@ button+button{margin-left:.5rem}
 </body></html>
 """
     return HTMLResponse(html)
+
 
