@@ -483,12 +483,15 @@ def _log_routes():
         print(p)
     print("==============\n")
 
-# === Scheduler opcional ===
+# --- Scheduler de escaneo de correo (con logs) ---
 try:
     from app.services.scheduler import start_background_scheduler
     start_background_scheduler()
-except Exception:
-    pass
+    print("[scheduler] start_background_scheduler() llamado")
+except Exception as e:
+    print("[scheduler] ERROR iniciando scheduler:", repr(e))
+    import traceback; traceback.print_exc()
+# -------------------------------------------------
 
 
 # Fallback opcional para /mail/scanner → /mail
