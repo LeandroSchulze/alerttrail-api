@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
+
 from ..database import get_db
 from ..models import User
 from ..models_push import PushSubscription
@@ -11,12 +12,42 @@ from ..utils.push import get_vapid_public_key, send_web_push
 
 router = APIRouter(prefix="/push", tags=["push"])
 
+# ---------------------------
+# Helper público para enviar push a un usuario (lo usa el scheduler)
+# ---------------------------
+def send_push_to_user(db: Session, user_id: int, payload: dict) -> bool:
+    """
+    Envía un WebPush a todas las suscripciones del user_id.
+    payload: {"title": "...", "body": "...", "url": "/ruta", "tag": "opcional"}
+    Devuelve True si al menos una notificación se envió OK.
+    """
+    subs = db.query(PushSubscription).filter_by(user_id=user_id).all()
+    if not subs:
+        return False
+
+    ok_any = False
+    for sub in subs:
+        subscription = {
+            "endpoint": sub.endpoint,
+            "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+        }
+        try:
+            ok = send_web_push(subscription, payload)
+            ok_any = ok_any or bool(ok)
+        except Exception as _:
+            # Si falla por suscripción inválida, la dejamos como está para minimizar cambios.
+            # (Podemos limpiar 410 Gone más adelante si querés).
+            continue
+    return ok_any
+
+
 @router.get("/pubkey")
 def pubkey():
     pk = get_vapid_public_key()
     if not pk:
         raise HTTPException(status_code=500, detail="Falta VAPID_PUBLIC_KEY en el servidor")
     return {"vapid_public_key": pk}
+
 
 @router.post("/subscribe")
 async def subscribe(
@@ -44,6 +75,7 @@ async def subscribe(
     db.commit()
     return {"ok": True}
 
+
 @router.post("/unsubscribe")
 async def unsubscribe(
     req: Request,
@@ -60,21 +92,27 @@ async def unsubscribe(
         db.commit()
     return {"ok": True}
 
+
 @router.post("/send-test")
 def send_test(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
     plan = (getattr(user, "plan", "") or "").upper()
     if plan not in ("PRO", "BIZ", "EMPRESAS", "EMPRESA"):
         raise HTTPException(status_code=403, detail="Solo usuarios PRO o EMPRESAS")
-    sub = db.query(PushSubscription).filter_by(user_id=user.id).first()
-    if not sub:
-        raise HTTPException(status_code=404, detail="No hay suscripción registrada")
-    subscription = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
-    ok = send_web_push(subscription, {"title":"AlertTrail","body":"Notificación de prueba","url":"/mail/scanner"})
-    return {"sent": bool(ok)}
+
+    payload = {"title": "AlertTrail", "body": "Notificación de prueba", "url": "/mail/scanner"}
+    sent = send_push_to_user(db, user.id, payload)
+    if not sent:
+        # Conservamos el detalle anterior si no hay suscripción
+        sub = db.query(PushSubscription).filter_by(user_id=user.id).first()
+        if not sub:
+            raise HTTPException(status_code=404, detail="No hay suscripción registrada")
+    return {"sent": bool(sent)}
+
 
 # Página de prueba simple (no toca tu dashboard)
 @router.get("/test-page", response_class=HTMLResponse)
 def test_page():
+    # Registramos el SW en /sw.js (scope raíz) para notificaciones fuera de la pestaña.
     html = """
 <!doctype html>
 <html lang="es"><head>
@@ -92,12 +130,16 @@ async function enablePush(){
   if(!('serviceWorker' in navigator) || !('PushManager' in window)){ alert('Sin soporte Push'); return; }
   const perm = await Notification.requestPermission();
   if(perm!=='granted'){ alert('Permiso denegado'); return; }
-  const reg = await navigator.serviceWorker.register('/static/sw.js');
+  // 👇 scope raíz
+  const reg = await navigator.serviceWorker.register('/sw.js');
   const kp = await fetch('/push/pubkey').then(r=>r.json());
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: await urlBase64ToUint8Array(kp.vapid_public_key)
-  });
+  let sub = await reg.pushManager.getSubscription();
+  if(!sub){
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: await urlBase64ToUint8Array(kp.vapid_public_key)
+    });
+  }
   await fetch('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});
   alert('Notificaciones activadas ✅');
 }
@@ -124,3 +166,4 @@ button+button{margin-left:.5rem}
 </body></html>
 """
     return HTMLResponse(html)
+
