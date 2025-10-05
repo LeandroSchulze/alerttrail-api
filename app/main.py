@@ -218,6 +218,22 @@ def home(request: Request, user=Depends(get_current_user_optional)):
         </div>"""
         return HTMLResponse(html)
 
+# --- Service Worker en raíz (sirve el archivo estático /static/sw.js) ---
+from fastapi.responses import FileResponse
+import os
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker_root():
+    # Usa el mismo archivo que ya tenés en static
+    sw_path = os.path.join(STATIC_DIR, "sw.js")
+    if not os.path.exists(sw_path):
+        # Por si el archivo está en la carpeta antigua "static" sin prefijo app/
+        alt = "static/sw.js"
+        if os.path.exists(alt): sw_path = alt
+    return FileResponse(sw_path, media_type="application/javascript")
+# ------------------------------------------------------------------------
+
+
 # Alias clásico
 @app.get("/login", include_in_schema=False)
 def login_alias():
