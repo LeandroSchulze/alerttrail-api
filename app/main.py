@@ -23,13 +23,6 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-# app/main.py (resumen)
-from fastapi import FastAPI
-from app.routers import payments_mp  # importa el router
-
-app = FastAPI()
-app.include_router(payments_mp.router)
-
 
 from app.database import SessionLocal
 from app.security import (
@@ -217,8 +210,17 @@ try:
     print("[routers] mail montado OK (fallback explícito)")
 except Exception as e:
     print(f"[routers] ERROR montando mail (explícito): {e}")
-    import traceback
-    traceback.print_exc()
+    import traceback; traceback.print_exc()
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# MONTAJE DEL WEBHOOK DE MERCADO PAGO (después de crear 'app')
+try:
+    from app.routers import payments_mp
+    app.include_router(payments_mp.router)
+    print("[routers] payments_mp montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar payments_mp: {e}")
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 # Fallback para /mail/alerts/unread_count si no existe
 if not any(isinstance(r, APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
@@ -290,8 +292,6 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
-    # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
-    #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return r
@@ -323,8 +323,6 @@ if not _route_has_method("/auth/login", "POST"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-        # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
-        #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
@@ -337,8 +335,6 @@ if not _route_exists("/auth/login/web"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-        # if hasattr(user, "email_verified") and not bool(getattr(user, "email_verified", False)):
-        #     raise HTTPException(status_code=401, detail="Debés verificar tu email antes de ingresar")
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
@@ -445,7 +441,7 @@ def head_root():
 
 @app.on_event("startup")
 def _log_routes():
-    paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
+    paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)] )
     print("\n=== ROUTES ===")
     for p in paths:
         print(p)
