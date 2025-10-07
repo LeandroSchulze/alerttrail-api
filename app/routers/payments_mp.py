@@ -1,5 +1,5 @@
 # app/routers/payments_mp.py
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, Body
 from sqlalchemy.orm import Session
 import httpx
 import os
@@ -44,13 +44,16 @@ async def activate_pro_for_user(db: Session, email: str, payment_id: str, months
     return user
 
 @router.post("/mercadopago")
-async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
+async def mercadopago_webhook(
+    body: dict = Body(..., description="Payload enviado por Mercado Pago"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
     """
     Recibe notificaciones de MP.
     MP envía algo como: { "action": "payment.created", "data": {"id": "123456789"} }
     Luego consultamos la API de MP para validar el pago.
     """
-    body = await request.json()
     # Algunos envíos vienen con query params: topic=payment&id=XXXX (por si preferís request.query_params)
     payment_id = None
     try:
@@ -58,7 +61,7 @@ async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
             payment_id = str(body["data"]["id"])
     except Exception:
         pass
-    if not payment_id:
+    if not payment_id and request is not None:
         # fallback por query
         q_id = request.query_params.get("id")
         if q_id:
