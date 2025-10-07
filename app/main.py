@@ -23,6 +23,13 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
+# app/main.py (resumen)
+from fastapi import FastAPI
+from app.routers import payments_mp  # importa el router
+
+app = FastAPI()
+app.include_router(payments_mp.router)
+
 
 from app.database import SessionLocal
 from app.security import (
