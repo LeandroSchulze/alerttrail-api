@@ -339,6 +339,43 @@ if not _route_exists("/auth/login/web"):
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
 
+# ======== [AGREGADO] /auth/me ========
+@app.get("/auth/me")
+def auth_me(request: Request, db: Session = Depends(get_db)):
+    """
+    Devuelve el usuario actual a partir de la cookie JWT.
+    401 si no hay sesión válida.
+    """
+    u = get_current_user_cookie(request, db)  # propaga 401/403 si corresponde
+    return {
+        "id": getattr(u, "id", None),
+        "email": getattr(u, "email", None),
+        "name": getattr(u, "name", None),
+        "role": getattr(u, "role", None),
+        "is_admin": bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False)),
+        "plan": getattr(u, "plan", None),
+        "is_pro": bool(getattr(u, "is_pro", False)),
+        "plan_expires": getattr(u, "plan_expires", None),
+        "org_id": getattr(u, "org_id", None),
+    }
+
+# ======== [AGREGADO] Logout (GET/POST y alias) ========
+@app.get("/logout", include_in_schema=False)
+def logout_get():
+    r = RedirectResponse(url="/", status_code=303)
+    clear_access_cookie(r)
+    return r
+
+@app.post("/logout", include_in_schema=False)
+def logout_post():
+    r = JSONResponse({"ok": True, "logged_out": True})
+    clear_access_cookie(r)
+    return r
+
+@app.get("/auth/logout", include_in_schema=False)
+def logout_alias():
+    return RedirectResponse(url="/logout", status_code=302)
+
 # ============================================
 # Dashboard
 # ============================================
