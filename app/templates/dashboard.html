@@ -41,6 +41,35 @@
     .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:#0f172a;background:#fff;cursor:pointer}
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
 
+
+<!-- === PROMO PRO 5 DÍAS (solo particulares) === -->
+<div id="promo-pro-trial"
+     data-org-id="{{ user.org_id if user and user.org_id is not none else '' }}"
+     class="promo-box"
+     style="display:none;margin:16px 0;padding:14px 16px;border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;">
+  <div id="promo-pro-content" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <strong style="font-size:15px;">🔥 PRO gratis por 5 días</strong>
+    <span id="promo-pro-msg" style="color:#1f2937">Activalo ahora y probá todas las funciones PRO sin tarjeta.</span>
+    <button id="promo-pro-btn"
+            style="margin-left:auto;padding:8px 12px;border:0;background:#2563eb;color:#fff;border-radius:10px;cursor:pointer">
+      Activar prueba
+    </button>
+    <a href="/billing" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
+      Activar PRO por USD 10/mes →
+    </a>
+  </div>
+  <div id="promo-pro-timer" style="margin-top:8px;color:#334155;display:none">
+    Te quedan <b id="promo-pro-countdown">—</b> de PRO gratis.
+  </div>
+  <div id="promo-pro-error" style="margin-top:8px;color:#b91c1c;display:none"></div>
+</div>
+
+<script src="/static/promo_trial.js"></script>
+
+
+
+
+    
     footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center}
     footer.page-footer a{color:var(--brand);text-decoration:none}
   </style>
