@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # Identificadores de migración
 revision = "20251013_add_trial_fields"
-down_revision = "20250930_add_email_verification"
+down_revision = "8f0c8ac3a1be"   # ← el revision real que copiaste
 branch_labels = None
 depends_on = None
 
