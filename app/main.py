@@ -36,6 +36,10 @@ from app.security import (
 )
 from app.models import User
 
+from app.routers import promo
+app.include_router(promo.router)
+
+
 # ============================================
 # App & Config
 # ============================================
