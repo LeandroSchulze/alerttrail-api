@@ -1,24 +1,21 @@
 """add trial fields to users
 
 Revision ID: 20251013_add_trial_fields
-Revises: 20250930_add_email_verification
+Revises: None
 Create Date: 2025-10-13
 
 """
 from alembic import op
 import sqlalchemy as sa
 
-
 # Identificadores de migración
 revision = "20251013_add_trial_fields"
-down_revision = "8f0c8ac3a1be"   # ← el revision real que copiaste
+down_revision = None   # <- fix para no depender de otra migración
 branch_labels = None
 depends_on = None
 
-
 def upgrade():
     """Agrega los campos de trial (5 días sin cargo) al modelo User"""
-    # batch_alter_table mejora compatibilidad con SQLite y cambios en caliente
     with op.batch_alter_table("users") as batch_op:
         batch_op.add_column(sa.Column("trial_started_at", sa.DateTime(), nullable=True))
         batch_op.add_column(sa.Column("trial_expires_at", sa.DateTime(), nullable=True))
@@ -28,7 +25,6 @@ def upgrade():
     # Quita el server_default una vez aplicada la migración para inserts futuros
     with op.batch_alter_table("users") as batch_op:
         batch_op.alter_column("had_trial", server_default=None)
-
 
 def downgrade():
     """Revierte los cambios: elimina los campos de trial"""
