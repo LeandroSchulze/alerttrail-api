@@ -40,36 +40,6 @@
     .btn-primary:hover{filter:brightness(1.05)}
     .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:#0f172a;background:#fff;cursor:pointer}
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
-
-
-<!-- === PROMO PRO 5 DÍAS (solo particulares) === -->
-<div id="promo-pro-trial"
-     data-org-id="{{ user.org_id if user and user.org_id is not none else '' }}"
-     class="promo-box"
-     style="display:none;margin:16px 0;padding:14px 16px;border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;">
-  <div id="promo-pro-content" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <strong style="font-size:15px;">🔥 PRO gratis por 5 días</strong>
-    <span id="promo-pro-msg" style="color:#1f2937">Activalo ahora y probá todas las funciones PRO sin tarjeta.</span>
-    <button id="promo-pro-btn"
-            style="margin-left:auto;padding:8px 12px;border:0;background:#2563eb;color:#fff;border-radius:10px;cursor:pointer">
-      Activar prueba
-    </button>
-    <a href="/billing" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
-      Activar PRO por USD 10/mes →
-    </a>
-  </div>
-  <div id="promo-pro-timer" style="margin-top:8px;color:#334155;display:none">
-    Te quedan <b id="promo-pro-countdown">—</b> de PRO gratis.
-  </div>
-  <div id="promo-pro-error" style="margin-top:8px;color:#b91c1c;display:none"></div>
-</div>
-
-<script src="/static/promo_trial.js"></script>
-
-
-
-
-    
     footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center}
     footer.page-footer a{color:var(--brand);text-decoration:none}
   </style>
@@ -96,6 +66,28 @@
       <p class="muted">Tu email: {{ user.email }}</p>
     </div>
 
+    <!-- === PROMO PRO 5 DÍAS (solo particulares) === -->
+    <div id="promo-pro-trial"
+         data-org-id="{{ user.org_id if user and user.org_id is not none else '' }}"
+         class="promo-box"
+         style="display:none;margin:16px 0;padding:14px 16px;border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;">
+      <div id="promo-pro-content" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <strong style="font-size:15px;">🔥 PRO gratis por 5 días</strong>
+        <span id="promo-pro-msg" style="color:#1f2937">Activalo ahora y probá todas las funciones PRO sin tarjeta.</span>
+        <button id="promo-pro-btn"
+                style="margin-left:auto;padding:8px 12px;border:0;background:#2563eb;color:#fff;border-radius:10px;cursor:pointer">
+          Activar prueba
+        </button>
+        <a href="/billing" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
+          Activar PRO por USD 10/mes →
+        </a>
+      </div>
+      <div id="promo-pro-timer" style="margin-top:8px;color:#334155;display:none">
+        Te quedan <b id="promo-pro-countdown">—</b> de PRO gratis.
+      </div>
+      <div id="promo-pro-error" style="margin-top:8px;color:#b91c1c;display:none"></div>
+    </div>
+
     <div class="grid">
       <!-- Estado + acciones de plan -->
       <section class="card">
@@ -108,9 +100,7 @@
         {% endif %}
         <div class="actions">
           <a class="btn-primary" href="/billing">Cambiar plan</a>
-          <!-- Botón para abrir el modal de planes -->
           <button id="openPlansModal" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
-          <!-- 🔔 Activar notificaciones (Web Push) -->
           <button id="btnPush" class="btn-outline" type="button">🔔 Activar notificaciones</button>
           {% if user.is_org_admin and user.org_id %}
             <a class="btn-outline" href="/org/admin">Admin de organización</a>
@@ -151,7 +141,6 @@
       <section class="card" style="grid-column:1/-1">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <h3 style="margin:0">Planes</h3>
-          <!-- Segundo acceso al modal -->
           <button id="openPlansModal2" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
         </div>
         <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch;margin-top:12px">
@@ -215,7 +204,7 @@
           <li><strong>25 cuentas</strong> de usuario incluidas</li>
           <li><strong>Asiento adicional</strong>: US$ 3/mes</li>
           <li><strong>Estadísticas</strong> para toda la organización</li>
-          <li><strong>Soporte prioritario</strong></li>
+          <li><strong>Soporte prioritario</li>
         </ul>
         <div class="plans-actions">
           <a href="/billing/checkout?plan=BIZ" class="plans-primary">Contratar Empresas</a>
@@ -228,13 +217,6 @@
       </footer>
     </div>
   </div>
-
-  <!-- ===== Footer simple ===== -->
-  <footer class="page-footer">
-    <a href="/terms">Términos y Condiciones</a> ·
-    <a href="/privacy">Política de Privacidad</a> ·
-    Soporte: <a href="mailto:info.alerttrail@gmail.com">info.alerttrail@gmail.com</a>
-  </footer>
 
   <!-- ===== Estilos del modal (aislados con prefijo plans-) ===== -->
   <style>
@@ -264,7 +246,7 @@
     .plans-footer{padding:14px 20px;border-top:1px solid #eef2f7;font-size:14px;background:#fafafa}
   </style>
 
-  <!-- Script para notificaciones (desktop) -->
+  <!-- ===== Script notificaciones (desktop) ===== -->
   <script>
     let lastUnread = 0;
     if ("Notification" in window) {
@@ -299,7 +281,6 @@
       function showAlertModal(a){
         if (document.getElementById('mail-alert-modal')) return;
 
-        // Construimos el href del botón:
         const scannerHref = (a && a.link)
           ? a.link
           : `/mail/scanner${(a && a.id) ? `?id=${encodeURIComponent(a.id)}` : ''}`;
@@ -348,18 +329,15 @@
         }catch(_){}
       }
 
-      // Polling cada 10s (fallback)
-      setInterval(poll, POLL_MS);
+      setInterval(poll, 10000);
       setTimeout(poll, 1000);
 
-      // 🔴 Tiempo real con SSE (requiere backend /mail/alerts/stream)
       try{
         const es = new EventSource('/mail/alerts/stream');
         es.onmessage = (e)=>{
           try{
             const data = JSON.parse(e.data || '{}');
             if (data.type === 'mail_alert') {
-              // refrescamos modal + desktop notif
               poll();
               if ("Notification" in window && Notification.permission === "granted") {
                 new Notification("Nueva alerta de correo", { body: "Se detectó un correo sospechoso.", icon: "/static/favicon.ico" });
@@ -367,17 +345,16 @@
             }
           }catch(_){}
         };
-        es.onerror = ()=>{ /* silencioso: fallback a polling */ };
+        es.onerror = ()=>{};
       }catch(_){}
     })();
   </script>
 
-  <!-- ===== Web Push: botón para activar (usa /static/push.js) ===== -->
+  <!-- ===== Web Push: botón para activar ===== -->
   <script type="module">
     import { enablePush } from "/static/push.js";
     document.getElementById("btnPush")?.addEventListener("click", enablePush);
 
-    // ===== Modal accesible: abrir/cerrar y tabs =====
     const modal = document.getElementById('plansModal');
     const open1 = document.getElementById('openPlansModal');
     const open2 = document.getElementById('openPlansModal2');
@@ -404,5 +381,15 @@
       tabBiz.classList.add('is-active'); tabBiz.removeAttribute('hidden'); tabPro.classList.remove('is-active'); tabPro.setAttribute('hidden','true');
     });
   </script>
+
+  <!-- 🔥 Promo Trial JS (debe ir al final) -->
+  <script src="/static/promo_trial.js"></script>
+
+  <!-- ===== Footer simple ===== -->
+  <footer class="page-footer">
+    <a href="/terms">Términos y Condiciones</a> ·
+    <a href="/privacy">Política de Privacidad</a> ·
+    Soporte: <a href="mailto:info.alerttrail@gmail.com">info.alerttrail@gmail.com</a>
+  </footer>
 </body>
 </html>
