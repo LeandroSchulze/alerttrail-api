@@ -29,6 +29,88 @@ COOKIE_SAMESITE = "lax"
 # Si usás SIEMPRE www, podés dejarlo vacío (host-only). Para compartir apex/www: ".alerttrail.com"
 COOKIE_DOMAIN   = (os.getenv("COOKIE_DOMAIN", "") or "").strip()
 
+# ================== Trial / Promo ==================
+# Duración del trial PRO (solo particulares)
+TRIAL_DAYS = int(os.getenv("TRIAL_DAYS", "5"))
+
+# Nota: en modelos se usa DateTime naive (UTC). Para consistencia, usamos datetime.utcnow() sin tz.
+def now_utc_naive() -> datetime:
+    return datetime.utcnow()
+
+def is_trial_active(user) -> bool:
+    """Devuelve True si el usuario tiene trial vigente."""
+    try:
+        return bool(user.trial_expires_at and user.trial_expires_at > now_utc_naive())
+    except Exception:
+        return False
+
+def is_paid_pro(user) -> bool:
+    """
+    PRO por suscripción. Dado que el modelo no siempre tiene plan_expires,
+    nos apoyamos en user.plan == 'PRO'. Si existiera plan_expires en tu modelo,
+    también lo validamos a favor.
+    """
+    try:
+        # Compat opcional si tu modelo tuviera plan_expires
+        plan_expires = getattr(user, "plan_expires", None)
+        if plan_expires:
+            # soporta tanto naive como aware (preferimos naive UTC)
+            if isinstance(plan_expires, datetime):
+                # si viene aware, lo volvemos naive comparando contra now naive en UTC
+                if plan_expires.tzinfo is not None:
+                    # convertir a naive UTC
+                    plan_expires = plan_expires.astimezone(timezone.utc).replace(tzinfo=None)
+            return plan_expires > now_utc_naive()
+        # Si no existe plan_expires, tomamos plan == 'PRO' como pagado
+        return str(getattr(user, "plan", "")).upper() == "PRO"
+    except Exception:
+        return False
+
+def is_pro_effective(user) -> bool:
+    """
+    El usuario es efectivamente PRO si:
+      - tiene suscripción activa (is_paid_pro), o
+      - está en trial vigente (is_trial_active).
+    """
+    return bool(is_paid_pro(user) or is_trial_active(user))
+
+def ensure_trial_state(user, db) -> None:
+    """
+    Si el trial venció y no hay PRO pago, limpiamos campos de trial.
+    Idempotente. Llamar al inicio de endpoints PRO.
+    """
+    try:
+        if not user:
+            return
+        expired = bool(user.trial_expires_at and user.trial_expires_at <= now_utc_naive())
+        if expired and not is_paid_pro(user):
+            user.trial_started_at = None
+            user.trial_expires_at = None
+            # si el trial terminó y no hay PRO pago, limpiamos pro_source si venía de trial
+            if getattr(user, "pro_source", None) == "trial":
+                user.pro_source = None
+            if db:
+                db.commit()
+    except Exception as e:
+        if DEBUG_AUTH:
+            print("[auth][debug] ensure_trial_state error:", repr(e))
+
+def require_pro_effective(user, db=None) -> None:
+    """
+    Enforcer de acceso PRO (trial o suscripción). Lanza 402 si no corresponde.
+    Llama ensure_trial_state para caducar trial vencido.
+    """
+    ensure_trial_state(user, db)
+    if not is_pro_effective(user):
+        raise HTTPException(status_code=402, detail="Necesitas PRO activo (trial o suscripción)")
+
+def require_individual_for_trial(user) -> None:
+    """
+    Asegura que el usuario sea particular (sin org) para acceder al trial.
+    """
+    if getattr(user, "org_id", None):
+        raise HTTPException(status_code=403, detail="La promo es solo para cuentas individuales")
+
 # ================== Password Hash (PBKDF2) ==================
 PBKDF2_ITER = int(os.getenv("PBKDF2_ITER", "260000"))
 PBKDF2_ALG = "sha256"
@@ -78,6 +160,7 @@ def verify_password(password: str, stored: str) -> bool:
 def create_access_token(data: Dict[str, Any], expires_minutes: Optional[int] = None) -> str:
     to_encode = data.copy()
     if expires_minutes is not None:
+        # Para tokens con expiración explícita usamos aware UTC
         expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
         to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALG)
