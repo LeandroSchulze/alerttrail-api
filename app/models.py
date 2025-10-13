@@ -37,18 +37,24 @@ class User(Base):
     org_id        = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     is_org_admin  = Column(Boolean, nullable=False, default=False)
 
-    # ================= Verificación por correo (nuevo) =================
+    # ================= Verificación por correo =================
     email_verified            = Column(Boolean, nullable=False, default=False)
     verification_code         = Column(String(12), nullable=True)             # p.ej. "123456"
     verification_expires_at   = Column(DateTime, nullable=True)               # vence en ~15 min
     verification_attempts     = Column(Integer, nullable=False, default=0)    # anti-bruteforce
 
+    # ================ Trial PRO (solo particulares) =====================
+    # Promo: 5 días sin cargo para cuentas individuales (no empresas/org)
+    trial_started_at = Column(DateTime, nullable=True)
+    trial_expires_at = Column(DateTime, nullable=True)
+    had_trial        = Column(Boolean, nullable=False, default=False)  # evita múltiples trials
+    pro_source       = Column(String(32), nullable=True)               # "trial" | "subscription" | None
+
     # Metadatos
     created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at    = Column(DateTime, nullable=True)
 
-    # ---------------- Relaciones (desambiguadas) ----------------
-    # Pertenece a UNA organización (vía users.org_id)
+    # ---------------- Relaciones ----------------
     organization = relationship(
         "Organization",
         foreign_keys=[org_id],
@@ -56,7 +62,6 @@ class User(Base):
         lazy="selectin",
     )
 
-    # Es propietario (owner) de CERO o MÁS organizaciones (vía organizations.owner_user_id)
     owned_organizations = relationship(
         "Organization",
         foreign_keys="Organization.owner_user_id",
@@ -64,7 +69,6 @@ class User(Base):
         lazy="selectin",
     )
 
-    # Relación con otras tablas
     mail_accounts = relationship("MailAccount", back_populates="user", lazy="selectin")
     report_downloads = relationship("ReportDownload", back_populates="user", lazy="selectin")
     allowed_ips = relationship("AllowedIP", back_populates="user", lazy="selectin")
@@ -85,19 +89,14 @@ class Organization(Base):
 
     id             = Column(Integer, primary_key=True, index=True)
     name           = Column(String(255), unique=True, nullable=False)
-
-    # Dueño/propietario de la org
     owner_user_id  = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
-    # Licencias / facturación
     seats_total    = Column(Integer, nullable=False, default=1)
     seats_used     = Column(Integer, nullable=False, default=0)
     billing_id     = Column(String(255), nullable=True)
 
     created_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    # ---------------- Relaciones (desambiguadas) ----------------
-    # Owner: va a User.owned_organizations
     owner = relationship(
         "User",
         foreign_keys=[owner_user_id],
@@ -105,7 +104,6 @@ class Organization(Base):
         lazy="selectin",
     )
 
-    # Miembros: vienen desde User.org_id
     members = relationship(
         "User",
         foreign_keys="User.org_id",
@@ -113,7 +111,6 @@ class Organization(Base):
         lazy="selectin",
     )
 
-    # Invites
     invites = relationship(
         "OrgInvite",
         foreign_keys="OrgInvite.org_id",
@@ -122,7 +119,10 @@ class Organization(Base):
     )
 
     def __repr__(self):
-        return f"<Organization id={self.id} name={self.name!r} owner_user_id={self.owner_user_id} seats={self.seats_used}/{self.seats_total}>"
+        return (
+            f"<Organization id={self.id} name={self.name!r} "
+            f"owner_user_id={self.owner_user_id} seats={self.seats_used}/{self.seats_total}>"
+        )
 
 
 # =========================
@@ -133,14 +133,13 @@ class OrgInvite(Base):
 
     id               = Column(Integer, primary_key=True, index=True)
     org_id           = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
-    email            = Column(String(255), nullable=True, index=True)   # destinatario
-    token            = Column(String(64), nullable=True, unique=True)   # token público
+    email            = Column(String(255), nullable=True, index=True)
+    token            = Column(String(64), nullable=True, unique=True)
     used             = Column(Boolean, nullable=False, default=False)
     used_by_user_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at       = Column(DateTime, nullable=False, default=datetime.utcnow)
     used_at          = Column(DateTime, nullable=True)
 
-    # Relaciones (desambiguadas)
     organization = relationship(
         "Organization",
         foreign_keys=[org_id],
@@ -172,15 +171,13 @@ class MailAccount(Base):
     user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     email       = Column(String(255), nullable=False, index=True)
 
-    # Conectividad IMAP
-    imap_host   = Column(String(255), nullable=True)                    # legacy
+    imap_host   = Column(String(255), nullable=True)
     imap_server = Column(String(255), nullable=False, default="imap.gmail.com")
     imap_port   = Column(Integer, nullable=False, default=993)
     use_ssl     = Column(Boolean, nullable=False, default=True)
 
-    # Credenciales/cifrado
-    enc_password = Column(String(1024), nullable=True)                  # legacy
-    enc_blob     = Column(Text, nullable=False, default="")             # preferido
+    enc_password = Column(String(1024), nullable=True)
+    enc_blob     = Column(Text, nullable=False, default="")
 
     created_at  = Column(DateTime, nullable=True, default=datetime.utcnow)
 
@@ -229,7 +226,7 @@ class AllowedIP(Base):
 
     id          = Column(Integer, primary_key=True, index=True)
     user_id     = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    ip_cidr     = Column(String(64), nullable=False)   # ej. "1.2.3.4/32"
+    ip_cidr     = Column(String(64), nullable=False)
     note        = Column(String(255), nullable=True)
     created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
