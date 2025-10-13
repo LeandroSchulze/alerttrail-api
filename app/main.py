@@ -36,9 +36,9 @@ from app.security import (
 )
 from app.models import User
 
-from app.routers import promo
-app.include_router(promo.router)
-
+# ⛔️ Eliminado: no incluir routers antes de crear la app
+# from app.routers import promo
+# app.include_router(promo.router)
 
 # ============================================
 # App & Config
@@ -168,6 +168,7 @@ ROUTER_MODULES = [
     "orgs", "stats", "payments", "alerts", "rules", "reports",
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push",
+    "promo",  # 👈 agregado: carga /promo automáticamente
 ]
 for name in ROUTER_MODULES:
     try:
