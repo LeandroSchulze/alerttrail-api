@@ -1,28 +1,38 @@
-"""add email verification fields to users"""
+"""add trial fields to users
 
+Revision ID: 20251013_add_trial_fields
+Revises: <TU_REVISION_ANTERIOR>
+Create Date: 2025-10-13
+
+"""
 from alembic import op
 import sqlalchemy as sa
 
-# Primera migración manual → sin historial previo
-revision = "add_email_verification_20250930"
-down_revision = None
+
+# Identificadores de migración
+revision = "20251013_add_trial_fields"
+down_revision = "<TU_REVISION_ANTERIOR>"
 branch_labels = None
 depends_on = None
 
-def upgrade():
-    with op.batch_alter_table("users") as batch:
-        batch.add_column(sa.Column("email_verified", sa.Boolean(), nullable=False, server_default=sa.false()))
-        batch.add_column(sa.Column("verification_code", sa.String(length=12), nullable=True))
-        batch.add_column(sa.Column("verification_expires_at", sa.DateTime(timezone=True), nullable=True))
-        batch.add_column(sa.Column("verification_attempts", sa.Integer(), nullable=False, server_default="0"))
 
-    # ⚠️ Si usás SQLite, COMENTÁ estas dos líneas (SQLite no soporta ALTER COLUMN DROP DEFAULT)
-    # op.execute("ALTER TABLE users ALTER COLUMN email_verified DROP DEFAULT")
-    # op.execute("ALTER TABLE users ALTER COLUMN verification_attempts DROP DEFAULT")
+def upgrade():
+    """Agrega los campos de trial (5 días sin cargo) al modelo User"""
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.add_column(sa.Column("trial_started_at", sa.DateTime(), nullable=True))
+        batch_op.add_column(sa.Column("trial_expires_at", sa.DateTime(), nullable=True))
+        batch_op.add_column(sa.Column("had_trial", sa.Boolean(), nullable=False, server_default=sa.text("0")))
+        batch_op.add_column(sa.Column("pro_source", sa.String(length=32), nullable=True))
+
+    # Quita el server_default una vez aplicado (para inserts futuros)
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column("had_trial", server_default=None)
+
 
 def downgrade():
-    with op.batch_alter_table("users") as batch:
-        batch.drop_column("verification_attempts")
-        batch.drop_column("verification_expires_at")
-        batch.drop_column("verification_code")
-        batch.drop_column("email_verified")
+    """Revierte los cambios: elimina los campos de trial"""
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.drop_column("pro_source")
+        batch_op.drop_column("had_trial")
+        batch_op.drop_column("trial_expires_at")
+        batch_op.drop_column("trial_started_at")
