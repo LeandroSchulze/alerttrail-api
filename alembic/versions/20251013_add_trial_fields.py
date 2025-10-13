@@ -1,7 +1,7 @@
 """add trial fields to users
 
 Revision ID: 20251013_add_trial_fields
-Revises: None
+Revises: add_email_verification_20250930
 Create Date: 2025-10-13
 
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 # Identificadores de migración
 revision = "20251013_add_trial_fields"
-down_revision = None   # <- fix para no depender de otra migración
+down_revision = "add_email_verification_20250930"  # 👈 encadenada al stub
 branch_labels = None
 depends_on = None
 
