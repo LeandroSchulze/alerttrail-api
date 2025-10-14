@@ -50,6 +50,10 @@ class User(Base):
     had_trial        = Column(Boolean, nullable=False, default=False)  # evita múltiples trials
     pro_source       = Column(String(32), nullable=True)               # "trial" | "subscription" | None
 
+    # ================ Suscripción PRO (vencimiento + idempotencia) ================
+    pro_expires_at  = Column(DateTime, nullable=True)                  # NUEVO: fecha de expiración del PRO
+    last_payment_id = Column(String(64), nullable=True)                # NUEVO: para evitar duplicados en webhooks
+
     # Metadatos
     created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at    = Column(DateTime, nullable=True)
