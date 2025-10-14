@@ -1,12 +1,11 @@
 # app/db_hotfix.py
-from sqlalchemy import text
 from .database import SessionLocal
 
 def ensure_user_pro_columns() -> dict:
     """
     Crea users.pro_expires_at (DateTime) y users.last_payment_id (VARCHAR(64))
     si no existen. Funciona en SQLite y Postgres. Idempotente.
-    Devuelve un dict con lo hecho para log/debug.
+    Devuelve un dict con detalles para logs.
     """
     out = {"dialect": None, "created": [], "existing": []}
     db = SessionLocal()
@@ -17,10 +16,10 @@ def ensure_user_pro_columns() -> dict:
 
         with engine.connect() as conn:
             if dialect == "sqlite":
-                # Descubrir columnas actuales
+                # Inspeccionar columnas actuales
                 cols = set()
                 for row in conn.exec_driver_sql("PRAGMA table_info(users)"):
-                    # row: (cid, name, type, notnull, dflt_value, pk)
+                    # row = (cid, name, type, notnull, dflt_value, pk)
                     cols.add(row[1])
 
                 if "pro_expires_at" in cols:
