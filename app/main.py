@@ -34,20 +34,7 @@ from app.security import (
     decode_token,  # no utilizado, se conserva por compatibilidad
     COOKIE_NAME,   # no utilizado directo acá, se conserva por compatibilidad
 )
-
-# ... tus imports existentes ...
-from app.routers import payments, webhooks, subscription  # NUEVO
-
-# ... tu app FastAPI existente ...
-app.include_router(payments.router)      # NUEVO
-app.include_router(webhooks.router)      # NUEVO
-app.include_router(subscription.router)  # NUEVO
-
 from app.models import User
-
-# ⛔️ Eliminado: no incluir routers antes de crear la app
-# from app.routers import promo
-# app.include_router(promo.router)
 
 # ============================================
 # App & Config
@@ -55,6 +42,22 @@ from app.models import User
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
+
+# Hotfix DB (crea columnas si faltan) -----------------------------
+try:
+    # app/db_hotfix.py (nuevo): ensure_user_pro_columns()
+    from .db_hotfix import ensure_user_pro_columns  # type: ignore
+except Exception:
+    ensure_user_pro_columns = None  # type: ignore
+
+@app.on_event("startup")
+def _startup_hotfix_columns():
+    if ensure_user_pro_columns:
+        try:
+            ensure_user_pro_columns()
+        except Exception as e:
+            print("[db_hotfix] WARNING:", e)
+# ----------------------------------------------------------------
 
 # ============================================
 # Paths, Static, Templates
@@ -235,6 +238,15 @@ try:
 except Exception as e:
     print(f"[routers] No pude cargar payments_mp: {e}")
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+# Montaje explícito de routers que no están en ROUTER_MODULES
+for _extra in ("subscription", "webhooks"):
+    try:
+        mod = import_module(f"app.routers.{_extra}")
+        app.include_router(mod.router)
+        print(f"[routers] {_extra} montado OK")
+    except Exception as e:
+        print(f"[routers] No pude cargar {_extra}: {e}")
 
 # Fallback para /mail/alerts/unread_count si no existe
 if not any(isinstance(r, APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
