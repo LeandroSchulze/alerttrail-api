@@ -172,10 +172,29 @@ def _upsert_subscription(db: Session, *, user_id: int, preapproval_id: str, data
     return sub
 
 def _activate_user_plan_if_authorized(db: Session, *, sub: Subscription):
+    """
+    Si la sub está 'authorized', activar plan del usuario.
+    Mejora mínima: setea pro_expires_at (si existe en el modelo) usando next_payment_date.
+    """
     if (sub.status or "").lower() == "authorized" and sub.user_id:
         u = db.query(User).get(sub.user_id)
         if u:
             u.plan = (sub.plan or "PRO").upper()
+            # Intento tolerante de setear pro_expires_at si existe en el modelo:
+            if hasattr(u, "pro_expires_at") and sub.next_payment_date:
+                iso = str(sub.next_payment_date)
+                dt = None
+                try:
+                    # Soporta 'YYYY-MM-DDTHH:MM:SS.sss±HH:MM' o similares
+                    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                except Exception:
+                    # Fallback: ignorar si no parsea
+                    dt = None
+                if dt:
+                    u.pro_expires_at = dt
+            # Actualiza updated_at si el modelo lo tiene
+            if hasattr(u, "updated_at"):
+                u.updated_at = datetime.now(timezone.utc)
             db.commit()
 
 def _sync_preapproval(db: Session, *, preapproval_id: str) -> dict:
