@@ -164,6 +164,32 @@ def ensure_users_columns():
 
 
 # ---------------------------------------------------------------------------
+# 🔧 NUEVO: columnas de facturación/PRO usadas por el código
+# ---------------------------------------------------------------------------
+def ensure_user_billing_columns():
+    """
+    Asegura columnas opcionales usadas por el código:
+      - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
+      - users.last_payment_id (VARCHAR(64) NULL)
+    Idempotente y seguro para SQLite/Postgres.
+    """
+    insp = inspect(engine)
+    try:
+        cols = {c["name"] for c in insp.get_columns("users")}
+    except Exception:
+        # si aún no existe, la creará create_all; salir silenciosamente
+        return
+
+    with engine.begin() as conn:
+        if "pro_expires_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN pro_expires_at DATETIME"))
+            print("[init_db] users.pro_expires_at agregado")
+        if "last_payment_id" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN last_payment_id VARCHAR(64)"))
+            print("[init_db] users.last_payment_id agregado")
+
+
+# ---------------------------------------------------------------------------
 # Migraciones ligeras: ORGANIZATIONS / ORG_INVITES y users.org_id
 # ---------------------------------------------------------------------------
 def ensure_org_schema():
@@ -189,7 +215,7 @@ def ensure_org_schema():
 
     if "is_org_admin" not in cols:
         print("[init_db] Agregando columna users.is_org_admin ...")
-        _safe_exec(f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL")
+        _safe_exec(f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {_TRUE if False else 0 if engine.dialect.name=='sqlite' else 'FALSE'} NOT NULL")
 
     # FK users.org_id -> organizations.id (saltamos en SQLite)
     if engine.dialect.name != "sqlite":
@@ -229,7 +255,7 @@ def ensure_org_schema():
             _safe_exec("ALTER TABLE org_invites ADD COLUMN email VARCHAR(255)")
             print("[init_db] org_invites.email agregado")
         if "used" not in icols:
-            _safe_exec(f"ALTER TABLE org_invites ADD COLUMN used BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL")
+            _safe_exec(f"ALTER TABLE org_invites ADD COLUMN used BOOLEAN DEFAULT 0 NOT NULL")
             print("[init_db] org_invites.used agregado")
         if "used_by_user_id" not in icols:
             _safe_exec("ALTER TABLE org_invites ADD COLUMN used_by_user_id INTEGER")
@@ -537,6 +563,7 @@ def seed_admin_org_if_requested():
 def main():
     ensure_tables()
     ensure_users_columns()          # <- agrega email_verified y campos de verificación
+    ensure_user_billing_columns()   # <- 🔧 NUEVO: pro_expires_at / last_payment_id
     ensure_org_schema()
     ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob
     ensure_report_downloads_columns()
