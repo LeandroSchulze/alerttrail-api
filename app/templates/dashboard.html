@@ -67,15 +67,6 @@
       <p class="muted">Tu email: {{ user.email }}</p>
     </div>
 
-    <!-- === Estado PRO + botón Upgrade (usa tu flujo de preapproval) === -->
-    <div class="card" style="margin-top:12px">
-      <div id="pro-status" class="muted" style="margin-bottom:8px">Cargando estado...</div>
-      <div>
-        <button id="btn-upgrade" type="button" class="btn-primary">Activar PRO</button>
-        <a class="btn-outline" href="/billing">Ir a Facturación</a>
-      </div>
-    </div>
-
     <!-- === PROMO PRO 5 DÍAS (solo particulares) === -->
     <div id="promo-pro-trial"
          data-org-id="{{ user.org_id if user and user.org_id is not none else '' }}"
@@ -359,35 +350,8 @@
     })();
   </script>
 
-  <!-- ===== Estado PRO + botón (usa tu /payments/subscribe) ===== -->
-  <script>
-    async function refreshStatus(){
-      try {
-        const r = await fetch('/subscription/me');
-        const d = await r.json();
-        const el = document.getElementById('pro-status');
-        if(d.plan && d.plan.toUpperCase() === 'PRO' && d.pro_expires_at){
-          el.innerText = 'PRO activo hasta: ' + d.pro_expires_at;
-          document.getElementById('btn-upgrade').style.display = 'none';
-        } else {
-          el.innerText = 'Plan gratuito';
-          document.getElementById('btn-upgrade').style.display = 'inline-block';
-        }
-      } catch(e) {
-        const el = document.getElementById('pro-status');
-        if (el) el.innerText = 'No se pudo obtener el estado.';
-      }
-    }
-
-    function startCheckout(){
-      // Usa tu flujo de preapproval (GET) para PRO
-      window.location.href = '/payments/subscribe?plan=PRO';
-    }
-
-    document.getElementById('btn-upgrade')?.addEventListener('click', startCheckout);
-    // Llamada inicial al cargar
-    refreshStatus();
-  </script>
+  <!-- 🔥 Promo Trial JS (debe ir al final) -->
+  <script src="/static/promo_trial.js"></script>
 
   <!-- ===== Web Push: botón para activar ===== -->
   <script type="module">
@@ -420,9 +384,6 @@
       tabBiz.classList.add('is-active'); tabBiz.removeAttribute('hidden'); tabPro.classList.remove('is-active'); tabPro.setAttribute('hidden','true');
     });
   </script>
-
-  <!-- 🔥 Promo Trial JS (debe ir al final) -->
-  <script src="/static/promo_trial.js"></script>
 
   <!-- ===== Footer simple ===== -->
   <footer class="page-footer">
