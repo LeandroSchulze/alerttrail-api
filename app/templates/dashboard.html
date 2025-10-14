@@ -10,37 +10,6 @@
       --brand:#2563eb; --ok:#16a34a;
     }
 
-<!-- En el lugar que prefieras del dashboard -->
-<div id="pro-status" style="margin: 8px 0;"></div>
-<button id="btn-upgrade" type="button">Activar PRO</button>
-
-<script>
-async function refreshStatus(){
-  try {
-    const r = await fetch('/subscription/me');
-    const d = await r.json();
-    const el = document.getElementById('pro-status');
-    if(d.plan === 'PRO' && d.pro_expires_at){
-      el.innerText = 'PRO activo hasta: ' + d.pro_expires_at;
-      document.getElementById('btn-upgrade').style.display = 'none';
-    } else {
-      el.innerText = 'Plan gratuito';
-      document.getElementById('btn-upgrade').style.display = 'inline-block';
-    }
-  } catch(e) { /* no-op */ }
-}
-
-async function startCheckout(){
-  const r = await fetch('/payments/checkout', {method:'POST'});
-  const d = await r.json();
-  if(d.init_point){ window.location.href = d.init_point; }
-}
-
-document.getElementById('btn-upgrade').addEventListener('click', startCheckout);
-refreshStatus();
-</script>
-
-    
     *{box-sizing:border-box}
     html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial}
@@ -98,6 +67,15 @@ refreshStatus();
       <p class="muted">Tu email: {{ user.email }}</p>
     </div>
 
+    <!-- === Estado PRO + botón Upgrade (usa tu flujo de preapproval) === -->
+    <div class="card" style="margin-top:12px">
+      <div id="pro-status" class="muted" style="margin-bottom:8px">Cargando estado...</div>
+      <div>
+        <button id="btn-upgrade" type="button" class="btn-primary">Activar PRO</button>
+        <a class="btn-outline" href="/billing">Ir a Facturación</a>
+      </div>
+    </div>
+
     <!-- === PROMO PRO 5 DÍAS (solo particulares) === -->
     <div id="promo-pro-trial"
          data-org-id="{{ user.org_id if user and user.org_id is not none else '' }}"
@@ -111,8 +89,7 @@ refreshStatus();
           Activar prueba
         </button>
         <a href="/billing" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
-          Activar PRO por USD 10/mes →
-        </a>
+          Activar PRO por USD 10/mes →</a>
       </div>
       <div id="promo-pro-timer" style="margin-top:8px;color:#334155;display:none">
         Te quedan <b id="promo-pro-countdown">—</b> de PRO gratis.
@@ -380,6 +357,36 @@ refreshStatus();
         es.onerror = ()=>{};
       }catch(_){}
     })();
+  </script>
+
+  <!-- ===== Estado PRO + botón (usa tu /payments/subscribe) ===== -->
+  <script>
+    async function refreshStatus(){
+      try {
+        const r = await fetch('/subscription/me');
+        const d = await r.json();
+        const el = document.getElementById('pro-status');
+        if(d.plan && d.plan.toUpperCase() === 'PRO' && d.pro_expires_at){
+          el.innerText = 'PRO activo hasta: ' + d.pro_expires_at;
+          document.getElementById('btn-upgrade').style.display = 'none';
+        } else {
+          el.innerText = 'Plan gratuito';
+          document.getElementById('btn-upgrade').style.display = 'inline-block';
+        }
+      } catch(e) {
+        const el = document.getElementById('pro-status');
+        if (el) el.innerText = 'No se pudo obtener el estado.';
+      }
+    }
+
+    function startCheckout(){
+      // Usa tu flujo de preapproval (GET) para PRO
+      window.location.href = '/payments/subscribe?plan=PRO';
+    }
+
+    document.getElementById('btn-upgrade')?.addEventListener('click', startCheckout);
+    // Llamada inicial al cargar
+    refreshStatus();
   </script>
 
   <!-- ===== Web Push: botón para activar ===== -->
