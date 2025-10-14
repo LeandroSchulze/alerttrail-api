@@ -9,6 +9,38 @@
       --bg:#f7fafc; --panel:#ffffff; --text:#0f172a; --muted:#475569; --line:#e5e7eb;
       --brand:#2563eb; --ok:#16a34a;
     }
+
+<!-- En el lugar que prefieras del dashboard -->
+<div id="pro-status" style="margin: 8px 0;"></div>
+<button id="btn-upgrade" type="button">Activar PRO</button>
+
+<script>
+async function refreshStatus(){
+  try {
+    const r = await fetch('/subscription/me');
+    const d = await r.json();
+    const el = document.getElementById('pro-status');
+    if(d.plan === 'PRO' && d.pro_expires_at){
+      el.innerText = 'PRO activo hasta: ' + d.pro_expires_at;
+      document.getElementById('btn-upgrade').style.display = 'none';
+    } else {
+      el.innerText = 'Plan gratuito';
+      document.getElementById('btn-upgrade').style.display = 'inline-block';
+    }
+  } catch(e) { /* no-op */ }
+}
+
+async function startCheckout(){
+  const r = await fetch('/payments/checkout', {method:'POST'});
+  const d = await r.json();
+  if(d.init_point){ window.location.href = d.init_point; }
+}
+
+document.getElementById('btn-upgrade').addEventListener('click', startCheckout);
+refreshStatus();
+</script>
+
+    
     *{box-sizing:border-box}
     html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial}
