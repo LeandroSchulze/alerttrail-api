@@ -45,10 +45,17 @@ DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
 # Hotfix DB (crea columnas si faltan) -----------------------------
 try:
-    # app/db_hotfix.py (nuevo): ensure_user_pro_columns()
+    # app/db_hotfix.py: ensure_user_pro_columns()
     from .db_hotfix import ensure_user_pro_columns  # type: ignore
 except Exception:
     ensure_user_pro_columns = None  # type: ignore
+
+# ✅ Llamada inmediata al arrancar el proceso (además del on_event)
+if ensure_user_pro_columns:
+    try:
+        ensure_user_pro_columns()
+    except Exception as e:
+        print("[db_hotfix] WARNING at import-time:", e)
 
 @app.on_event("startup")
 def _startup_hotfix_columns():
@@ -547,6 +554,17 @@ def _scheduler_status():
       - last_error: último error (si hubo)
     """
     return _scheduler_status_fn()
+
+# ===== Internal DB Hotfix endpoint (manual) =====
+@app.get("/internal/db/hotfix", include_in_schema=False)
+def _run_db_hotfix_now():
+    if ensure_user_pro_columns:
+        try:
+            info = ensure_user_pro_columns()
+            return {"ok": True, **(info or {})}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)}
+    return {"ok": False, "error": "hotfix not available (file missing?)"}
 
 # ============================================
 # Fallbacks útiles
