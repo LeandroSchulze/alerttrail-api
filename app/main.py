@@ -34,6 +34,15 @@ from app.security import (
     decode_token,  # no utilizado, se conserva por compatibilidad
     COOKIE_NAME,   # no utilizado directo acá, se conserva por compatibilidad
 )
+
+# ... tus imports existentes ...
+from app.routers import payments, webhooks, subscription  # NUEVO
+
+# ... tu app FastAPI existente ...
+app.include_router(payments.router)      # NUEVO
+app.include_router(webhooks.router)      # NUEVO
+app.include_router(subscription.router)  # NUEVO
+
 from app.models import User
 
 # ⛔️ Eliminado: no incluir routers antes de crear la app
