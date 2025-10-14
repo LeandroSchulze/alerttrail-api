@@ -34,7 +34,6 @@ from app.security import (
     decode_token,  # no utilizado, se conserva por compatibilidad
     COOKIE_NAME,   # no utilizado directo acá, se conserva por compatibilidad
 )
-from app.models import User
 
 # ============================================
 # App & Config
@@ -43,17 +42,20 @@ from app.models import User
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
-# Hotfix DB (crea columnas si faltan) -----------------------------
+# =========================================================
+# Hotfix de DB (crear columnas si faltan) — corre bien temprano
+# =========================================================
 try:
-    # app/db_hotfix.py: ensure_user_pro_columns()
-    from .db_hotfix import ensure_user_pro_columns  # type: ignore
+    # IMPORT ABSOLUTO (asegura que resuelva en Render/uvicorn)
+    from app.db_hotfix import ensure_user_pro_columns  # type: ignore
 except Exception:
     ensure_user_pro_columns = None  # type: ignore
 
-# ✅ Llamada inmediata al arrancar el proceso (además del on_event)
+# ✅ Llamada inmediata al importar el módulo (antes de importar modelos)
 if ensure_user_pro_columns:
     try:
-        ensure_user_pro_columns()
+        info = ensure_user_pro_columns()
+        print("[db_hotfix] run at import:", info)
     except Exception as e:
         print("[db_hotfix] WARNING at import-time:", e)
 
@@ -61,10 +63,13 @@ if ensure_user_pro_columns:
 def _startup_hotfix_columns():
     if ensure_user_pro_columns:
         try:
-            ensure_user_pro_columns()
+            info = ensure_user_pro_columns()
+            print("[db_hotfix] run at startup:", info)
         except Exception as e:
-            print("[db_hotfix] WARNING:", e)
-# ----------------------------------------------------------------
+            print("[db_hotfix] WARNING at startup:", e)
+# =========================================================
+
+from app.models import User  # <- ahora se importa después de correr el hotfix
 
 # ============================================
 # Paths, Static, Templates
@@ -372,7 +377,7 @@ if not _route_exists("/auth/login/web"):
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
 
-# ======== [AGREGADO] /auth/me ========
+# ======== /auth/me ========
 @app.get("/auth/me")
 def auth_me(request: Request, db: Session = Depends(get_db)):
     """
@@ -392,7 +397,7 @@ def auth_me(request: Request, db: Session = Depends(get_db)):
         "org_id": getattr(u, "org_id", None),
     }
 
-# ======== [AGREGADO] Logout (GET/POST y alias) ========
+# ======== Logout (GET/POST y alias) ========
 @app.get("/logout", include_in_schema=False)
 def logout_get():
     r = RedirectResponse(url="/", status_code=303)
