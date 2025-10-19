@@ -1,54 +1,170 @@
 # app/routers/webhooks.py
 from __future__ import annotations
 
-import os, json, hmac, hashlib, re
+import os, json, hmac, hashlib, re, datetime as dt
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.database import get_db
 from app.payments.mp_client import sdk
 from app.services.subscription import activate_pro
-from app.models import User  # para fallback si solo tenemos email
+from app.models import User
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 MP_WEBHOOK_SECRET = os.getenv("MP_WEBHOOK_SECRET")  # opcional (HMAC compartido)
 PLAN_PRO_DAYS = int(os.getenv("PLAN_PRO_DAYS", "30"))
 
-# -----------------------------
-# Helpers
-# -----------------------------
 def _ok(payload: dict) -> JSONResponse:
     return JSONResponse(payload, status_code=200)
 
+# ---------- Payments table helpers ----------
+def _ensure_payments_table(db: Session):
+    eng = db.get_bind()
+    dialect = getattr(eng.dialect, "name", "sqlite")
+    if dialect == "sqlite":
+        ddl = """
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY,
+            payment_id VARCHAR UNIQUE,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            email VARCHAR,
+            status VARCHAR,
+            currency VARCHAR,
+            amount NUMERIC,
+            external_reference VARCHAR,
+            paid_at DATETIME,
+            raw TEXT,
+            created_at DATETIME,
+            updated_at DATETIME
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_payment_id ON payments(payment_id);
+        CREATE INDEX IF NOT EXISTS ix_payments_user_id ON payments(user_id);
+        CREATE INDEX IF NOT EXISTS ix_payments_status ON payments(status);
+        """
+    else:
+        ddl = """
+        CREATE TABLE IF NOT EXISTS payments (
+            id SERIAL PRIMARY KEY,
+            payment_id VARCHAR UNIQUE,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            email VARCHAR,
+            status VARCHAR,
+            currency VARCHAR,
+            amount NUMERIC,
+            external_reference VARCHAR,
+            paid_at TIMESTAMPTZ,
+            raw TEXT,
+            created_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_payment_id ON payments(payment_id);
+        CREATE INDEX IF NOT EXISTS ix_payments_user_id ON payments(user_id);
+        CREATE INDEX IF NOT EXISTS ix_payments_status ON payments(status);
+        """
+    for stmt in ddl.split(";"):
+        s = stmt.strip()
+        if s:
+            db.execute(text(s))
+    db.commit()
+
+def _upsert_payment(
+    db: Session,
+    *,
+    payment_id: str,
+    user_id: Optional[int],
+    email: Optional[str],
+    status: Optional[str],
+    currency: Optional[str],
+    amount: Optional[float],
+    external_reference: Optional[str],
+    paid_at: Optional[str],
+    raw: dict,
+):
+    _ensure_payments_table(db)
+    now = dt.datetime.utcnow().isoformat()
+    raw_json = json.dumps(raw, ensure_ascii=False)
+
+    # Intento UPDATE
+    upd = db.execute(
+        text("""
+            UPDATE payments SET
+                user_id = COALESCE(:user_id, user_id),
+                email = COALESCE(:email, email),
+                status = :status,
+                currency = COALESCE(:currency, currency),
+                amount = COALESCE(:amount, amount),
+                external_reference = COALESCE(:external_reference, external_reference),
+                paid_at = COALESCE(:paid_at, paid_at),
+                raw = :raw,
+                updated_at = :now
+            WHERE payment_id = :payment_id
+        """),
+        {
+            "payment_id": payment_id,
+            "user_id": user_id,
+            "email": email,
+            "status": status,
+            "currency": currency,
+            "amount": amount,
+            "external_reference": external_reference,
+            "paid_at": paid_at,
+            "raw": raw_json,
+            "now": now,
+        }
+    )
+    if upd.rowcount and upd.rowcount > 0:
+        db.commit()
+        return
+
+    # Si no existía, INSERT
+    db.execute(
+        text("""
+            INSERT INTO payments
+                (payment_id, user_id, email, status, currency, amount, external_reference, paid_at, raw, created_at, updated_at)
+            VALUES
+                (:payment_id, :user_id, :email, :status, :currency, :amount, :external_reference, :paid_at, :raw, :now, :now)
+        """),
+        {
+            "payment_id": payment_id,
+            "user_id": user_id,
+            "email": email,
+            "status": status,
+            "currency": currency,
+            "amount": amount,
+            "external_reference": external_reference,
+            "paid_at": paid_at,
+            "raw": raw_json,
+            "now": now,
+        }
+    )
+    db.commit()
+
+# ---------- User resolution helpers ----------
 def _parse_user_from_external_reference(ext_ref: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
     """
-    Intenta extraer user_id o email desde external_reference.
     Admite:
       - "user:<id>"
       - "email:<addr>"
       - "<id>" (solo números)
       - "user:<id>:ts:<timestamp>"
-    Devuelve (user_id, email)
     """
     if not ext_ref:
         return (None, None)
     ref = str(ext_ref).strip()
-    # user:<id>[:...]
     m = re.match(r"^user:(\d+)(:.*)?$", ref)
     if m:
         try:
             return (int(m.group(1)), None)
         except Exception:
             pass
-    # email:<addr>
     m = re.match(r"^email:([^:]+)$", ref)
     if m:
         return (None, m.group(1).strip())
-    # sólo números = user_id
     if ref.isdigit():
         try:
             return (int(ref), None)
@@ -57,9 +173,6 @@ def _parse_user_from_external_reference(ext_ref: Optional[str]) -> Tuple[Optiona
     return (None, None)
 
 def _resolve_user(db: Session, user_id: Optional[int], email: Optional[str]) -> Optional[User]:
-    """
-    Resuelve el usuario por id o por email (case-insensitive).
-    """
     if user_id:
         u = db.query(User).get(user_id)
         if u:
@@ -68,26 +181,25 @@ def _resolve_user(db: Session, user_id: Optional[int], email: Optional[str]) -> 
         return db.query(User).filter(User.email.ilike(email)).first()
     return None
 
-# -----------------------------
-# Core webhook
-# -----------------------------
+# ---------- Webhook ----------
 @router.post("/mercadopago", response_class=JSONResponse)
 async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Webhook de Mercado Pago.
-    - Verifica firma HMAC si MP_WEBHOOK_SECRET está configurado.
-    - Soporta notificaciones con type/topic 'payment' o 'merchant_order', y el esquema por query (?topic=payment&id=...).
-    - Obtiene el pago desde el SDK y, si está 'approved', activa PRO por PLAN_PRO_DAYS (idempotente en activate_pro).
-    - Siempre responde 200 para evitar reintentos excesivos del lado de MP.
+    Webhook Mercado Pago:
+    - Verifica HMAC si MP_WEBHOOK_SECRET.
+    - Soporta 'payment' y 'merchant_order'; también query (?topic=payment&id=...).
+    - Lee el pago desde MP SDK; si 'approved' → activate_pro(user, days).
+    - Registra/actualiza el pago en la tabla 'payments'.
+    - Siempre responde 200.
     """
-    # 1) Leer cuerpo
+    # 1) payload
     body_bytes = await request.body()
     try:
         payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
     except Exception:
         payload = {}
 
-    # 2) (Opcional) Validar firma HMAC (compartida) si está configurada
+    # 2) firma opcional
     if MP_WEBHOOK_SECRET:
         signature = request.headers.get("x-signature")
         if not signature:
@@ -96,110 +208,77 @@ async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
         if not hmac.compare_digest(expected, signature):
             return _ok({"status": "invalid-signature"})
 
-    # 3) Extraer tipo/id (body o query)
-    ntype = payload.get("type") or payload.get("topic")  # algunos envían 'topic'
+    # 3) tipo e id
+    ntype = payload.get("type") or payload.get("topic")
     data = payload.get("data", {}) or {}
     payment_id = data.get("id") or payload.get("resource")
-
-    # Fallback por query (?topic=payment&id=XXXX)
     if not ntype:
         ntype = request.query_params.get("topic")
     if not payment_id:
         payment_id = request.query_params.get("id")
 
-    # 4) Procesamiento principal
-    if ntype in ("payment", "merchant_order"):
-        if ntype == "payment" and payment_id:
-            # Caso directo: ya tenemos payment_id
+    if ntype in ("payment", "merchant_order") and payment_id:
+        # obtener pago
+        try:
+            pinfo = sdk.payment().get(payment_id)
+        except Exception as e:
+            return _ok({"status": "mp-api-error", "error": repr(e), "step": "payment.get"})
+
+        resp = (pinfo.get("response") or {})
+        status = (resp.get("status") or "").lower()
+        ext_ref = resp.get("external_reference")
+        metadata = resp.get("metadata") or {}
+        payer = resp.get("payer") or {}
+
+        # datos útiles
+        currency = resp.get("currency_id") or (resp.get("transaction_details") or {}).get("financial_institution")  # fallback raro
+        amount = resp.get("transaction_amount") or (resp.get("order") or {}).get("total_amount") or None
+        paid_at = resp.get("date_approved") or resp.get("money_release_date")
+        email = metadata.get("email") or payer.get("email")
+        meta_uid = metadata.get("user_id")
+        try:
+            meta_uid = int(meta_uid) if meta_uid is not None else None
+        except Exception:
+            meta_uid = None
+
+        uid_ext, email_ext = _parse_user_from_external_reference(ext_ref)
+        candidate_email = email or email_ext
+        candidate_uid = meta_uid or uid_ext
+        user = _resolve_user(db, user_id=candidate_uid, email=candidate_email)
+
+        # activar PRO si aprobado
+        approved = (status == "approved")
+        if approved and user:
             try:
-                mp_resp = sdk.payment().get(payment_id)  # dict con 'response'
-            except Exception:
-                return _ok({"status": "mp-api-error", "step": "payment.get"})
+                activate_pro(db, user_id=user.id, payment_id=str(payment_id), days=PLAN_PRO_DAYS)
+            except Exception as e:
+                # Seguimos, igual registramos el pago
+                print("[webhooks] activate_pro error:", e)
 
-            resp = (mp_resp.get("response") or {})
-            status = (resp.get("status") or "").lower()
-            ext_ref = resp.get("external_reference")
-            metadata = resp.get("metadata") or {}
-            payer = resp.get("payer") or {}
+        # registrar/actualizar pago
+        try:
+            _upsert_payment(
+                db,
+                payment_id=str(payment_id),
+                user_id=(user.id if user else None),
+                email=(getattr(user, "email", None) or candidate_email),
+                status=status,
+                currency=currency,
+                amount=amount,
+                external_reference=ext_ref,
+                paid_at=paid_at,
+                raw=resp,
+            )
+        except Exception as e:
+            print("[webhooks] upsert_payment error:", e)
 
-            # Resolver usuario
-            user_id_from_ext, email_from_ext = _parse_user_from_external_reference(ext_ref)
+        return _ok({
+            "status": "ok",
+            "approved": approved,
+            "user_found": bool(user),
+            "user_id": getattr(user, "id", None) if user else None,
+            "email": getattr(user, "email", None) if user else candidate_email,
+            "payment_id": str(payment_id),
+        })
 
-            # Preferencias: metadata.user_id > ext_ref user > metadata.email > payer.email
-            meta_user_id = metadata.get("user_id")
-            try:
-                meta_user_id = int(meta_user_id) if meta_user_id is not None else None
-            except Exception:
-                meta_user_id = None
-
-            email = metadata.get("email") or email_from_ext or payer.get("email")
-            user = _resolve_user(db, user_id=(meta_user_id or user_id_from_ext), email=email)
-
-            if status == "approved" and user:
-                ok = activate_pro(db, user_id=user.id, payment_id=str(payment_id), days=PLAN_PRO_DAYS)
-                return _ok({"status": "ok" if ok else "not-found", "user_id": user.id, "approved": True})
-
-            return _ok({
-                "status": "ignored-or-unlinked",
-                "approved": (status == "approved"),
-                "user_found": bool(user),
-                "ext_ref": ext_ref,
-                "email_candidate": email,
-            })
-
-        elif ntype == "merchant_order" and payment_id:
-            # Algunas integraciones envían merchant_order: buscamos pagos aprobados dentro de la orden
-            try:
-                mo = sdk.merchant_order().get(payment_id)
-            except Exception:
-                return _ok({"status": "mp-api-error", "step": "merchant_order.get"})
-
-            mo_resp = mo.get("response") or {}
-            payments = mo_resp.get("payments") or []
-            # Intentamos con el primer payment aprobado
-            approved_pid = None
-            for p in payments:
-                if (p.get("status") or "").lower() == "approved":
-                    approved_pid = p.get("id")
-                    break
-
-            if not approved_pid:
-                return _ok({"status": "no-approved-payment-in-merchant-order"})
-
-            # Re-uso del flujo de payment
-            try:
-                mp_resp = sdk.payment().get(approved_pid)
-            except Exception:
-                return _ok({"status": "mp-api-error", "step": "payment.get-from-order"})
-
-            resp = (mp_resp.get("response") or {})
-            status = (resp.get("status") or "").lower()
-            ext_ref = resp.get("external_reference")
-            metadata = resp.get("metadata") or {}
-            payer = resp.get("payer") or {}
-
-            user_id_from_ext, email_from_ext = _parse_user_from_external_reference(ext_ref)
-            meta_user_id = metadata.get("user_id")
-            try:
-                meta_user_id = int(meta_user_id) if meta_user_id is not None else None
-            except Exception:
-                meta_user_id = None
-
-            email = metadata.get("email") or email_from_ext or payer.get("email")
-            user = _resolve_user(db, user_id=(meta_user_id or user_id_from_ext), email=email)
-
-            if status == "approved" and user:
-                ok = activate_pro(db, user_id=user.id, payment_id=str(approved_pid), days=PLAN_PRO_DAYS)
-                return _ok({"status": "ok" if ok else "not-found", "user_id": user.id, "approved": True})
-
-            return _ok({
-                "status": "ignored-or-unlinked",
-                "approved": (status == "approved"),
-                "user_found": bool(user),
-                "ext_ref": ext_ref,
-                "email_candidate": email,
-                "source": "merchant_order",
-            })
-
-    # Si no matchea nada relevante:
     return _ok({"status": "ignored"})
