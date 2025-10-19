@@ -11,4 +11,25 @@
     {% block body %}{% endblock %}
   </div>
 </body>
+  <a id="alerts-fab" href="/alerts"
+  style="position:fixed;right:16px;bottom:16px;z-index:50;text-decoration:none;">
+  <span style="display:inline-flex;align-items:center;gap:8px;background:#111827;color:#fff;
+    border-radius:999px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.25)">
+    🔔 <span id="alerts-fab-count"
+      style="background:#ef4444;border-radius:999px;padding:2px 8px;min-width:18px;text-align:center">0</span>
+    <span>Alertas</span>
+  </span>
+</a>
+<script>
+async function refreshFab(){
+  try{
+    const r = await fetch('/alerts/unread-count', {credentials:'include'});
+    if(!r.ok) return;
+    const d = await r.json();
+    document.getElementById('alerts-fab-count').textContent = d.count || 0;
+  }catch(e){}
+}
+refreshFab(); setInterval(refreshFab,15000);
+</script>
+
 </html>
