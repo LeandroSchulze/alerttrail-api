@@ -1,9 +1,32 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Cambiar plan</title>
-<link rel="stylesheet" href="/static/style.css"></head><body>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Cambiar plan</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    .topbar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #e5e7eb}
+    .container{max-width:1100px;margin:20px auto;padding:0 12px}
+    .card{border:1px solid #e5e7eb;border-radius:16px;padding:18px;background:#fff}
+    .grid{display:grid;gap:16px}
+    @media(min-width:980px){.grid{grid-template-columns:1fr 1fr 1fr}}
+    .tile{border:1px solid #e5e7eb;border-radius:16px;padding:18px;background:#fff}
+    .hint{color:#6b7280;font-size:.95rem;margin-top:6px}
+    .btn{appearance:none;border:0;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer;font-weight:600}
+    .btn:hover{filter:brightness(1.08)}
+    .btn-outline{appearance:none;border:1px solid #111827;border-radius:10px;padding:10px 14px;background:#fff;color:#111827;cursor:pointer;font-weight:600}
+    .btn-outline:hover{background:#111827;color:#fff}
+    input[name="coupon"]{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;margin-right:8px}
+    .msg{margin-top:10px;color:#6b7280}
+  </style>
+</head>
+<body>
 <header class="topbar">
   <div>Mi plan</div>
   <nav><a href="/dashboard">Volver</a></nav>
 </header>
+
 <main class="container">
   <div class="card">
     <h1>Estado actual</h1>
@@ -14,35 +37,88 @@
   </div>
 
   <div class="grid" style="margin-top:16px">
+    <!-- PLAN PRO -->
     <div class="tile">
       <h2>PRO</h2>
       <p><b>USD {{ '%0.2f'|format(price_month) }}/mes</b></p>
       <p>Anual: <b>USD {{ price_year }}</b> ({{ disc_pct }}% OFF)</p>
+
+      <!-- Opción legacy con cupón (si querés mantenerla) -->
       <form method="post" action="/billing/upgrade_pro" style="margin-top:8px">
         <input name="coupon" placeholder="Cupón (opcional)">
-        <button type="submit">Activar PRO</button>
+        <button type="submit" class="btn-outline">Activar PRO (cupón)</button>
       </form>
+
+      <!-- Pago con Mercado Pago -->
+      <div style="margin-top:10px">
+        <button class="btn" id="buyMpMonthly">Comprar PRO (Mensual) con Mercado Pago</button>
+      </div>
+      <!-- Si querés anual vía MP, podrías agregar otro botón y un endpoint opcional -->
+      <!-- <div style="margin-top:8px">
+        <button class="btn" id="buyMpYearly">Comprar PRO (Anual) con Mercado Pago</button>
+      </div> -->
+
+      <div id="msgPro" class="msg"></div>
       <p class="hint">Trial PRO 5 días para cuentas nuevas. Cupón opcional (ENV).</p>
     </div>
 
+    <!-- PLAN BUSINESS -->
     <div class="tile">
       <h2>Business (Empresa)</h2>
       <p><b>USD {{ biz_price }}/mes</b> — incluye <b>{{ biz_included }}</b> cuentas.</p>
       <p>Asiento extra: <b>USD {{ '%0.2f'|format(biz_extra) }}</b>/mes</p>
       <p>Anual: <b>USD {{ biz_year }}</b> ({{ biz_disc }}% OFF)</p>
+
       <form method="post" action="/billing/upgrade_business" style="margin-top:8px">
-        <button type="submit">Activar Business</button>
+        <button type="submit" class="btn-outline">Activar Business</button>
       </form>
+
+      <!-- Si más adelante querés Business con MP, podés crear otro endpoint /billing/mp/checkout?plan=business -->
+      <div id="msgBiz" class="msg"></div>
       <p class="hint">Activa Business y luego agrega miembros desde soporte (v1 manual).</p>
     </div>
 
+    <!-- VOLVER A FREE -->
     <div class="tile">
       <h2>↩️ Volver a FREE</h2>
       <p>Cancelar PRO/Business y volver a FREE (se reestablece el trial).</p>
       <form method="post" action="/billing/cancel">
-        <button type="submit">Volver a FREE</button>
+        <button type="submit" class="btn-outline">Volver a FREE</button>
       </form>
     </div>
   </div>
 </main>
-</body></html>
+
+<script>
+async function mpCheckout(msgEl, planVariant){
+  // planVariant reservado por si agregás anual u otros planes via query (ej: ?variant=yearly)
+  msgEl.textContent = "Creando orden...";
+  try{
+    const url = planVariant ? `/billing/mp/checkout?variant=${encodeURIComponent(planVariant)}` : '/billing/mp/checkout';
+    const r = await fetch(url, {method:'POST', credentials:'include'});
+    if(!r.ok){
+      msgEl.textContent = "Error creando la orden de pago.";
+      return;
+    }
+    const d = await r.json();
+    if(d.checkout_url){
+      window.location.href = d.checkout_url; // redirige a MP
+    }else{
+      msgEl.textContent = "No se recibió URL de pago.";
+    }
+  }catch(e){
+    msgEl.textContent = "Error de red creando la orden.";
+  }
+}
+
+document.getElementById('buyMpMonthly').addEventListener('click', () => {
+  mpCheckout(document.getElementById('msgPro'), 'monthly');
+});
+
+// Si habilitás anual por MP, descomentá esto y el botón correspondiente arriba
+// document.getElementById('buyMpYearly').addEventListener('click', () => {
+//   mpCheckout(document.getElementById('msgPro'), 'yearly');
+// });
+</script>
+</body>
+</html>
