@@ -6,6 +6,28 @@
   <title>AlertTrail</title>
   <link rel="stylesheet" href="/static/style.css"/>
 </head>
+  
+  {% if user and (user.plan_expires or user.pro_until) %}
+<script>
+(function(){
+  try{
+    var exp = "{{ (user.plan_expires or user.pro_until)|string }}";
+    if(!exp) return;
+    var d = new Date(exp);
+    if(isNaN(d.getTime())) return;
+    var ms = d - new Date();
+    var days = Math.ceil(ms / (1000*60*60*24));
+    if(days <= 7){
+      var bar = document.createElement('div');
+      bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;background:#0f766e;color:#ecfeff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;z-index:60";
+      bar.innerHTML = "<span>Tu plan PRO vence en "+days+" día(s).</span><a href='/billing' style='background:#ecfeff;color:#134e4a;padding:6px 10px;border-radius:10px;text-decoration:none;font-weight:700'>Renovar</a>";
+      document.body.appendChild(bar);
+    }
+  }catch(e){}
+})();
+</script>
+{% endif %}
+
 <body>
   <div class="container">
     {% block body %}{% endblock %}
