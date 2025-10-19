@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block body %}
+<style>
+  .alerts-container{max-width:1100px;margin:20px auto;padding:0 12px}
+  .alerts-header{display:flex;justify-content:space-between;align-items:center;margin:10px 0 16px}
+  .filters{display:flex;gap:10px;flex-wrap:wrap}
+  .filters input,.filters select{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+  .table{width:100%;border-collapse:separate;border-spacing:0}
+  .table th,.table td{padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:left}
+  .severity{font-weight:700;border-radius:999px;padding:6px 10px;display:inline-block}
+  .sev-high{background:#fee2e2;color:#b91c1c}
+  .sev-med{background:#fef3c7;color:#92400e}
+  .sev-low{background:#dcfce7;color:#166534}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#e5e7eb;color:#111827}
+  .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:#111827;color:#fff;cursor:pointer}
+  .btn:hover{filter:brightness(1.08)}
+  .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;background:#f9fafb}
+  .muted{color:#6b7280}
+</style>
+
+<div class="alerts-container">
+  <div class="alerts-header">
+    <h1>Centro de Alertas</h1>
+    <div>
+      <a class="btn" href="/dashboard">Volver al dashboard</a>
+    </div>
+  </div>
+
+  <div class="filters">
+    <input id="q" placeholder="Buscar (texto, remitente, asunto)"/>
+    <select id="sev">
+      <option value="">Severidad (todas)</option>
+      <option value="high">Alta</option>
+      <option value="medium">Media</option>
+      <option value="low">Baja</option>
+    </select>
+    <select id="status">
+      <option value="">Estado (todos)</option>
+      <option value="pending">Pendiente</option>
+      <option value="ack">Leída</option>
+    </select>
+    <select id="days">
+      <option value="7">Últimos 7 días</option>
+      <option value="30">Últimos 30 días</option>
+      <option value="90">Últimos 90 días</option>
+      <option value="365">Último año</option>
+      <option value="">Todo</option>
+    </select>
+    <button class="btn" onclick="loadAlerts()">Aplicar</button>
+  </div>
+
+  <div id="summary" class="muted" style="margin:10px 0 6px;"></div>
+
+  <table class="table" id="alerts-table">
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Asunto</th>
+        <th>Remitente</th>
+        <th>Severidad</th>
+        <th>Estado</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+async function api(path, params={}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetch(q ? path + "?" + q : path, {credentials:"include"});
+  if(!res.ok) throw new Error("Error HTTP "+res.status);
+  return await res.json();
+}
+function sevPill(score){
+  let cls="sev-low", txt="Baja";
+  if(score>=70){cls="sev-high"; txt="Alta"}
+  else if(score>=40){cls="sev-med"; txt="Media"}
+  return `<span class="severity ${cls}">${txt}</span>`;
+}
+function stateBadge(s){return s==="ack" ? '<span class="badge">Leída</span>' : '<span class="badge">Pendiente</span>'}
+async function ack(id){
+  await fetch(`/alerts/${id}/ack`, {method:"POST", credentials:"include"});
+  loadAlerts();
+}
+async function loadAlerts(){
+  const params = {
+    q: q.value.trim(),
+    sev: sev.value,
+    status: status.value,
+    days: days.value
+  };
+  const data = await api("/alerts/list", params);
+  const tbody = document.querySelector("#alerts-table tbody");
+  tbody.innerHTML = "";
+  for(const a of data.items){
+    const dt = new Date(a.created_at);
+    tbody.innerHTML += `
+    <tr>
+      <td>${dt.toLocaleString()}</td>
+      <td><a href="${a.link||'#'}" target="_blank">${a.subject||'(sin asunto)'}</a><div class="muted">${a.snippet||''}</div></td>
+      <td>${a.from_email||''}</td>
+      <td>${sevPill(a.score||0)}</td>
+      <td>${stateBadge(a.state||'pending')}</td>
+      <td>${a.state!=='ack' ? '<button class="btn" onclick="ack('+a.id+')">Marcar leída</button>' : ''}</td>
+    </tr>`;
+  }
+  summary.textContent = `Mostrando ${data.items.length} alertas`;
+}
+loadAlerts();
+</script>
+{% endblock %}
