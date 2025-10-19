@@ -10,8 +10,35 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Bool
 
 from app.database import get_db, SessionLocal
 from app.security import get_current_user_cookie
+from app.services.mail_auth_checks import check_auth
+
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+from sqlalchemy import text
+
+def _ensure_mail_alerts_auth_columns(db):
+    """
+    Agrega columnas spf_status, dkim_status, dmarc_status si no existen.
+    Funciona en SQLite y Postgres.
+    """
+    dialect = db.bind.dialect.name  # "sqlite" | "postgresql" | ...
+    cols = {"spf_status": "VARCHAR(16)", "dkim_status": "VARCHAR(16)", "dmarc_status": "VARCHAR(16)"}
+
+    if dialect == "sqlite":
+        # PRAGMA table_info para ver columnas
+        rows = db.execute(text("PRAGMA table_info(mail_alerts)")).fetchall()
+        existing = {r[1] for r in rows}
+        for col, typ in cols.items():
+            if col not in existing:
+                db.execute(text(f"ALTER TABLE mail_alerts ADD COLUMN {col} {typ}"))
+        db.commit()
+    else:
+        # Postgres y otros
+        for col, typ in cols.items():
+            db.execute(text(f"ALTER TABLE mail_alerts ADD COLUMN IF NOT EXISTS {col} {typ}"))
+        db.commit()
+
 
 # ------------------------------------------------------------------
 # helper para obtener el id del usuario (objeto o dict)
