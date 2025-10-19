@@ -6,17 +6,19 @@
   .filters{display:flex;gap:10px;flex-wrap:wrap}
   .filters input,.filters select{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
   .table{width:100%;border-collapse:separate;border-spacing:0}
-  .table th,.table td{padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:left}
-  .severity{font-weight:700;border-radius:999px;padding:6px 10px;display:inline-block}
+  .table th,.table td{padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}
+  .severity{font-weight:700;border-radius:999px;padding:6px 10px;display:inline-block;white-space:nowrap}
   .sev-high{background:#fee2e2;color:#b91c1c}
   .sev-med{background:#fef3c7;color:#92400e}
   .sev-low{background:#dcfce7;color:#166534}
-  .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#e5e7eb;color:#111827}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#e5e7eb;color:#111827;white-space:nowrap}
   .btn{appearance:none;border:0;border-radius:10px;padding:8px 12px;background:#111827;color:#fff;cursor:pointer}
   .btn:hover{filter:brightness(1.08)}
   .muted{color:#6b7280}
-  .auth-pill{display:inline-flex;gap:6px;align-items:center}
+  .auth-pill{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
   .auth-ok{color:#16a34a} .auth-warn{color:#ca8a04} .auth-fail{color:#dc2626}
+  .subject-cell a{color:#111827;text-decoration:none}
+  .subject-cell a:hover{text-decoration:underline}
 </style>
 
 <div class="alerts-container">
@@ -39,13 +41,13 @@
       <option value="ack">Leída</option>
     </select>
     <select id="days">
-      <option value="7">Últimos 7 días</option>
+      <option value="7" selected>Últimos 7 días</option>
       <option value="30">Últimos 30 días</option>
       <option value="90">Últimos 90 días</option>
       <option value="365">Último año</option>
       <option value="">Todo</option>
     </select>
-    <button class="btn" onclick="loadAlerts()">Aplicar</button>
+    <button class="btn" id="applyBtn">Aplicar</button>
   </div>
 
   <div id="summary" class="muted" style="margin:10px 0 6px;"></div>
@@ -53,13 +55,13 @@
   <table class="table" id="alerts-table">
     <thead>
       <tr>
-        <th>Fecha</th>
+        <th style="width:150px;">Fecha</th>
         <th>Asunto</th>
-        <th>Remitente</th>
-        <th>Autenticación</th>
-        <th>Severidad</th>
-        <th>Estado</th>
-        <th></th>
+        <th style="width:220px;">Remitente</th>
+        <th style="width:280px;">Autenticación</th>
+        <th style="width:120px;">Severidad</th>
+        <th style="width:110px;">Estado</th>
+        <th style="width:120px;"></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -67,12 +69,15 @@
 </div>
 
 <script>
+const $ = (id) => document.getElementById(id);
+
 async function api(path, params={}) {
-  const q = new URLSearchParams(params).toString();
-  const res = await fetch(q ? path + "?" + q : path, {credentials:"include"});
-  if(!res.ok) throw new Error("Error HTTP "+res.status);
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(qs ? path + "?" + qs : path, {credentials:"include"});
+  if (!res.ok) throw new Error("HTTP " + res.status);
   return await res.json();
 }
+
 function sevPill(score){
   let cls="sev-low", txt="Baja";
   if(score>=70){cls="sev-high"; txt="Alta"}
@@ -80,6 +85,7 @@ function sevPill(score){
   return `<span class="severity ${cls}">${txt}</span>`;
 }
 function stateBadge(s){return s==="ack" ? '<span class="badge">Leída</span>' : '<span class="badge">Pendiente</span>'}
+
 function authPill(a){
   const ov = (a && a.overall) || "warn";
   const cls = ov==="pass" ? "auth-ok" : (ov==="fail" ? "auth-fail" : "auth-warn");
@@ -88,30 +94,55 @@ function authPill(a){
   const dmarc = a?.dmarc?.status || "unknown";
   return `<span class="auth-pill ${cls}">🔐 SPF ${spf.toUpperCase()} · DKIM ${dkim.toUpperCase()} · DMARC ${dmarc.toUpperCase()}</span>`;
 }
+
 async function ack(id){
-  await fetch(`/alerts/${id}/ack`, {method:"POST", credentials:"include"});
-  loadAlerts();
+  try{
+    await fetch(`/alerts/${id}/ack`, {method:"POST", credentials:"include"});
+    loadAlerts();
+  }catch(e){ console.error(e); }
 }
+
+function row(a){
+  const dt = a.created_at ? new Date(a.created_at) : null;
+  const when = dt ? dt.toLocaleString() : "";
+  const link = a.link || "#";
+  const subject = a.subject || "(sin asunto)";
+  const snippet = a.snippet || "";
+
+  return `
+  <tr>
+    <td>${when}</td>
+    <td class="subject-cell">
+      <a href="${link}" target="_blank" rel="noopener noreferrer">${subject}</a>
+      ${snippet ? `<div class="muted">${snippet}</div>` : ``}
+    </td>
+    <td>${a.from_email || ""}</td>
+    <td>${authPill(a.auth || null)}</td>
+    <td>${sevPill(a.score || 0)}</td>
+    <td>${stateBadge(a.state || "pending")}</td>
+    <td>${a.state!=="ack" ? `<button class="btn" onclick="ack(${a.id})">Marcar leída</button>` : ``}</td>
+  </tr>`;
+}
+
 async function loadAlerts(){
-  const params = { q: q.value.trim(), sev: sev.value, status: status.value, days: days.value };
-  const data = await api("/alerts/list", params);
-  const tbody = document.querySelector("#alerts-table tbody");
-  tbody.innerHTML = "";
-  for(const a of data.items){
-    const dt = new Date(a.created_at);
-    tbody.innerHTML += `
-    <tr>
-      <td>${dt.toLocaleString()}</td>
-      <td><a href="${a.link||'#'}" target="_blank">${a.subject||'(sin asunto)'}</a><div class="muted">${a.snippet||''}</div></td>
-      <td>${a.from_email||''}</td>
-      <td>${authPill(a.auth||null)}</td>
-      <td>${sevPill(a.score||0)}</td>
-      <td>${stateBadge(a.state||'pending')}</td>
-      <td>${a.state!=='ack' ? '<button class="btn" onclick="ack('+a.id+')">Marcar leída</button>' : ''}</td>
-    </tr>`;
+  const params = {
+    q: $("q").value.trim(),
+    sev: $("sev").value,
+    status: $("status").value,
+    days: $("days").value
+  };
+  try{
+    const data = await api("/alerts/list", params);
+    const tbody = document.querySelector("#alerts-table tbody");
+    tbody.innerHTML = (data.items || []).map(row).join("");
+    $("summary").textContent = `Mostrando ${data.items?.length || 0} alertas${typeof data.total==="number" ? " (total: "+data.total+")" : ""}`;
+  }catch(e){
+    console.error(e);
+    $("summary").textContent = "Error cargando alertas.";
   }
-  summary.textContent = `Mostrando ${data.items.length} alertas`;
 }
-loadAlerts();
+
+$("applyBtn").addEventListener("click", loadAlerts);
+document.addEventListener("DOMContentLoaded", loadAlerts);
 </script>
 {% endblock %}
