@@ -22,7 +22,7 @@ from app.database import get_db
 from app import models
 from app.security import get_current_user_cookie
 
-# Modelo y sync interno desde payments.py
+# Modelo y sync interno desde payments.py (preapproval)
 from .payments import Subscription, _sync_preapproval  # usamos el helper interno
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -30,6 +30,7 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ======== ENV & templates ========
 BASE_URL = (os.getenv("BASE_URL") or "https://www.alerttrail.com").rstrip("/")
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+MP_CHECKOUT = (os.getenv("MP_CHECKOUT") or "0").strip().lower() in ("1", "true", "yes", "on")
 
 APP_DIR = os.path.dirname(os.path.dirname(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
@@ -57,8 +58,8 @@ def _set_plan(u: models.User, plan: str):
 def _sdk():
     """
     Devuelve el SDK de MP o lanza HTTP 503 si falta algo.
-    NOTA: hoy este router redirige a /payments/subscribe, pero dejamos
-    el helper por si más adelante se usa SDK desde acá.
+    NOTA: hoy este router redirige a /payments/subscribe (preapproval),
+    pero dejamos el helper por si más adelante se usa SDK desde acá.
     """
     if mercadopago is None:
         raise HTTPException(status_code=503, detail="SDK Mercado Pago no instalado")
@@ -190,18 +191,31 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     biz_label, _, _, seats, extra_usd, extra_ars = _compute_price_biz()
     current_title = plan
 
-    pro_cta = (
-        "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;color:#a7f3d0;font-weight:700'>Plan activo</span>"
-        if is_plan_pro else
-        f"<form method='post' action='/billing/checkout?plan=PRO'>"
-        f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#10b981;color:#06241f;font-weight:700;cursor:pointer'>{pro_label}</button></form>"
-    )
+    # CTA PRO: si MP_CHECKOUT=1, usar flujo /billing/mp/checkout (router payments_mp.py)
+    if MP_CHECKOUT:
+        pro_cta = (
+            "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;color:#a7f3d0;font-weight:700'>Plan activo</span>"
+            if is_plan_pro else
+            f"<form method='post' action='/billing/mp/checkout'>"
+            f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#10b981;color:#06241f;font-weight:700;cursor:pointer'>{pro_label} (Mercado&nbsp;Pago)</button></form>"
+        )
+    else:
+        # Fallback al flujo de preaprobación existente
+        pro_cta = (
+            "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#083344;color:#a7f3d0;font-weight:700'>Plan activo</span>"
+            if is_plan_pro else
+            f"<form method='post' action='/billing/checkout?plan=PRO'>"
+            f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#10b981;color:#06241f;font-weight:700;cursor:pointer'>{pro_label}</button></form>"
+        )
+
+    # CTA BIZ: dejamos igual (preapproval), o podrías crear /billing/mp/checkout?variant=biz
     biz_cta = (
         "<span style='display:inline-block;padding:8px 10px;border-radius:10px;background:#082f49;color:#bae6fd;font-weight:700'>Plan activo</span>"
         if is_biz else
         f"<form method='post' action='/billing/checkout?plan=BIZ&seats={seats}'>"
         f"<button style='padding:10px 14px;border:0;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700;cursor:pointer'>{biz_label}</button></form>"
     )
+
     downgrade_btn = (
         "<form method='post' action='/billing/downgrade'>"
         "<button style='padding:10px 14px;border:0;border-radius:10px;background:#fbbf24;color:#3a2a00;font-weight:700;cursor:pointer'>Bajar a FREE</button></form>"
@@ -241,19 +255,25 @@ def billing_page(request: Request, db: Session = Depends(get_db)):
     """
     return HTMLResponse(html)
 
-# ---------- Crear/ir a suscripción ----------
+# ---------- Crear/ir a suscripción (fallback preapproval) ----------
 @router.post("/checkout")
 def billing_checkout(
     request: Request,
-    plan: str = Query(..., regex="^(?i)(PRO|BIZ)$"),
+    plan: str = Query(..., description="PRO o BIZ"),
     seats: int = Query(1, ge=1),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_cookie),
 ):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
-    # Redirigimos al flujo real en payments.py (este router no llama SDK directo)
-    return RedirectResponse(url=f"/payments/subscribe?plan={plan.upper()}&seats={seats}", status_code=303)
+
+    # Normalizamos plan y validamos
+    plan_upper = (plan or "").strip().upper()
+    if plan_upper not in {"PRO", "BIZ"}:
+        raise HTTPException(status_code=400, detail="plan inválido")
+
+    # Redirigimos al flujo real en payments.py (preapproval)
+    return RedirectResponse(url=f"/payments/subscribe?plan={plan_upper}&seats={seats}", status_code=303)
 
 # ---------- Downgrade rápido ----------
 @router.post("/downgrade")
@@ -272,7 +292,6 @@ def billing_downgrade(
         db.commit()
     except Exception:
         db.rollback()
-        raise
     return RedirectResponse(url="/billing", status_code=303)
 
 # ---------- Vista de suscripciones ----------
