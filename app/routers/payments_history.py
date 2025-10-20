@@ -16,9 +16,6 @@ from app import models
 
 router = APIRouter(tags=["billing", "payments"])
 
-# =========================
-# Helpers
-# =========================
 def _as_user(obj):
     if isinstance(obj, dict):
         return type("U", (), obj)
@@ -47,10 +44,6 @@ def _serialize_history(ph: models.PaymentHistory) -> dict:
     }
 
 def _ensure_legacy_payments_table(db: Session):
-    """
-    Asegura la tabla legacy `payments` (solo si aún no migraste a PaymentHistory).
-    Mantiene compat con tu implementación anterior.
-    """
     eng = db.get_bind()
     dialect = getattr(eng.dialect, "name", "sqlite")
     if dialect == "sqlite":
@@ -110,9 +103,6 @@ def _query_legacy_payments(db: Session, *, where_sql: str, params: dict, limit: 
     params["lim"] = limit
     return db.execute(text(sql), params).fetchall()
 
-# =========================
-# HTML (compat): /billing/payments
-# =========================
 @router.get("/billing/payments", response_class=HTMLResponse)
 def payments_list_html(
     request: Request,
@@ -121,12 +111,6 @@ def payments_list_html(
     email: Optional[str] = Query(None, description="Filtro admin por email"),
     limit: int = Query(200, ge=1, le=1000),
 ):
-    """
-    Vista HTML de pagos. Prioriza PaymentHistory; si no existe la tabla, cae a la tabla legacy `payments`.
-    Permisos:
-      - Admin: puede filtrar por email y ver todos.
-      - No admin: sólo sus pagos (por user_id o email).
-    """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
     u = _as_user(user)
@@ -135,21 +119,16 @@ def payments_list_html(
     rows_html = []
     used_legacy = False
 
-    # 1) Intentar con PaymentHistory (ORM)
+    # ORM primero
     try:
         q = db.query(models.PaymentHistory)
         if not is_admin:
-            # restringir a usuario actual
             if getattr(u, "id", None):
                 q = q.filter(models.PaymentHistory.user_id == int(u.id))
-            elif getattr(u, "email", None):
-                # Si no hay user_id (caso raro), permitimos por email vía join ligero
-                # pero para simplificar, como PaymentHistory tiene user_id requerido,
-                # si no hay id del usuario, no devolvemos filas.
+            else:
                 q = q.filter(models.PaymentHistory.user_id == -1)
         else:
             if email:
-                # Filtrado por email (join liviano)
                 q = q.join(models.User, models.User.id == models.PaymentHistory.user_id)\
                      .filter(models.User.email.ilike(email))
         q = q.order_by(desc(models.PaymentHistory.created_at)).limit(limit)
@@ -163,27 +142,20 @@ def payments_list_html(
                     + f"<td>{r.provider_payment_id or '-'}</td>"
                     + f"<td>{(r.status or '').upper()}</td>"
                     + f"<td>{(r.currency or 'USD')} { (r.amount_cents/100.0) if r.amount_cents is not None else ''}</td>"
-                    + f"<td>{'-'}</td>"  # email no está en PaymentHistory; se puede agregar join si hace falta mostrarlo.
-                    + f"<td>{'-'}</td>"  # external_reference no está en PaymentHistory.
+                    + f"<td>{'-'}</td>"
+                    + f"<td>{'-'}</td>"
                     + f"<td>{r.created_at or '-'}</td>"
                     + f"<td>{r.created_at or '-'}</td>"
                     + "</tr>"
                 )
-        else:
-            # Si no hay registros, seguimos para intentar legacy por si hubiera datos viejos
-            pass
-
     except (ProgrammingError, OperationalError):
-        # Tabla no existe aún → legacy
         used_legacy = True
 
-    # 2) Si no hubo filas o la tabla no existe, usamos legacy `payments`
     if used_legacy or not rows_html:
         try:
             _ensure_legacy_payments_table(db)
             where = []
             params = {}
-
             if not is_admin:
                 if getattr(u, "id", None):
                     where.append("user_id = :uid"); params["uid"] = int(u.id)
@@ -241,9 +213,6 @@ def payments_list_html(
     """
     return HTMLResponse(html)
 
-# =========================
-# JSON: historial del usuario actual
-# =========================
 @router.get("/payments/history/mine", response_class=JSONResponse)
 def my_payments_json(
     db: Session = Depends(get_db),
@@ -253,7 +222,6 @@ def my_payments_json(
 ):
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
-
     try:
         q = db.query(models.PaymentHistory).filter(models.PaymentHistory.user_id == user.id)\
                                            .order_by(desc(models.PaymentHistory.created_at))
@@ -261,12 +229,8 @@ def my_payments_json(
         items = q.offset(offset).limit(limit).all()
         return {"ok": True, "total": total, "limit": limit, "offset": offset, "items": [_serialize_history(x) for x in items]}
     except (ProgrammingError, OperationalError):
-        # si la tabla aún no existe, devolvemos vacío (migración pendiente)
         return {"ok": True, "total": 0, "limit": limit, "offset": offset, "items": []}
 
-# =========================
-# JSON: listado admin con filtros
-# =========================
 @router.get("/payments/history", response_class=JSONResponse)
 def list_payments_admin_json(
     db: Session = Depends(get_db),
@@ -279,7 +243,6 @@ def list_payments_admin_json(
 ):
     if not _is_admin(user):
         raise HTTPException(status_code=403, detail="Solo administradores")
-
     try:
         q = db.query(models.PaymentHistory)
         if user_id:
@@ -289,10 +252,9 @@ def list_payments_admin_json(
         if plan:
             q = q.filter(models.PaymentHistory.plan.ilike(plan))
         q = q.order_by(desc(models.PaymentHistory.created_at))
-
         total = q.count()
         items = q.offset(offset).limit(limit).all()
         return {"ok": True, "total": total, "limit": limit, "offset": offset, "items": [_serialize_history(x) for x in items]}
     except (ProgrammingError, OperationalError):
-        # si la tabla aún no existe, devolvemos vacío (migración pendiente)
         return {"ok": True, "total": 0, "limit": limit, "offset": offset, "items": []}
+
