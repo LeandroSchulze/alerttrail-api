@@ -1,9 +1,9 @@
 # app/models.py
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Index, UniqueConstraint
+    Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Index, UniqueConstraint, Numeric
 )
 from sqlalchemy.orm import relationship
 
@@ -51,8 +51,8 @@ class User(Base):
     pro_source       = Column(String(32), nullable=True)               # "trial" | "subscription" | None
 
     # ================ Suscripción PRO (vencimiento + idempotencia) ================
-    pro_expires_at  = Column(DateTime, nullable=True)                  # NUEVO: fecha de expiración del PRO
-    last_payment_id = Column(String(64), nullable=True)                # NUEVO: para evitar duplicados en webhooks
+    pro_expires_at  = Column(DateTime, nullable=True)                  # fecha de expiración del PRO
+    last_payment_id = Column(String(64), nullable=True)                # para evitar duplicados en webhooks
 
     # Metadatos
     created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -77,6 +77,33 @@ class User(Base):
     report_downloads = relationship("ReportDownload", back_populates="user", lazy="selectin")
     allowed_ips = relationship("AllowedIP", back_populates="user", lazy="selectin")
     accepted_invites = relationship("OrgInvite", back_populates="used_by_user", lazy="selectin")
+
+    # Pagos
+    payment_events = relationship("PaymentEvent", back_populates="user", lazy="selectin")
+    payments       = relationship("PaymentHistory", back_populates="user", lazy="selectin")
+
+    # ---------------- Helpers de plan ----------------
+    @property
+    def is_pro_active(self) -> bool:
+        """
+        True si el usuario tiene PRO vigente por plan o trial.
+        """
+        now = datetime.utcnow()
+        if self.plan and self.plan.upper() in ("PRO", "BIZ"):
+            if self.pro_expires_at:
+                return self.pro_expires_at > now
+            # Si no hay expiración (legacy), considera PRO activo
+            return True
+        # Trial aún vigente también habilita funciones PRO
+        if self.trial_expires_at and self.trial_expires_at > now:
+            return True
+        return False
+
+    def pro_days_left(self) -> Optional[int]:
+        if not self.pro_expires_at:
+            return None
+        delta = self.pro_expires_at - datetime.utcnow()
+        return max(delta.days, 0)
 
     def __repr__(self):
         return (
@@ -247,3 +274,69 @@ class AllowedIP(Base):
 
     def __repr__(self):
         return f"<AllowedIP id={self.id} user_id={self.user_id} ip_cidr={self.ip_cidr!r}>"
+
+
+# =========================
+# Payment Event (idempotencia webhook)
+# =========================
+class PaymentEvent(Base):
+    """
+    Registro crudo por evento de pago del proveedor (p.ej. Mercado Pago).
+    Sirve para idempotencia y debugging del webhook.
+    """
+    __tablename__ = "payment_events"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    user_id           = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    provider          = Column(String(32), nullable=False, default="mp")          # "mp" | "stripe" | etc.
+    payment_id        = Column(String(128), nullable=False, index=True)           # id del proveedor
+    status            = Column(String(32), nullable=True)                         # approved, pending, failed
+    plan              = Column(String(20), nullable=True)                         # PRO, BIZ
+    amount_cents      = Column(Integer, nullable=True)                            # 1000 = US$10.00
+    currency          = Column(String(8), nullable=True, default="USD")
+    external_ref      = Column(String(255), nullable=True)                        # lo que enviaste para mapear usuario
+    raw_payload       = Column(Text, nullable=True)                               # JSON del evento, como texto
+    created_at        = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="payment_events", lazy="selectin")
+
+    __table_args__ = (
+        UniqueConstraint("provider", "payment_id", name="uq_payment_events_provider_payment"),
+        Index("ix_payment_events_user_created", "user_id", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<PaymentEvent id={self.id} provider={self.provider} payment_id={self.payment_id} status={self.status}>"
+
+
+# =========================
+# Payment History (asentado para UI y auditoría)
+# =========================
+class PaymentHistory(Base):
+    """
+    Movimientos de pago ya “asentados”: lo que se muestra en /payments_history.
+    Cada fila representa una activación/renovación/cargo relevante.
+    """
+    __tablename__ = "payments_history"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    user_id           = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider          = Column(String(32), nullable=False, default="mp")          # "mp", "stripe", etc.
+    provider_payment_id = Column(String(128), nullable=True, index=True)
+    plan              = Column(String(20), nullable=False, default="PRO")
+    period_months     = Column(Integer, nullable=False, default=1)
+    amount_cents      = Column(Integer, nullable=True)                            # 1000 = US$10.00
+    currency          = Column(String(8), nullable=False, default="USD")
+    status            = Column(String(32), nullable=False, default="approved")    # approved, refunded, failed
+    description       = Column(String(255), nullable=True)                        # opcional para la UI
+    raw_payload       = Column(Text, nullable=True)                               # JSON del cargo (texto)
+    created_at        = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="payments", lazy="selectin")
+
+    __table_args__ = (
+        Index("ix_payments_history_user_created", "user_id", "created_at"),
+    )
+
+    def __repr__(self):
+        return f"<PaymentHistory id={self.id} user_id={self.user_id} plan={self.plan} status={self.status}>"
