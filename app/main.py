@@ -242,6 +242,22 @@ if not any(isinstance(r, _APIRoute) and r.path == "/mail/alerts/unread_count" fo
     def _fb_unread_count():
         return {"unread": 0, "count": 0}
 
+# Fallback /alerts/pending y /alerts/{id}/ack si no existen
+from fastapi.routing import APIRoute as _APIRoute2
+
+if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/pending" for r in app.routes):
+    @app.get("/alerts/pending")
+    def _alerts_pending_fallback():
+        # Estructura esperada por el JS del dashboard
+        return {"ok": True, "pending": False, "alert": None}
+
+if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/{id}/ack" for r in app.routes):
+    @app.post("/alerts/{id}/ack")
+    def _alerts_ack_fallback(id: str):
+        # No-op (solo para evitar 404 en el botón "Descartar")
+        return {"ok": True, "ack": True, "id": id}
+
+
 @app.get("/admin/subscriptions", include_in_schema=False)
 def _alias_admin_subscriptions():
     return RedirectResponse(url="/billing", status_code=302)
