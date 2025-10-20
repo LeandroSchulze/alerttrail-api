@@ -3,19 +3,11 @@
 # AlertTrail API - Main
 # ============================================
 
-import os
-import re
-from datetime import datetime
+import os, re
 from pathlib import Path
 from importlib import import_module
-
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
-from fastapi.responses import (
-    HTMLResponse,
-    RedirectResponse,
-    JSONResponse,
-    FileResponse,
-)
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
@@ -26,36 +18,22 @@ from jinja2 import TemplateNotFound
 
 from app.database import SessionLocal
 from app.security import (
-    issue_access_cookie,
-    get_current_user_cookie,
-    get_password_hash,
-    verify_password,
-    clear_access_cookie,
-    decode_token,  # no utilizado, se conserva por compatibilidad
-    COOKIE_NAME,   # no utilizado directo acá, se conserva por compatibilidad
+    issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
+    clear_access_cookie, decode_token, COOKIE_NAME,
 )
-
-# ============================================
-# App & Config
-# ============================================
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
-# =========================================================
-# Hotfix de DB (crear columnas si faltan) — corre bien temprano
-# =========================================================
+# ---- DB hotfix temprano ----
 try:
-    # IMPORT ABSOLUTO (asegura que resuelva en Render/uvicorn)
     from app.db_hotfix import ensure_user_pro_columns  # type: ignore
 except Exception:
     ensure_user_pro_columns = None  # type: ignore
 
-# ✅ Llamada inmediata al importar el módulo (antes de importar modelos)
 if ensure_user_pro_columns:
     try:
-        info = ensure_user_pro_columns()
-        print("[db_hotfix] run at import:", info)
+        info = ensure_user_pro_columns(); print("[db_hotfix] run at import:", info)
     except Exception as e:
         print("[db_hotfix] WARNING at import-time:", e)
 
@@ -63,45 +41,29 @@ if ensure_user_pro_columns:
 def _startup_hotfix_columns():
     if ensure_user_pro_columns:
         try:
-            info = ensure_user_pro_columns()
-            print("[db_hotfix] run at startup:", info)
+            info = ensure_user_pro_columns(); print("[db_hotfix] run at startup:", info)
         except Exception as e:
             print("[db_hotfix] WARNING at startup:", e)
-# =========================================================
 
-from app.models import User  # <- ahora se importa después de correr el hotfix
+from app.models import User
 
-# ============================================
-# Paths, Static, Templates
-# ============================================
-
+# ---- Paths/Static/Templates ----
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
-
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
-
 app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# ============================================
-# DB helpers
-# ============================================
-
+# ---- DB helpers ----
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-def db_get(db: Session, model, pk):
-    try:
-        return db.get(model, pk)
-    except Exception:
-        return db.query(model).get(pk)
 
 def truthy(v):
     if isinstance(v, bool): return v
@@ -115,19 +77,11 @@ def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
     except Exception:
         return None
 
-# ============================================
-# OpenAPI con cookieAuth por defecto
-# ============================================
-
+# ---- OpenAPI cookieAuth por defecto ----
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description="API de AlertTrail",
-        routes=app.routes,
-    )
+    schema = get_openapi(title=app.title, version=app.version, description="API de AlertTrail", routes=app.routes)
     schema.setdefault("components", {}).setdefault("securitySchemes", {})["cookieAuth"] = {
         "type": "apiKey", "in": "cookie", "name": "access_token"
     }
@@ -140,39 +94,28 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# ============================================
-# Middlewares
-# ============================================
-
-# Debug de cookies en rutas clave
+# ---- Middlewares útiles ----
 @app.middleware("http")
 async def _auth_debug_mw(request: Request, call_next):
     if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/dashboard", "/_cookie_test_set"):
         ck = request.headers.get("cookie")
-        print(
-            "[auth][debug][in]",
-            f"path={request.url.path}",
-            f"host={request.headers.get('host')}",
-            f"has_cookie={bool(ck)}",
-            f"cookie_len={len(ck or '')}",
-        )
+        print("[auth][debug][in]", f"path={request.url.path}", f"host={request.headers.get('host')}",
+              f"has_cookie={bool(ck)}", f"cookie_len={len(ck or '')}")
     resp = await call_next(request)
     if DEBUG_AUTH and request.url.path in ("/auth/login/web", "/auth/login", "/login", "/register", "/_cookie_test_set"):
         sc = resp.headers.get("set-cookie", "")
-        masked = re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
+        import re as _re; masked = _re.sub(r"(access_token=)([^;]+)", r"\1***", sc)
         print("[auth][debug][out]", f"path={request.url.path}", f"set-cookie={masked or '<NONE>'}")
     return resp
 
-# Forzar www.alerttrail.com (apex -> www)
 @app.middleware("http")
 async def force_www(request: Request, call_next):
     host = (request.headers.get("host") or "").split(":", 1)[0].lower()
-    if host == "alerttrail.com":  # apex -> www
+    if host == "alerttrail.com":
         url = request.url.replace(netloc="www.alerttrail.com")
         return RedirectResponse(str(url), status_code=308)
     return await call_next(request)
 
-# Redirección /auth/register → /register si no es JSON
 @app.middleware("http")
 async def redirect_auth_register_mw(request: Request, call_next):
     path = request.url.path.rstrip("/")
@@ -184,15 +127,11 @@ async def redirect_auth_register_mw(request: Request, call_next):
             return RedirectResponse("/register", status_code=307)
     return await call_next(request)
 
-# ============================================
-# Routers (autocarga)
-# ============================================
-
+# ---- Routers (autocarga) ----
 ROUTER_MODULES = [
     "orgs", "stats", "payments", "alerts", "rules", "reports",
     "admin", "admin_metrics", "analysis", "auth", "billing",
-    "mail", "profile", "push",
-    "promo",  # 👈 agregado: carga /promo automáticamente
+    "mail", "profile", "push", "promo",
 ]
 for name in ROUTER_MODULES:
     try:
@@ -200,10 +139,9 @@ for name in ROUTER_MODULES:
         app.include_router(mod.router)
     except Exception as e:
         print(f"[routers] No pude cargar {name}: {e}")
-        import traceback
-        traceback.print_exc()
+        import traceback; traceback.print_exc()
 
-# ⬇️ payments_history: mover después de crear `app`
+# payments_history (HTML + JSON)
 try:
     from app.routers import payments_history
     app.include_router(payments_history.router)
@@ -211,55 +149,15 @@ try:
 except Exception as e:
     print(f"[routers] No pude cargar payments_history: {e}")
 
-# Routers explícitos adicionales / fallbacks
-try:
-    from app.routers import legal
-    app.include_router(legal.router)
-    print("[routers] legal montado OK")
-except Exception as e:
-    print(f"[routers] No pude cargar legal: {e}")
-
-try:
-    from app.routers import debug_mail
-    app.include_router(debug_mail.router)
-    print("[routers] debug_mail montado OK")
-except Exception as e:
-    print(f"[routers] No pude cargar debug_mail: {e}")
-
-try:
-    from app.routers import auth_email_verification
-    app.include_router(auth_email_verification.router)
-    print("[routers] auth_email_verification montado OK")
-except Exception as e:
-    print(f"[routers] No pude cargar auth_email_verification: {e}")
-
-try:
-    from app.routers import auth_email_verification_web
-    app.include_router(auth_email_verification_web.router)
-    print("[routers] auth_email_verification_web montado OK")
-except Exception as e:
-    print(f"[routers] No pude cargar auth_email_verification_web: {e}")
-
-# Montaje explícito de mail como “línea de vida”
-try:
-    from app.routers import mail
-    app.include_router(mail.router)
-    print("[routers] mail montado OK (fallback explícito)")
-except Exception as e:
-    print(f"[routers] ERROR montando mail (explícito): {e}")
-    import traceback; traceback.print_exc()
-
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-# MONTAJE DEL WEBHOOK DE MERCADO PAGO (después de crear 'app')
+# webhook Mercado Pago
 try:
     from app.routers import payments_mp
     app.include_router(payments_mp.router)
     print("[routers] payments_mp montado OK")
 except Exception as e:
     print(f"[routers] No pude cargar payments_mp: {e}")
-# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-# Montaje explícito de routers que no están en ROUTER_MODULES
+# Montaje explícito de otros routers opcionales
 for _extra in ("subscription", "webhooks"):
     try:
         mod = import_module(f"app.routers.{_extra}")
@@ -268,35 +166,28 @@ for _extra in ("subscription", "webhooks"):
     except Exception as e:
         print(f"[routers] No pude cargar {_extra}: {e}")
 
-# Fallback para /mail/alerts/unread_count si no existe
-if not any(isinstance(r, APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
+# Fallback /mail/alerts/unread_count
+from fastapi.routing import APIRoute as _APIRoute
+if not any(isinstance(r, _APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
     @app.get("/mail/alerts/unread_count")
     def _fb_unread_count():
-        # Devolvemos ambas claves para compatibilidad con frontends distintos
         return {"unread": 0, "count": 0}
 
-# Alias mínimo para Suscripciones (arregla /admin/subscriptions 404)
 @app.get("/admin/subscriptions", include_in_schema=False)
 def _alias_admin_subscriptions():
     return RedirectResponse(url="/billing", status_code=302)
 
-# ============================================
-# Service Worker en raíz (/sw.js) → sirve /static/sw.js
-# ============================================
-
+# ---- Files básicos ----
 @app.get("/sw.js", include_in_schema=False)
 def service_worker_root():
     sw_path = os.path.join(STATIC_DIR, "sw.js")
     if not os.path.exists(sw_path):
-        alt = "static/sw.js"  # por si está sin prefijo app/
+        alt = "static/sw.js"
         if os.path.exists(alt):
             sw_path = alt
     return FileResponse(sw_path, media_type="application/javascript")
 
-# ============================================
-# Rutas públicas básicas
-# ============================================
-
+# ---- Home/Login/Dashboard (igual a tu versión con fallback) ----
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_optional)):
     if user:
@@ -311,15 +202,11 @@ def home(request: Request, user=Depends(get_current_user_optional)):
         </div>"""
         return HTMLResponse(html)
 
-# Alias clásico
 @app.get("/login", include_in_schema=False)
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-# ============================================
-# Auth fallback (por compatibilidad)
-# ============================================
-
+from fastapi.routing import APIRoute
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
@@ -330,7 +217,6 @@ def _route_has_method(path: str, method: str) -> bool:
                 return True
     return False
 
-# Compat: POST /login (form antiguo)
 @app.post("/login", include_in_schema=False)
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email_norm = email.strip().lower()
@@ -385,18 +271,9 @@ if not _route_exists("/auth/login/web"):
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
 
-# ======== /auth/me ========
 @app.get("/auth/me")
 def auth_me(request: Request, db: Session = Depends(get_db)):
-    """
-    Devuelve el usuario actual a partir de la cookie JWT.
-    401 si no hay sesión válida.
-    """
-    u = get_current_user_cookie(request, db)  # propaga 401/403 si corresponde
-
-    # Expiración compatible (pro_expires_at | plan_expires | pro_until)
-    exp = getattr(u, "pro_expires_at", None) or getattr(u, "plan_expires", None) or getattr(u, "pro_until", None)
-
+    u = get_current_user_cookie(request, db)
     return {
         "id": getattr(u, "id", None),
         "email": getattr(u, "email", None),
@@ -405,114 +282,73 @@ def auth_me(request: Request, db: Session = Depends(get_db)):
         "is_admin": bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False)),
         "plan": getattr(u, "plan", None),
         "is_pro": bool(getattr(u, "is_pro", False)),
-        "pro_expires_at": exp,   # campo real si existe
-        "plan_expires": exp,     # alias para compatibilidad con front/SDKs antiguos
+        "plan_expires": getattr(u, "plan_expires", None),
         "org_id": getattr(u, "org_id", None),
     }
 
-# ======== Logout (GET/POST y alias) ========
 @app.get("/logout", include_in_schema=False)
 def logout_get():
-    r = RedirectResponse(url="/", status_code=303)
-    clear_access_cookie(r)
-    return r
+    r = RedirectResponse(url="/", status_code=303); clear_access_cookie(r); return r
 
 @app.post("/logout", include_in_schema=False)
 def logout_post():
-    r = JSONResponse({"ok": True, "logged_out": True})
-    clear_access_cookie(r)
-    return r
+    r = JSONResponse({"ok": True, "logged_out": True}); clear_access_cookie(r); return r
 
 @app.get("/auth/logout", include_in_schema=False)
 def logout_alias():
     return RedirectResponse(url="/logout", status_code=302)
 
-# ============================================
-# Dashboard
-# ============================================
-
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    # Autenticación robusta
     try:
         user = get_current_user_cookie(request, db)
     except HTTPException as e:
         if e.status_code in (401, 403):
             return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
         raise
-
     role = (getattr(user, "role", "") or "").lower()
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
     is_org_admin = truthy(getattr(user, "is_org_admin", False))
-
-    # Expiración compatible para UI (ISO string o None)
-    exp = getattr(user, "pro_expires_at", None) or getattr(user, "plan_expires", None) or getattr(user, "pro_until", None)
-    exp_iso = exp.isoformat() if isinstance(exp, datetime) else (str(exp) if exp else None)
-
     user_ctx = {
         "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
         "email": getattr(user, "email", ""),
         "plan": (getattr(user, "plan", None) or "FREE").upper(),
         "is_org_admin": is_org_admin,
         "org_id": getattr(user, "org_id", None),
-        "plan_expires": exp_iso,  # ⬅️ agregado para el dashboard
     }
-
     try:
-        resp = templates.TemplateResponse(
-            "dashboard.html",
-            {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin}
-        )
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+        resp = templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin})
+        resp.headers["Cache-Control"] = "no-store"; return resp
     except TemplateNotFound:
         html = f"""<!doctype html><meta charset='utf-8'>
         <div style="font-family:system-ui;padding:24px">
           <h1>Dashboard</h1>
           <p>Hola, {user_ctx['name']}.</p>
           <p>No encontré <code>dashboard.html</code>. Mostrando vista mínima.</p>
-          <ul>
-            <li>Email: {user_ctx['email']}</li>
-            <li>Plan: {user_ctx['plan']}</li>
-            <li>Vence: {user_ctx['plan_expires'] or '—'}</li>
-          </ul>
+          <ul><li>Email: {user_ctx['email']}</li><li>Plan: {user_ctx['plan']}</li></ul>
           <p><a href="/logout">Cerrar sesión</a></p>
         </div>"""
         return HTMLResponse(html)
 
-# ============================================
-# Exception Handlers
-# ============================================
+from fastapi.responses import HTMLResponse as _HTMLResponse
 
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException):
-    """
-    401 → redirige al login si el cliente acepta HTML.
-    403 → página HTML simple (evita loops).
-    Otros → JSON.
-    """
     accept = (request.headers.get("accept") or "")
     wants_html = "text/html" in accept
-
     if exc.status_code == 401 and wants_html:
         path = request.url.path or ""
         if not path.startswith("/auth"):
             return RedirectResponse(url="/auth/login", status_code=302)
-
     if exc.status_code == 403 and wants_html:
-        body = (
-            "<!doctype html><meta charset='utf-8'>"
-            "<div style='font-family:system-ui;padding:24px'>"
-            "<h2>Acceso denegado</h2>"
-            f"<p style='color:#475569'>{exc.detail or 'No autorizado'}</p>"
-            "<p><a href='/dashboard' style='color:#2563eb;text-decoration:none'>&larr; Volver</a></p>"
-            "</div>"
-        )
+        body = ("<!doctype html><meta charset='utf-8'>"
+                "<div style='font-family:system-ui;padding:24px'>"
+                "<h2>Acceso denegado</h2>"
+                f"<p style='color:#475569'>{exc.detail or 'No autorizado'}</p>"
+                "<p><a href='/dashboard' style='color:#2563eb;text-decoration:none'>&larr; Volver</a></p>"
+                "</div>")
         return HTMLResponse(body, status_code=403)
-
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-
-from fastapi.responses import HTMLResponse as _HTMLResponse
 
 @app.exception_handler(Exception)
 async def unhandled_exc_handler(request: Request, exc: Exception):
@@ -521,80 +357,13 @@ async def unhandled_exc_handler(request: Request, exc: Exception):
         return _HTMLResponse(f"<pre>Unhandled error: {exc!r}</pre>", status_code=500)
     return JSONResponse({"detail": repr(exc)}, status_code=500)
 
-# ============================================
-# Health, HEAD, Routes dump
-# ============================================
-
 @app.get("/health")
-def health():
-    return {"ok": True}
+def health(): return {"ok": True}
 
 @app.head("/")
-def head_root():
-    return Response(status_code=200)
+def head_root(): return Response(status_code=200)
 
 @app.on_event("startup")
 def _log_routes():
-    paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)] )
-    print("\n=== ROUTES ===")
-    for p in paths:
-        print(p)
-    print("==============\n")
-
-# ============================================
-# Scheduler: start + STATUS endpoint
-# ============================================
-
-# Start (con logs)
-try:
-    from app.services.scheduler import start_background_scheduler
-    start_background_scheduler()
-    print("[scheduler] start_background_scheduler() llamado")
-except Exception as e:
-    print("[scheduler] ERROR iniciando scheduler:", repr(e))
-    import traceback; traceback.print_exc()
-
-# Status (nuevo endpoint)
-try:
-    from app.services.scheduler import scheduler_status as _scheduler_status_fn
-except Exception:
-    def _scheduler_status_fn():
-        return {
-            "started": False,
-            "interval_s": None,
-            "last_run": None,
-            "runs": 0,
-            "last_error": "import error",
-        }
-
-@app.get("/internal/scheduler/status")
-def _scheduler_status():
-    """
-    Devuelve el estado del scheduler:
-      - started: bool
-      - interval_s: intervalo en segundos
-      - last_run: ISO UTC de la última ejecución
-      - runs: contador de ejecuciones
-      - last_error: último error (si hubo)
-    """
-    return _scheduler_status_fn()
-
-# ===== Internal DB Hotfix endpoint (manual) =====
-@app.get("/internal/db/hotfix", include_in_schema=False)
-def _run_db_hotfix_now():
-    if ensure_user_pro_columns:
-        try:
-            info = ensure_user_pro_columns()
-            return {"ok": True, **(info or {})}
-        except Exception as e:
-            return {"ok": False, "error": repr(e)}
-    return {"ok": False, "error": "hotfix not available (file missing?)"}
-
-# ============================================
-# Fallbacks útiles
-# ============================================
-
-# /mail/scanner → /mail (por si falta la vista concreta)
-@app.get("/mail/scanner", include_in_schema=False)
-def _scanner_fallback():
-    return RedirectResponse(url="/mail", status_code=302)
+    paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
+    print("\n=== ROUTES ==="); [print(p) for p in paths]; print("==============\n")
