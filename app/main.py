@@ -140,6 +140,39 @@ async def security_headers(request: Request, call_next):
         resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
     return resp
 
+# --- Guard de expiración PRO (liviano) ---
+from app.database import SessionLocal as _GuardSessionLocal
+from app.security import get_current_user_cookie as _guard_get_user
+# import diferido de normalize_user_plan dentro del middleware para evitar ciclos en import
+
+@app.middleware("http")
+async def pro_expiry_guard(request: Request, call_next):
+    """
+    En requests autenticadas, normaliza el plan del usuario si hace falta.
+    Se limita a rutas “de usuario” para evitar costo innecesario en assets.
+    """
+    PATHS_GUARD = ("/dashboard", "/auth/me", "/billing", "/alerts", "/rules", "/reports", "/mail")
+    fast_path = request.url.path
+    if not any(fast_path.startswith(p) for p in PATHS_GUARD):
+        return await call_next(request)
+
+    db = _GuardSessionLocal()
+    try:
+        try:
+            user = _guard_get_user(request, db)
+        except Exception:
+            user = None
+        if user and getattr(user, "id", None):
+            try:
+                from app.security.billing_guard import normalize_user_plan as _guard_normalize
+                _ = _guard_normalize(db, user)
+            except Exception:
+                pass
+    finally:
+        db.close()
+
+    return await call_next(request)
+
 # --- CORS (si necesitás front externo) ---
 try:
     from fastapi.middleware.cors import CORSMiddleware
@@ -159,7 +192,7 @@ ROUTER_MODULES = [
     "orgs", "stats", "payments", "alerts", "rules", "reports",
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push", "promo",
-    "diag",  # 👈 NUEVO: diagnóstico interno (/internal/diag, /internal/diag.json)
+    "diag",  # 👈 diagnóstico interno (/internal/diag, /internal/diag.json)
 ]
 for name in ROUTER_MODULES:
     try:
@@ -172,7 +205,6 @@ for name in ROUTER_MODULES:
 # (extra) Montaje explícito por si preferís ver logs separados
 try:
     from app.routers import diag as _diag_router  # noqa: F401
-    # Si ya lo montó el loop de arriba, FastAPI lo ignora al ser el mismo objeto
     app.include_router(_diag_router.router)
     print("[routers] diag montado OK (explícito)")
 except Exception as e:
@@ -261,6 +293,12 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
+    # (opcional) normalizar plan luego del login
+    try:
+        from app.security.billing_guard import normalize_user_plan as _norm
+        _norm(db, user)
+    except Exception:
+        pass
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     return r
@@ -292,6 +330,11 @@ if not _route_has_method("/auth/login", "POST"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        try:
+            from app.security.billing_guard import normalize_user_plan as _norm
+            _norm(db, user)
+        except Exception:
+            pass
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
@@ -304,6 +347,11 @@ if not _route_exists("/auth/login/web"):
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
         if not user or not verify_password(password, hp or ""):
             raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        try:
+            from app.security.billing_guard import normalize_user_plan as _norm
+            _norm(db, user)
+        except Exception:
+            pass
         r = RedirectResponse(url="/dashboard", status_code=303)
         issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         return r
@@ -311,6 +359,12 @@ if not _route_exists("/auth/login/web"):
 @app.get("/auth/me")
 def auth_me(request: Request, db: Session = Depends(get_db)):
     u = get_current_user_cookie(request, db)
+    # 👇 normaliza plan/flags según expiración
+    try:
+        from app.security.billing_guard import normalize_user_plan as _norm
+        _norm(db, u)
+    except Exception:
+        pass
     return {
         "id": getattr(u, "id", None),
         "email": getattr(u, "email", None),
@@ -404,3 +458,4 @@ def head_root(): return Response(status_code=200)
 def _log_routes():
     paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
     print("\n=== ROUTES ==="); [print(p) for p in paths]; print("==============\n")
+
