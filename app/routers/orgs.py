@@ -1,26 +1,7 @@
 # app/routers/orgs.py
 """
 Gestión de organizaciones (plan Empresas/BIZ): asientos e invitaciones.
-
-Endpoints principales:
-- GET  /org/admin                      → panel HTML para admins de organización
-- GET  /org/me                         → resumen JSON de la organización del usuario
-- GET  /org/invites                    → (admin org) listar invitaciones
-- POST /org/invites                    → (admin org) crear invitación (opcional email)
-- POST /org/invites/{invite_id}/delete → (admin org) eliminar invitación (helper HTML)
-- DELETE /org/invites/{invite_id}      → (admin org) eliminar invitación (API)
-- GET  /org/accept-invite              → página HTML para aceptar invitación (token)
-- POST /org/accept-invite              → alta de usuario consumiendo asiento
-- GET  /org/users                      → (admin org) listar usuarios de la organización (JSON)
-- POST /org/users/{user_id}/remove     → (admin org) remover usuario de la organización
-- POST /org/seats/increment            → (admin org) sumar asientos totales (p.ej. +N)
-
-Requisitos:
-- Modelos Organization, OrgInvite, User en app/models.py
-- init_db.py actualizado para crear/alterar tablas/columnas
-- Seguridad: get_current_user_cookie para obtener el usuario logueado
 """
-
 import uuid, html
 from typing import Optional
 
@@ -32,25 +13,16 @@ from sqlalchemy import func
 from app.database import get_db
 from app import models
 
-# Dependencias de seguridad (con fallback)
+# Seguridad
 try:
     from app.security import get_current_user_cookie, get_password_hash
-except Exception:  # fallback si tenés helpers en otro módulo
+except Exception:
     from app.utils.security import get_current_user_cookie, get_password_hash  # type: ignore
 
-# Mailer (envío de invitaciones)
-try:
-    from app.mailer import send_invite_email
-except Exception:
-    def send_invite_email(*args, **kwargs):  # no-op si falta mailer
-        raise RuntimeError("Mailer no disponible")
+from app.mailer import send_org_invite_email  # ⬅️ nuevo
 
 router = APIRouter(prefix="/org", tags=["org"])
 
-
-# --------------------------
-# Helpers
-# --------------------------
 def _require_logged_user(user: models.User):
     if not user or not getattr(user, "id", None):
         raise HTTPException(status_code=401, detail="No autenticado")
@@ -73,10 +45,6 @@ def _recalc_seats_used(db: Session, org: models.Organization) -> int:
     db.commit()
     return used
 
-
-# --------------------------
-# Panel HTML de administración de la organización
-# --------------------------
 @router.get("/admin", response_class=HTMLResponse)
 def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
     _require_org_admin(user)
@@ -85,18 +53,9 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
         raise HTTPException(404, "Organización no encontrada")
 
     used = _recalc_seats_used(db, org)
+    invites = db.query(models.OrgInvite).filter(models.OrgInvite.org_id == org.id).order_by(models.OrgInvite.created_at.desc()).all()
+    users = db.query(models.User).filter(models.User.org_id == org.id).order_by(models.User.created_at.asc()).all()
 
-    invites = db.query(models.OrgInvite)\
-        .filter(models.OrgInvite.org_id == org.id)\
-        .order_by(models.OrgInvite.created_at.desc())\
-        .all()
-
-    users = db.query(models.User)\
-        .filter(models.User.org_id == org.id)\
-        .order_by(models.User.created_at.asc())\
-        .all()
-
-    # Render simple inline (podés migrarlo a Jinja2 cuando quieras)
     esc = html.escape
     rows_invites = "".join(
         f"<tr>"
@@ -104,13 +63,16 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
         f"<td><code>{esc(inv.token)}</code></td>"
         f"<td>{'Sí' if inv.used else 'No'}</td>"
         f"<td>{esc(inv.created_at.isoformat() if inv.created_at else '')}</td>"
-        f"<td><input class='invite-link' value='/org/accept-invite?token={esc(inv.token)}' readonly style='width:100%'></td>"
+        f"<td><a href='/org/accept-invite?token={esc(inv.token)}' target='_blank'>Abrir link</a></td>"
         f"<td>"
-        f"<form method='POST' action='/org/invites/{inv.id}/delete' onsubmit=\"return confirm('¿Eliminar invitación?');\" style='display:inline-block;margin-right:6px'>"
-        f"<button class='danger'>Eliminar</button>"
-        f"</form>"
-        f"<button class='copy-btn' data-token='{esc(inv.token)}'>Copiar</button>"
-        f"</td>"
+        f"<form method='POST' action='/org/invites/{inv.id}/delete' style='display:inline' onsubmit=\"return confirm('¿Eliminar invitación?');\">"
+        f"<button class='danger'>Eliminar</button></form>"
+        + (
+          "" if inv.used else
+          f" <form method='POST' action='/org/invites/{inv.id}/resend' style='display:inline' onsubmit=\"return confirm('¿Reenviar invitación por email?');\">"
+          f"<button>Reenviar</button></form>"
+        )
+        + f"</td>"
         f"</tr>"
         for inv in invites
     ) or "<tr><td colspan='6' class='muted'>No hay invitaciones aún</td></tr>"
@@ -131,8 +93,7 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
         for u in users
     ) or "<tr><td colspan='6' class='muted'>No hay usuarios aún</td></tr>"
 
-    html_page = f"""
-<!doctype html><html lang="es"><head><meta charset="utf-8">
+    html_page = f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <title>Administración de organización — {esc(org.name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
@@ -147,7 +108,7 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
   @media(min-width:980px){{.grid{{grid-template-columns:1fr 1fr}}}}
   .card{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}}
   .card h3{{margin:0 0 8px}}
-  input[type="text"], input[type="number"], input[type="email"]{{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}}
+  input[type="number"], input[type="email"]{{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px}}
   button{{padding:10px 14px;border:0;border-radius:10px;background:var(--brand);color:#fff;font-weight:700;cursor:pointer}}
   button.danger{{background:#ef4444}}
   table{{width:100%;border-collapse:collapse}}
@@ -156,7 +117,6 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
   .pill{{display:inline-block;background:#eef2ff;color:#1e3a8a;border:1px solid #dbeafe;padding:6px 10px;border-radius:999px;font-weight:600}}
   .row{{display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
   a{{color:#0b5dd7;text-decoration:none}}
-  .result-box{{margin-top:10px;display:none}}
 </style>
 </head><body>
   <div class="container">
@@ -169,18 +129,12 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
     <div class="grid">
       <section class="card">
         <h3>Invitar usuario</h3>
-        <p class="muted">Podés dejar el email vacío para generar un link genérico. Si cargás un email, se enviará automáticamente.</p>
-        <form id="inviteForm" method="POST" action="/org/invites">
+        <p class="muted">Podés dejar el email vacío para generar un link genérico.</p>
+        <form method="POST" action="/org/invites">
           <label>Email (opcional)</label>
           <input type="email" name="email" placeholder="persona@empresa.com" />
           <div style="margin-top:10px"><button>Crear invitación</button></div>
         </form>
-        <div id="inviteResult" class="result-box">
-          <label>Link de invitación</label>
-          <input id="inviteUrl" type="text" readonly style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px">
-          <div style="margin-top:10px"><button id="copyInviteBtn">Copiar link</button></div>
-          <p id="inviteMailNote" class="muted" style="margin-top:6px"></p>
-        </div>
       </section>
 
       <section class="card">
@@ -224,106 +178,36 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
       </section>
     </div>
   </div>
-
-<script>
-document.getElementById('inviteForm')?.addEventListener('submit', async function(e) {{
-  e.preventDefault();
-  const fd = new FormData(this);
-  const r = await fetch(this.action, {{ method: 'POST', body: fd }});
-  const data = await r.json();
-  const box = document.getElementById('inviteResult');
-  const url = document.getElementById('inviteUrl');
-  const note = document.getElementById('inviteMailNote');
-  if (data.invite_link) {{
-    const base = window.location.origin.replace(/\\/$/,'');
-    url.value = (data.invite_link.startsWith('http') ? data.invite_link : base + data.invite_link);
-    box.style.display = 'block';
-    if (data.email_sent === false) {{
-      note.textContent = 'Nota: la invitación se creó, pero no se pudo enviar el email (' + (data.email_error || 'error SMTP') + ').';
-    }} else if (data.email_sent === true) {{
-      note.textContent = 'Email de invitación enviado correctamente.';
-    }} else {{
-      note.textContent = '';
-    }}
-  }} else {{
-    alert('Error al crear invitación: ' + (data.detail || data.error || 'desconocido'));
-  }}
-}});
-
-document.getElementById('copyInviteBtn')?.addEventListener('click', async function() {{
-  const v = document.getElementById('inviteUrl').value;
-  if (!v) return;
-  await navigator.clipboard.writeText(v);
-  alert('Link copiado');
-}});
-
-document.querySelectorAll('.copy-btn').forEach(btn => {{
-  btn.addEventListener('click', async () => {{
-    const token = btn.getAttribute('data-token');
-    const v = window.location.origin.replace(/\\/$/,'') + '/org/accept-invite?token=' + token;
-    await navigator.clipboard.writeText(v);
-    alert('Link copiado');
-  }});
-}});
-</script>
 </body></html>
 """
     return HTMLResponse(html_page)
 
-
-# --------------------------
-# Resumen de mi organización (JSON)
-# --------------------------
 @router.get("/me")
 def my_org_summary(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
     if not user or not user.org_id:
         return {"org": None, "is_org_admin": False}
-
     org = db.query(models.Organization).get(user.org_id)
     if not org:
         return {"org": None, "is_org_admin": False}
-
     used = _recalc_seats_used(db, org)
+    return {"org": {"id": org.id, "name": org.name, "seats_total": org.seats_total, "seats_used": used, "billing_id": org.billing_id}, "is_org_admin": bool(user.is_org_admin)}
 
-    return {
-        "org": {
-            "id": org.id,
-            "name": org.name,
-            "seats_total": org.seats_total,
-            "seats_used": used,
-            "billing_id": org.billing_id,
-        },
-        "is_org_admin": bool(user.is_org_admin),
-    }
-
-
-# --------------------------
-# Invitaciones (admin org)
-# --------------------------
 @router.get("/invites")
 def list_invites(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
     _require_org_admin(user)
-    invites = db.query(models.OrgInvite).filter(
-        models.OrgInvite.org_id == user.org_id
-    ).order_by(models.OrgInvite.created_at.desc()).all()
-
+    invites = db.query(models.OrgInvite).filter(models.OrgInvite.org_id == user.org_id).order_by(models.OrgInvite.created_at.desc()).all()
     out = []
     for inv in invites:
         out.append({
-            "id": inv.id,
-            "email": inv.email,
-            "token": inv.token,
-            "used": inv.used,
+            "id": inv.id, "email": inv.email, "token": inv.token, "used": inv.used,
             "used_by_user_id": inv.used_by_user_id,
             "created_at": inv.created_at.isoformat() if inv.created_at else None,
             "invite_link": f"/org/accept-invite?token={inv.token}",
         })
     return {"invites": out}
 
-
 @router.post("/invites")
-async def create_invite(
-    request: Request,
+def create_invite(
     email: Optional[str] = Form(None),
     user=Depends(get_current_user_cookie),
     db: Session = Depends(get_db),
@@ -338,58 +222,52 @@ async def create_invite(
         raise HTTPException(400, "No hay asientos disponibles")
 
     token = uuid.uuid4().hex
-    email_n = _norm_email(email) if email else None
+    inv = models.OrgInvite(org_id=org.id, token=token, email=_norm_email(email) if email else None)
+    db.add(inv); db.commit()
 
-    inv = models.OrgInvite(org_id=org.id, token=token, email=email_n)
-    db.add(inv)
-    db.commit()
-
-    link_path = f"/org/accept-invite?token={token}"
-    # link absoluto para usar en correo / panel
-    base = str(request.base_url).rstrip("/")
-    invite_link_abs = f"{base}{link_path}"
-
-    # Envío de email (si se pasó email)
-    email_sent, email_err = None, None
-    if email_n:
+    link = f"/org/accept-invite?token={token}"
+    if inv.email:
         try:
-            send_invite_email(email_n, invite_link_abs)
-            email_sent = True
+            send_org_invite_email(inv.email, org.name, link)
         except Exception as e:
-            email_sent, email_err = False, repr(e)
-
-    return {
-        "ok": True,
-        "invite_link": link_path,           # relativo (para app)
-        "invite_link_abs": invite_link_abs, # absoluto (para correo)
-        "token": token,
-        "email_sent": email_sent,
-        "email_error": email_err,
-    }
-
+            print("[orgs] WARN mail invite:", repr(e))
+    return {"ok": True, "invite_link": link, "token": token}
 
 @router.delete("/invites/{invite_id}")
 def delete_invite(invite_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
     _require_org_admin(user)
-    inv = db.query(models.OrgInvite).filter(
-        models.OrgInvite.id == invite_id,
-        models.OrgInvite.org_id == user.org_id,
-    ).first()
+    inv = db.query(models.OrgInvite).filter(models.OrgInvite.id == invite_id, models.OrgInvite.org_id == user.org_id).first()
     if not inv:
         raise HTTPException(404, "Invitación no encontrada")
-    db.delete(inv)
-    db.commit()
+    db.delete(inv); db.commit()
     return {"ok": True}
 
-# Helper para formularios HTML (POST en lugar de DELETE)
 @router.post("/invites/{invite_id}/delete")
 def delete_invite_post(invite_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
     return delete_invite(invite_id, user, db)
 
+# ---------- NUEVO: Reenviar invitación ----------
+@router.post("/invites/{invite_id}/resend")
+def resend_invite(invite_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+    _require_org_admin(user)
+    inv = db.query(models.OrgInvite).filter(models.OrgInvite.id == invite_id, models.OrgInvite.org_id == user.org_id).first()
+    if not inv:
+        raise HTTPException(404, "Invitación no encontrada")
+    if inv.used:
+        raise HTTPException(400, "La invitación ya fue utilizada")
 
-# --------------------------
-# Aceptar invitación
-# --------------------------
+    org = db.query(models.Organization).get(user.org_id)
+    if not org:
+        raise HTTPException(404, "Organización no encontrada")
+
+    link = f"/org/accept-invite?token={inv.token}"
+    if inv.email:
+        try:
+            send_org_invite_email(inv.email, org.name, link)
+        except Exception as e:
+            return {"ok": False, "error": f"SMTP: {e}", "invite_link": link}
+    return {"ok": True, "invite_link": link, "email": inv.email}
+
 @router.get("/accept-invite", response_class=HTMLResponse)
 def accept_invite_page(token: str, request: Request, db: Session = Depends(get_db)):
     inv = db.query(models.OrgInvite).filter_by(token=token, used=False).first()
@@ -403,8 +281,7 @@ def accept_invite_page(token: str, request: Request, db: Session = Depends(get_d
     if _recalc_seats_used(db, org) >= org.seats_total:
         return HTMLResponse("<h3>No hay asientos disponibles. Contactá al administrador.</h3>", status_code=400)
 
-    return HTMLResponse(f"""
-<!doctype html><html lang="es"><head><meta charset="utf-8">
+    return HTMLResponse(f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <title>Aceptar invitación — {html.escape(org.name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
@@ -431,9 +308,7 @@ def accept_invite_page(token: str, request: Request, db: Session = Depends(get_d
   </form>
   </div>
   <p class="muted" style="margin-top:10px">¿Ya tenés cuenta? Pedile al admin que te asocie desde el panel.</p>
-</body></html>
-""")
-
+</body></html>""")
 
 @router.post("/accept-invite")
 def accept_invite(
@@ -464,7 +339,7 @@ def accept_invite(
         name=name.strip(),
         email=email_n,
         password_hash=get_password_hash(password),
-        plan="BIZ",            # o mantener FREE/PRO y gobernar por org; a tu gusto
+        plan="BIZ",
         role="user",
         is_admin=False,
         is_superuser=False,
@@ -479,65 +354,3 @@ def accept_invite(
     db.commit()
     return RedirectResponse(url="/auth/login", status_code=status.HTTP_303_SEE_OTHER)
 
-
-# --------------------------
-# Usuarios de la organización (admin)
-# --------------------------
-@router.get("/users")
-def list_org_users(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
-    _require_org_admin(user)
-    users = db.query(models.User).filter(models.User.org_id == user.org_id).order_by(models.User.created_at.asc()).all()
-    out = []
-    for u in users:
-        out.append({
-            "id": u.id,
-            "name": u.name,
-            "email": u.email,
-            "is_active": u.is_active,
-            "is_org_admin": bool(getattr(u, "is_org_admin", False)),
-            "plan": getattr(u, "plan", None),
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-        })
-    return {"users": out}
-
-
-@router.post("/users/{user_id}/remove")
-def remove_user_from_org(user_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
-    _require_org_admin(user)
-    target = db.query(models.User).filter(
-        models.User.id == user_id,
-        models.User.org_id == user.org_id
-    ).first()
-    if not target:
-        raise HTTPException(404, "Usuario no encontrado en tu organización")
-
-    if target.id == user.id and target.is_org_admin:
-        raise HTTPException(400, "No podés removerte a vos mismo como admin desde aquí")
-
-    target.org_id = None
-    target.is_org_admin = False
-    db.add(target)
-
-    org = db.query(models.Organization).get(user.org_id)
-    _recalc_seats_used(db, org)
-    db.commit()
-    return {"ok": True}
-
-
-# --------------------------
-# Ajustar asientos (admin) - útil para pruebas/backoffice
-# --------------------------
-@router.post("/seats/increment")
-def increment_seats(
-    n: int = Form(..., ge=1),   # cantidad a sumar (al menos 1)
-    user=Depends(get_current_user_cookie),
-    db: Session = Depends(get_db),
-):
-    _require_org_admin(user)
-    org = db.query(models.Organization).get(user.org_id)
-    if not org:
-        raise HTTPException(404, "Organización no encontrada")
-    org.seats_total = int(org.seats_total or 0) + int(n)
-    _recalc_seats_used(db, org)
-    db.commit()
-    return {"ok": True, "seats_total": org.seats_total, "seats_used": org.seats_used}
