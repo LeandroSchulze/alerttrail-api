@@ -272,6 +272,17 @@ def service_worker_root():
             sw_path = alt
     return FileResponse(sw_path, media_type="application/javascript")
 
+# Alias para favicon
+@app.get("/favicon.ico", include_in_schema=False)
+def _favicon_alias():
+    path = os.path.join(STATIC_DIR, "favicon.ico")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/x-icon")
+    # Si no existe, devolvemos 204 para no ensuciar logs
+    return Response(status_code=204)
+
+
+
 # ---- Home/Login/Dashboard (igual a tu versión con fallback) ----
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_optional)):
