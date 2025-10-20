@@ -127,18 +127,15 @@ async def redirect_auth_register_mw(request: Request, call_next):
             return RedirectResponse("/register", status_code=307)
     return await call_next(request)
 
-
 # --- Security headers (básicos y seguros) ---
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     resp = await call_next(request)
-    # No romper recursos embebidos que ya usás; CSP simple (podés endurecer luego)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     resp.headers.setdefault("Permissions-Policy",
                             "geolocation=(), microphone=(), camera=(), payment=(self)")
-    # Si servís por HTTPS (Render/Cloudflare), activá HSTS:
     if (request.url.scheme == "https") or (request.headers.get("x-forwarded-proto") == "https"):
         resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
     return resp
@@ -157,12 +154,12 @@ try:
 except Exception as _e:
     print("[cors] WARN no se pudo habilitar CORSMiddleware:", repr(_e))
 
-
 # ---- Routers (autocarga) ----
 ROUTER_MODULES = [
     "orgs", "stats", "payments", "alerts", "rules", "reports",
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push", "promo",
+    "diag",  # 👈 NUEVO: diagnóstico interno (/internal/diag, /internal/diag.json)
 ]
 for name in ROUTER_MODULES:
     try:
@@ -171,6 +168,15 @@ for name in ROUTER_MODULES:
     except Exception as e:
         print(f"[routers] No pude cargar {name}: {e}")
         import traceback; traceback.print_exc()
+
+# (extra) Montaje explícito por si preferís ver logs separados
+try:
+    from app.routers import diag as _diag_router  # noqa: F401
+    # Si ya lo montó el loop de arriba, FastAPI lo ignora al ser el mismo objeto
+    app.include_router(_diag_router.router)
+    print("[routers] diag montado OK (explícito)")
+except Exception as e:
+    print(f"[routers] No pude cargar diag (explícito): {e}")
 
 # payments_history (HTML + JSON)
 try:
