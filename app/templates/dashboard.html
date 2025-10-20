@@ -43,6 +43,14 @@
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
     footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center}
     footer.page-footer a{color:var(--brand);text-decoration:none}
+
+    /* Bloque Últimos pagos */
+    .paylist{display:grid;gap:8px;margin-top:8px}
+    .payitem{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}
+    .payleft{display:flex;flex-direction:column}
+    .payright{display:flex;gap:10px;align-items:center}
+    .badge{padding:2px 8px;border-radius:999px;border:1px solid #dbeafe;background:#eef2ff;color:#1e3a8a;font-weight:600;font-size:12px}
+    .amount{font-weight:800}
   </style>
 </head>
 <body>
@@ -54,11 +62,7 @@
       </div>
       <div class="right">
         <span class="pill">
-          👤 {{ user.name }} · Plan {{ user.plan }}
-          {% if (user.plan or '').upper() == 'PRO' and user.plan_expires %}
-            · vence <time class="dt" data-iso="{{ user.plan_expires }}">{{ user.plan_expires }}</time>
-          {% endif %}
-          {% if user.is_org_admin %} · Org Admin{% endif %}
+          👤 {{ user.name }} · Plan {{ user.plan }}{% if user.is_org_admin %} · Org Admin{% endif %}
         </span>
         <a class="logout" href="/logout">Cerrar sesión</a>
       </div>
@@ -97,9 +101,6 @@
       <section class="card">
         <h3>Estado de tu cuenta</h3>
         <p class="muted">Plan actual: <strong>{{ user.plan }}</strong></p>
-        {% if (user.plan or '').upper() == 'PRO' and user.plan_expires %}
-          <p class="muted">Vence: <strong><time class="dt" data-iso="{{ user.plan_expires }}">{{ user.plan_expires }}</time></strong></p>
-        {% endif %}
         {% if is_admin %}
           <p class="muted">Rol: <strong>Administrador</strong></p>
         {% else %}
@@ -173,6 +174,17 @@
           </div>
         </div>
       </section>
+
+      <!-- 🆕 Últimos pagos -->
+      <section class="card" style="grid-column:1/-1">
+        <h3 style="margin:0 0 6px">Últimos pagos</h3>
+        <p class="muted" id="pay-empty" style="display:none">No encontramos pagos aún.</p>
+        <div id="pay-list" class="paylist" aria-live="polite"></div>
+        <div id="pay-error" class="muted" style="display:none;color:#b91c1c">No se pudo cargar el historial.</div>
+        <div style="margin-top:8px">
+          <a class="btn-outline" href="/billing/payments">Ver todo el historial</a>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -225,7 +237,7 @@
     </div>
   </div>
 
-  <!-- ===== Estilos del modal (aislados con prefijo plans-) ===== -->
+  <!-- ===== Estilos del modal ===== -->
   <style>
     .plans-modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:1000}
     .plans-modal.is-open{display:flex}
@@ -233,23 +245,18 @@
     .plans-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #eef2f7}
     .plans-title{margin:0;font-size:20px}
     .plans-close{background:transparent;border:0;font-size:24px;line-height:1;cursor:pointer;padding:4px 8px}
-
     .plans-tabs{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid #eef2f7}
     .plans-tab{background:#f4f6fb;border:0;padding:10px 14px;border-radius:999px;cursor:pointer;font-weight:600}
     .plans-tab.is-active{background:#2563eb;color:#fff}
-
     .plans-panel{padding:16px 20px}
     .plans-panel[hidden]{display:none}
-
     .plans-price{font-size:28px;font-weight:800;margin-bottom:10px}
     .plans-price-per{font-size:14px;font-weight:600;color:#667085;margin-left:4px}
     .plans-list{margin:0 0 12px 18px}
     .plans-list li{margin:6px 0}
     .plans-note{font-size:12px;color:#667085;margin:8px 0 0}
-
     .plans-actions{margin-top:14px}
     .plans-primary{display:inline-block;padding:10px 16px;border-radius:10px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700}
-
     .plans-footer{padding:14px 20px;border-top:1px solid #eef2f7;font-size:14px;background:#fafafa}
   </style>
 
@@ -279,7 +286,7 @@
     setInterval(checkAlerts, 30000); checkAlerts();
   </script>
 
-  <!-- ===== JS del modal (accesible, sin dependencias) + SSE ===== -->
+  <!-- ===== JS del modal + SSE ===== -->
   <script>
     (function(){
       const POLL_MS = 10000;
@@ -287,18 +294,12 @@
 
       function showAlertModal(a){
         if (document.getElementById('mail-alert-modal')) return;
-
-        const scannerHref = (a && a.link)
-          ? a.link
-          : `/mail/scanner${(a && a.id) ? `?id=${encodeURIComponent(a.id)}` : ''}`;
-
+        const scannerHref = (a && a.link) ? a.link : `/mail/scanner${(a && a.id) ? `?id=${encodeURIComponent(a.id)}` : ''}`;
         const overlay = document.createElement('div');
         overlay.id = 'mail-alert-modal';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999';
-
         const card = document.createElement('div');
         card.style.cssText = 'background:#0f2a42;color:#eaf3ff;border:1px solid #133954;border-radius:14px;max-width:560px;width:92%;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)';
-
         card.innerHTML = `
           <h3 style="margin:0 0 6px">⚠️ Posible correo sospechoso</h3>
           <p style="margin:0 0 2px"><b>De:</b> ${a?.from_email || '-'}</p>
@@ -309,15 +310,10 @@
             <button id="mail-alert-dismiss" style="padding:10px 14px;border-radius:10px;background:#133954;color:#cfe6ff;border:0;cursor:pointer">Descartar</button>
           </div>
         `;
-
         overlay.appendChild(card);
         document.body.appendChild(overlay);
-
-        const dismiss = () => {
-          try { localStorage.setItem(seenKey(a.id), '1'); } catch(_){}
-          fetch(`/alerts/${a.id}/ack`, {method:'POST'}).catch(()=>{});
-          overlay.remove();
-        };
+        const dismiss = () => { try { localStorage.setItem(seenKey(a.id), '1'); } catch(_){}
+          fetch(`/alerts/${a.id}/ack`, {method:'POST'}).catch(()=>{}); overlay.remove(); };
         document.getElementById('mail-alert-dismiss').onclick = dismiss;
         overlay.addEventListener('click', (e)=>{ if(e.target === overlay) dismiss(); });
       }
@@ -329,9 +325,7 @@
           const d = await r.json();
           if (d && d.ok && d.pending && d.alert) {
             const a = d.alert;
-            if (!localStorage.getItem(seenKey(a.id))) {
-              showAlertModal(a);
-            }
+            if (!localStorage.getItem(seenKey(a.id))) { showAlertModal(a); }
           }
         }catch(_){}
       }
@@ -341,8 +335,7 @@
 
       try{
         const es = new EventSource('/mail/alerts/stream');
-        es.onmessage = (e)=>{
-          try{
+        es.onmessage = (e)=>{ try{
             const data = JSON.parse(e.data || '{}');
             if (data.type === 'mail_alert') {
               poll();
@@ -357,27 +350,14 @@
     })();
   </script>
 
-  <!-- 🔥 Promo Trial JS (debe ir al final) -->
+  <!-- 🔥 Promo Trial JS -->
   <script src="/static/promo_trial.js"></script>
 
-  <!-- ===== Formateo local de fechas ISO (vence) + Web Push ===== -->
+  <!-- Web Push -->
   <script type="module">
-    // Web Push botón
     import { enablePush } from "/static/push.js";
     document.getElementById("btnPush")?.addEventListener("click", enablePush);
 
-    // Formatear todas las <time class="dt" data-iso="..."> al locale del navegador
-    const fmt = new Intl.DateTimeFormat(navigator.language || 'es-AR', {
-      year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
-    });
-    document.querySelectorAll('time.dt[data-iso]').forEach(t => {
-      const iso = t.getAttribute('data-iso');
-      if (!iso) return;
-      const d = new Date(iso);
-      if (!isNaN(d)) t.textContent = fmt.format(d);
-    });
-
-    // Modal de planes
     const modal = document.getElementById('plansModal');
     const open1 = document.getElementById('openPlansModal');
     const open2 = document.getElementById('openPlansModal2');
@@ -395,17 +375,46 @@
     closeBtn?.addEventListener('click', closeModal);
     modal?.addEventListener('click', (e)=>{ if(e.target === modal) closeModal(); });
 
-    tabProBtn?.addEventListener('click', ()=>{
-      tabProBtn.classList.add('is-active'); tabBizBtn.classList.remove('is-active');
-      tabPro.classList.add('is-active'); tabPro.removeAttribute('hidden'); tabBiz.classList.remove('is-active'); tabBiz.setAttribute('hidden','true');
-    });
-    tabBizBtn?.addEventListener('click', ()=>{
-      tabBizBtn.classList.add('is-active'); tabProBtn.classList.remove('is-active');
-      tabBiz.classList.add('is-active'); tabBiz.removeAttribute('hidden'); tabPro.classList.remove('is-active'); tabPro.setAttribute('hidden','true');
-    });
+    tabProBtn?.addEventListener('click', ()=>{ tabProBtn.classList.add('is-active'); tabBizBtn.classList.remove('is-active');
+      tabPro.classList.add('is-active'); tabPro.removeAttribute('hidden'); tabBiz.classList.remove('is-active'); tabBiz.setAttribute('hidden','true'); });
+    tabBizBtn?.addEventListener('click', ()=>{ tabBizBtn.classList.add('is-active'); tabProBtn.classList.remove('is-active');
+      tabBiz.classList.add('is-active'); tabBiz.removeAttribute('hidden'); tabPro.classList.remove('is-active'); tabPro.setAttribute('hidden','true'); });
+
+    // 🆕 Cargar últimos pagos
+    async function loadPayments(){
+      const box = document.getElementById('pay-list');
+      const empty = document.getElementById('pay-empty');
+      const err = document.getElementById('pay-error');
+      try{
+        const r = await fetch('/payments/history/mine?limit=6');
+        if(!r.ok){ err.style.display='block'; return; }
+        const d = await r.json();
+        const items = (d && d.items) ? d.items : [];
+        if(!items.length){ empty.style.display='block'; return; }
+        const fmt = (cents, cur)=> (cents!=null)? `${cur||'USD'} ${(cents/100).toFixed(2)}` : '-';
+        const elts = items.map(it=>{
+          const dt = it.created_at ? new Date(it.created_at) : null;
+          const when = dt ? dt.toLocaleString() : '-';
+          return `
+            <div class="payitem">
+              <div class="payleft">
+                <div><span class="badge">${(it.plan||'PRO')}</span> · <span class="amount">${fmt(it.amount_cents, it.currency)}</span></div>
+                <small class="muted">${when}</small>
+              </div>
+              <div class="payright">
+                <small class="muted">${(it.status||'').toUpperCase()}</small>
+              </div>
+            </div>`;
+        }).join('');
+        box.innerHTML = elts;
+      }catch(e){
+        err.style.display='block';
+        console.error('payments load error', e);
+      }
+    }
+    loadPayments();
   </script>
 
-  <!-- ===== Footer simple ===== -->
   <footer class="page-footer">
     <a href="/terms">Términos y Condiciones</a> ·
     <a href="/privacy">Política de Privacidad</a> ·
@@ -413,3 +422,4 @@
   </footer>
 </body>
 </html>
+
