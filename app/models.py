@@ -33,46 +33,43 @@ class User(Base):
     is_admin      = Column(Boolean, nullable=False, default=False)
     is_superuser  = Column(Boolean, nullable=False, default=False)
 
-    # Organización a la que PERTENECE el usuario
+    # Organización
     org_id        = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     is_org_admin  = Column(Boolean, nullable=False, default=False)
 
-    # ================= Verificación por correo =================
+    # Verificación por correo
     email_verified            = Column(Boolean, nullable=False, default=False)
-    verification_code         = Column(String(12), nullable=True)             # p.ej. "123456"
-    verification_expires_at   = Column(DateTime, nullable=True)               # vence en ~15 min
-    verification_attempts     = Column(Integer, nullable=False, default=0)    # anti-bruteforce
+    verification_code         = Column(String(12), nullable=True)
+    verification_expires_at   = Column(DateTime, nullable=True)
+    verification_attempts     = Column(Integer, nullable=False, default=0)
 
-    # ================ Trial PRO (solo particulares) =====================
-    # Promo: 5 días sin cargo para cuentas individuales (no empresas/org)
+    # Trial PRO
     trial_started_at = Column(DateTime, nullable=True)
     trial_expires_at = Column(DateTime, nullable=True)
-    had_trial        = Column(Boolean, nullable=False, default=False)  # evita múltiples trials
-    pro_source       = Column(String(32), nullable=True)               # "trial" | "subscription" | None
+    had_trial        = Column(Boolean, nullable=False, default=False)
+    pro_source       = Column(String(32), nullable=True)  # "trial" | "subscription" | None
 
-    # ================ Suscripción PRO (vencimiento + idempotencia) ================
-    pro_expires_at  = Column(DateTime, nullable=True)                  # fecha de expiración del PRO
-    last_payment_id = Column(String(64), nullable=True)                # para evitar duplicados en webhooks
+    # Suscripción / PRO
+    pro_expires_at  = Column(DateTime, nullable=True)
+    last_payment_id = Column(String(64), nullable=True)
 
     # Metadatos
     created_at    = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at    = Column(DateTime, nullable=True)
 
-    # ---------------- Relaciones ----------------
+    # Relaciones
     organization = relationship(
         "Organization",
         foreign_keys=[org_id],
         back_populates="members",
         lazy="selectin",
     )
-
     owned_organizations = relationship(
         "Organization",
         foreign_keys="Organization.owner_user_id",
         back_populates="owner",
         lazy="selectin",
     )
-
     mail_accounts = relationship("MailAccount", back_populates="user", lazy="selectin")
     report_downloads = relationship("ReportDownload", back_populates="user", lazy="selectin")
     allowed_ips = relationship("AllowedIP", back_populates="user", lazy="selectin")
@@ -82,19 +79,14 @@ class User(Base):
     payment_events = relationship("PaymentEvent", back_populates="user", lazy="selectin")
     payments       = relationship("PaymentHistory", back_populates="user", lazy="selectin")
 
-    # ---------------- Helpers de plan ----------------
+    # Helpers
     @property
     def is_pro_active(self) -> bool:
-        """
-        True si el usuario tiene PRO vigente por plan o trial.
-        """
         now = datetime.utcnow()
         if self.plan and self.plan.upper() in ("PRO", "BIZ"):
             if self.pro_expires_at:
                 return self.pro_expires_at > now
-            # Si no hay expiración (legacy), considera PRO activo
             return True
-        # Trial aún vigente también habilita funciones PRO
         if self.trial_expires_at and self.trial_expires_at > now:
             return True
         return False
@@ -228,14 +220,14 @@ class MailAccount(Base):
 
 
 # =========================
-# Report Downloads (PDFs, etc.)
+# Report Downloads
 # =========================
 class ReportDownload(Base):
     __tablename__ = "report_downloads"
 
     id          = Column(Integer, primary_key=True, index=True)
     user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    path        = Column(String(1024), nullable=False)   # /reports/....pdf
+    path        = Column(String(1024), nullable=False)
     created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     user = relationship(
@@ -250,7 +242,7 @@ class ReportDownload(Base):
 
 
 # =========================
-# Allowed IPs (Opcional)
+# Allowed IPs
 # =========================
 class AllowedIP(Base):
     __tablename__ = "allowed_ips"
@@ -280,22 +272,18 @@ class AllowedIP(Base):
 # Payment Event (idempotencia webhook)
 # =========================
 class PaymentEvent(Base):
-    """
-    Registro crudo por evento de pago del proveedor (p.ej. Mercado Pago).
-    Sirve para idempotencia y debugging del webhook.
-    """
     __tablename__ = "payment_events"
 
     id                = Column(Integer, primary_key=True, index=True)
     user_id           = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    provider          = Column(String(32), nullable=False, default="mp")          # "mp" | "stripe" | etc.
-    payment_id        = Column(String(128), nullable=False, index=True)           # id del proveedor
-    status            = Column(String(32), nullable=True)                         # approved, pending, failed
-    plan              = Column(String(20), nullable=True)                         # PRO, BIZ
-    amount_cents      = Column(Integer, nullable=True)                            # 1000 = US$10.00
+    provider          = Column(String(32), nullable=False, default="mp")
+    payment_id        = Column(String(128), nullable=False, index=True)
+    status            = Column(String(32), nullable=True)
+    plan              = Column(String(20), nullable=True)
+    amount_cents      = Column(Integer, nullable=True)
     currency          = Column(String(8), nullable=True, default="USD")
-    external_ref      = Column(String(255), nullable=True)                        # lo que enviaste para mapear usuario
-    raw_payload       = Column(Text, nullable=True)                               # JSON del evento, como texto
+    external_ref      = Column(String(255), nullable=True)
+    raw_payload       = Column(Text, nullable=True)
     created_at        = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     user = relationship("User", back_populates="payment_events", lazy="selectin")
@@ -310,26 +298,22 @@ class PaymentEvent(Base):
 
 
 # =========================
-# Payment History (asentado para UI y auditoría)
+# Payment History (UI/auditoría)
 # =========================
 class PaymentHistory(Base):
-    """
-    Movimientos de pago ya “asentados”: lo que se muestra en /payments_history.
-    Cada fila representa una activación/renovación/cargo relevante.
-    """
     __tablename__ = "payments_history"
 
     id                = Column(Integer, primary_key=True, index=True)
     user_id           = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    provider          = Column(String(32), nullable=False, default="mp")          # "mp", "stripe", etc.
+    provider          = Column(String(32), nullable=False, default="mp")
     provider_payment_id = Column(String(128), nullable=True, index=True)
     plan              = Column(String(20), nullable=False, default="PRO")
     period_months     = Column(Integer, nullable=False, default=1)
-    amount_cents      = Column(Integer, nullable=True)                            # 1000 = US$10.00
+    amount_cents      = Column(Integer, nullable=True)
     currency          = Column(String(8), nullable=False, default="USD")
-    status            = Column(String(32), nullable=False, default="approved")    # approved, refunded, failed
-    description       = Column(String(255), nullable=True)                        # opcional para la UI
-    raw_payload       = Column(Text, nullable=True)                               # JSON del cargo (texto)
+    status            = Column(String(32), nullable=False, default="approved")
+    description       = Column(String(255), nullable=True)
+    raw_payload       = Column(Text, nullable=True)
     created_at        = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     user = relationship("User", back_populates="payments", lazy="selectin")
