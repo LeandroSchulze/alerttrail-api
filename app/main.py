@@ -23,9 +23,6 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-from app.routers import payments_history
-app.include_router(payments_history.router)
-
 
 from app.database import SessionLocal
 from app.security import (
@@ -205,6 +202,14 @@ for name in ROUTER_MODULES:
         print(f"[routers] No pude cargar {name}: {e}")
         import traceback
         traceback.print_exc()
+
+# ⬇️ payments_history: mover después de crear `app`
+try:
+    from app.routers import payments_history
+    app.include_router(payments_history.router)
+    print("[routers] payments_history montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar payments_history: {e}")
 
 # Routers explícitos adicionales / fallbacks
 try:
