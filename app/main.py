@@ -127,6 +127,37 @@ async def redirect_auth_register_mw(request: Request, call_next):
             return RedirectResponse("/register", status_code=307)
     return await call_next(request)
 
+
+# --- Security headers (básicos y seguros) ---
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    # No romper recursos embebidos que ya usás; CSP simple (podés endurecer luego)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Permissions-Policy",
+                            "geolocation=(), microphone=(), camera=(), payment=(self)")
+    # Si servís por HTTPS (Render/Cloudflare), activá HSTS:
+    if (request.url.scheme == "https") or (request.headers.get("x-forwarded-proto") == "https"):
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+    return resp
+
+# --- CORS (si necesitás front externo) ---
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if os.getenv("CORS_ALLOW_ORIGINS") else ["https://www.alerttrail.com"],
+        allow_credentials=True,
+        allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+        allow_headers=["*"],
+        max_age=86400,
+    )
+except Exception as _e:
+    print("[cors] WARN no se pudo habilitar CORSMiddleware:", repr(_e))
+
+
 # ---- Routers (autocarga) ----
 ROUTER_MODULES = [
     "orgs", "stats", "payments", "alerts", "rules", "reports",
