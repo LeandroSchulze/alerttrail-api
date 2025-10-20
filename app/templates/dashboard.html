@@ -54,7 +54,11 @@
       </div>
       <div class="right">
         <span class="pill">
-          👤 {{ user.name }} · Plan {{ user.plan }}{% if user.is_org_admin %} · Org Admin{% endif %}
+          👤 {{ user.name }} · Plan {{ user.plan }}
+          {% if (user.plan or '').upper() == 'PRO' and user.plan_expires %}
+            · vence <time class="dt" data-iso="{{ user.plan_expires }}">{{ user.plan_expires }}</time>
+          {% endif %}
+          {% if user.is_org_admin %} · Org Admin{% endif %}
         </span>
         <a class="logout" href="/logout">Cerrar sesión</a>
       </div>
@@ -93,6 +97,9 @@
       <section class="card">
         <h3>Estado de tu cuenta</h3>
         <p class="muted">Plan actual: <strong>{{ user.plan }}</strong></p>
+        {% if (user.plan or '').upper() == 'PRO' and user.plan_expires %}
+          <p class="muted">Vence: <strong><time class="dt" data-iso="{{ user.plan_expires }}">{{ user.plan_expires }}</time></strong></p>
+        {% endif %}
         {% if is_admin %}
           <p class="muted">Rol: <strong>Administrador</strong></p>
         {% else %}
@@ -353,11 +360,24 @@
   <!-- 🔥 Promo Trial JS (debe ir al final) -->
   <script src="/static/promo_trial.js"></script>
 
-  <!-- ===== Web Push: botón para activar ===== -->
+  <!-- ===== Formateo local de fechas ISO (vence) + Web Push ===== -->
   <script type="module">
+    // Web Push botón
     import { enablePush } from "/static/push.js";
     document.getElementById("btnPush")?.addEventListener("click", enablePush);
 
+    // Formatear todas las <time class="dt" data-iso="..."> al locale del navegador
+    const fmt = new Intl.DateTimeFormat(navigator.language || 'es-AR', {
+      year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+    });
+    document.querySelectorAll('time.dt[data-iso]').forEach(t => {
+      const iso = t.getAttribute('data-iso');
+      if (!iso) return;
+      const d = new Date(iso);
+      if (!isNaN(d)) t.textContent = fmt.format(d);
+    });
+
+    // Modal de planes
     const modal = document.getElementById('plansModal');
     const open1 = document.getElementById('openPlansModal');
     const open2 = document.getElementById('openPlansModal2');
