@@ -3,17 +3,17 @@
 Gestión de organizaciones (plan Empresas/BIZ): asientos e invitaciones.
 
 Endpoints principales:
-- GET  /org/admin                     → panel HTML para admins de organización
-- GET  /org/me                        → resumen JSON de la organización del usuario
-- GET  /org/invites                   → (admin org) listar invitaciones
-- POST /org/invites                   → (admin org) crear invitación (opcional email)
-- POST /org/invites/{invite_id}/delete→ (admin org) eliminar invitación (helper HTML)
-- DELETE /org/invites/{invite_id}     → (admin org) eliminar invitación (API)
-- GET  /org/accept-invite             → página HTML para aceptar invitación (token)
-- POST /org/accept-invite             → alta de usuario consumiendo asiento
-- GET  /org/users                     → (admin org) listar usuarios de la organización (JSON)
-- POST /org/users/{user_id}/remove    → (admin org) remover usuario de la organización
-- POST /org/seats/increment           → (admin org) sumar asientos totales (p.ej. +N)
+- GET  /org/admin                      → panel HTML para admins de organización
+- GET  /org/me                         → resumen JSON de la organización del usuario
+- GET  /org/invites                    → (admin org) listar invitaciones
+- POST /org/invites                    → (admin org) crear invitación (opcional email)
+- POST /org/invites/{invite_id}/delete → (admin org) eliminar invitación (helper HTML)
+- DELETE /org/invites/{invite_id}      → (admin org) eliminar invitación (API)
+- GET  /org/accept-invite              → página HTML para aceptar invitación (token)
+- POST /org/accept-invite              → alta de usuario consumiendo asiento
+- GET  /org/users                      → (admin org) listar usuarios de la organización (JSON)
+- POST /org/users/{user_id}/remove     → (admin org) remover usuario de la organización
+- POST /org/seats/increment            → (admin org) sumar asientos totales (p.ej. +N)
 
 Requisitos:
 - Modelos Organization, OrgInvite, User en app/models.py
@@ -37,6 +37,13 @@ try:
     from app.security import get_current_user_cookie, get_password_hash
 except Exception:  # fallback si tenés helpers en otro módulo
     from app.utils.security import get_current_user_cookie, get_password_hash  # type: ignore
+
+# Mailer (envío de invitaciones)
+try:
+    from app.mailer import send_invite_email
+except Exception:
+    def send_invite_email(*args, **kwargs):  # no-op si falta mailer
+        raise RuntimeError("Mailer no disponible")
 
 router = APIRouter(prefix="/org", tags=["org"])
 
@@ -97,11 +104,12 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
         f"<td><code>{esc(inv.token)}</code></td>"
         f"<td>{'Sí' if inv.used else 'No'}</td>"
         f"<td>{esc(inv.created_at.isoformat() if inv.created_at else '')}</td>"
-        f"<td><a href='/org/accept-invite?token={esc(inv.token)}' target='_blank'>Abrir link</a></td>"
+        f"<td><input class='invite-link' value='/org/accept-invite?token={esc(inv.token)}' readonly style='width:100%'></td>"
         f"<td>"
-        f"<form method='POST' action='/org/invites/{inv.id}/delete' onsubmit=\"return confirm('¿Eliminar invitación?');\">"
+        f"<form method='POST' action='/org/invites/{inv.id}/delete' onsubmit=\"return confirm('¿Eliminar invitación?');\" style='display:inline-block;margin-right:6px'>"
         f"<button class='danger'>Eliminar</button>"
         f"</form>"
+        f"<button class='copy-btn' data-token='{esc(inv.token)}'>Copiar</button>"
         f"</td>"
         f"</tr>"
         for inv in invites
@@ -148,6 +156,7 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
   .pill{{display:inline-block;background:#eef2ff;color:#1e3a8a;border:1px solid #dbeafe;padding:6px 10px;border-radius:999px;font-weight:600}}
   .row{{display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
   a{{color:#0b5dd7;text-decoration:none}}
+  .result-box{{margin-top:10px;display:none}}
 </style>
 </head><body>
   <div class="container">
@@ -160,12 +169,18 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
     <div class="grid">
       <section class="card">
         <h3>Invitar usuario</h3>
-        <p class="muted">Podés dejar el email vacío para generar un link genérico.</p>
-        <form method="POST" action="/org/invites">
+        <p class="muted">Podés dejar el email vacío para generar un link genérico. Si cargás un email, se enviará automáticamente.</p>
+        <form id="inviteForm" method="POST" action="/org/invites">
           <label>Email (opcional)</label>
           <input type="email" name="email" placeholder="persona@empresa.com" />
           <div style="margin-top:10px"><button>Crear invitación</button></div>
         </form>
+        <div id="inviteResult" class="result-box">
+          <label>Link de invitación</label>
+          <input id="inviteUrl" type="text" readonly style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px">
+          <div style="margin-top:10px"><button id="copyInviteBtn">Copiar link</button></div>
+          <p id="inviteMailNote" class="muted" style="margin-top:6px"></p>
+        </div>
       </section>
 
       <section class="card">
@@ -209,6 +224,48 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
       </section>
     </div>
   </div>
+
+<script>
+document.getElementById('inviteForm')?.addEventListener('submit', async function(e) {{
+  e.preventDefault();
+  const fd = new FormData(this);
+  const r = await fetch(this.action, {{ method: 'POST', body: fd }});
+  const data = await r.json();
+  const box = document.getElementById('inviteResult');
+  const url = document.getElementById('inviteUrl');
+  const note = document.getElementById('inviteMailNote');
+  if (data.invite_link) {{
+    const base = window.location.origin.replace(/\\/$/,'');
+    url.value = (data.invite_link.startsWith('http') ? data.invite_link : base + data.invite_link);
+    box.style.display = 'block';
+    if (data.email_sent === false) {{
+      note.textContent = 'Nota: la invitación se creó, pero no se pudo enviar el email (' + (data.email_error || 'error SMTP') + ').';
+    }} else if (data.email_sent === true) {{
+      note.textContent = 'Email de invitación enviado correctamente.';
+    }} else {{
+      note.textContent = '';
+    }}
+  }} else {{
+    alert('Error al crear invitación: ' + (data.detail || data.error || 'desconocido'));
+  }}
+}});
+
+document.getElementById('copyInviteBtn')?.addEventListener('click', async function() {{
+  const v = document.getElementById('inviteUrl').value;
+  if (!v) return;
+  await navigator.clipboard.writeText(v);
+  alert('Link copiado');
+}});
+
+document.querySelectorAll('.copy-btn').forEach(btn => {{
+  btn.addEventListener('click', async () => {{
+    const token = btn.getAttribute('data-token');
+    const v = window.location.origin.replace(/\\/$/,'') + '/org/accept-invite?token=' + token;
+    await navigator.clipboard.writeText(v);
+    alert('Link copiado');
+  }});
+}});
+</script>
 </body></html>
 """
     return HTMLResponse(html_page)
@@ -281,12 +338,34 @@ async def create_invite(
         raise HTTPException(400, "No hay asientos disponibles")
 
     token = uuid.uuid4().hex
-    inv = models.OrgInvite(org_id=org.id, token=token, email=_norm_email(email) if email else None)
+    email_n = _norm_email(email) if email else None
+
+    inv = models.OrgInvite(org_id=org.id, token=token, email=email_n)
     db.add(inv)
     db.commit()
 
-    link = f"/org/accept-invite?token={token}"
-    return {"ok": True, "invite_link": link, "token": token}
+    link_path = f"/org/accept-invite?token={token}"
+    # link absoluto para usar en correo / panel
+    base = str(request.base_url).rstrip("/")
+    invite_link_abs = f"{base}{link_path}"
+
+    # Envío de email (si se pasó email)
+    email_sent, email_err = None, None
+    if email_n:
+        try:
+            send_invite_email(email_n, invite_link_abs)
+            email_sent = True
+        except Exception as e:
+            email_sent, email_err = False, repr(e)
+
+    return {
+        "ok": True,
+        "invite_link": link_path,           # relativo (para app)
+        "invite_link_abs": invite_link_abs, # absoluto (para correo)
+        "token": token,
+        "email_sent": email_sent,
+        "email_error": email_err,
+    }
 
 
 @router.delete("/invites/{invite_id}")
@@ -450,7 +529,7 @@ def remove_user_from_org(user_id: int, user=Depends(get_current_user_cookie), db
 # --------------------------
 @router.post("/seats/increment")
 def increment_seats(
-    n: int = Form(..., gt=1),   # cantidad a sumar
+    n: int = Form(..., ge=1),   # cantidad a sumar (al menos 1)
     user=Depends(get_current_user_cookie),
     db: Session = Depends(get_db),
 ):
