@@ -393,6 +393,10 @@ def auth_me(request: Request, db: Session = Depends(get_db)):
     401 si no hay sesión válida.
     """
     u = get_current_user_cookie(request, db)  # propaga 401/403 si corresponde
+
+    # Expiración compatible (pro_expires_at | plan_expires | pro_until)
+    exp = getattr(u, "pro_expires_at", None) or getattr(u, "plan_expires", None) or getattr(u, "pro_until", None)
+
     return {
         "id": getattr(u, "id", None),
         "email": getattr(u, "email", None),
@@ -401,7 +405,8 @@ def auth_me(request: Request, db: Session = Depends(get_db)):
         "is_admin": bool(getattr(u, "is_admin", False) or getattr(u, "is_superuser", False)),
         "plan": getattr(u, "plan", None),
         "is_pro": bool(getattr(u, "is_pro", False)),
-        "plan_expires": getattr(u, "plan_expires", None),
+        "pro_expires_at": exp,   # campo real si existe
+        "plan_expires": exp,     # alias para compatibilidad con front/SDKs antiguos
         "org_id": getattr(u, "org_id", None),
     }
 
@@ -440,12 +445,17 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     is_admin = (role == "admin") or truthy(getattr(user, "is_admin", False)) or truthy(getattr(user, "is_superuser", False))
     is_org_admin = truthy(getattr(user, "is_org_admin", False))
 
+    # Expiración compatible para UI (ISO string o None)
+    exp = getattr(user, "pro_expires_at", None) or getattr(user, "plan_expires", None) or getattr(user, "pro_until", None)
+    exp_iso = exp.isoformat() if isinstance(exp, datetime) else (str(exp) if exp else None)
+
     user_ctx = {
         "name": (getattr(user, "name", None) or getattr(user, "email", "Usuario")),
         "email": getattr(user, "email", ""),
         "plan": (getattr(user, "plan", None) or "FREE").upper(),
         "is_org_admin": is_org_admin,
         "org_id": getattr(user, "org_id", None),
+        "plan_expires": exp_iso,  # ⬅️ agregado para el dashboard
     }
 
     try:
@@ -464,6 +474,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
           <ul>
             <li>Email: {user_ctx['email']}</li>
             <li>Plan: {user_ctx['plan']}</li>
+            <li>Vence: {user_ctx['plan_expires'] or '—'}</li>
           </ul>
           <p><a href="/logout">Cerrar sesión</a></p>
         </div>"""
