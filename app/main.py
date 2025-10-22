@@ -102,7 +102,7 @@ def truthy(v):
     if isinstance(v, str):  return v.strip().lower() in {"1","true","yes","y","on"}
     return False
 
-def get_current_user_optional(request: Request, db: Session = Depends(get_db)):
+def get_current_user_optional(request: Request, db= Depends(get_db)):
     try:
         return get_current_user_cookie(request, db)
     except Exception:
@@ -331,7 +331,7 @@ def _route_has_method(path: str, method: str) -> bool:
     return False
 
 @app.post("/login", include_in_schema=False)
-def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+def login_action(response: Response, email: str = Form(...), password: str = Form(...), db= Depends(get_db)):
     email_norm = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email_norm).first()
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
@@ -368,7 +368,7 @@ if not _route_has_method("/auth/login", "GET"):
 
 if not _route_has_method("/auth/login", "POST"):
     @app.post("/auth/login", include_in_schema=False)
-    def _fb_auth_login_post(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    def _fb_auth_login_post(response: Response, email: str = Form(...), password: str = Form(...), db= Depends(get_db)):
         email_norm = email.strip().lower()
         user = db.query(User).filter(func.lower(User.email) == email_norm).first()
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
@@ -385,7 +385,7 @@ if not _route_has_method("/auth/login", "POST"):
 
 if not _route_exists("/auth/login/web"):
     @app.post("/auth/login/web", include_in_schema=False)
-    def _fb_auth_login_web(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    def _fb_auth_login_web(response: Response, email: str = Form(...), password: str = Form(...), db= Depends(get_db)):
         email_norm = email.strip().lower()
         user = db.query(User).filter(func.lower(User.email) == email_norm).first()
         hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
@@ -401,7 +401,7 @@ if not _route_exists("/auth/login/web"):
         return r
 
 @app.get("/auth/me")
-def auth_me(request: Request, db: Session = Depends(get_db)):
+def auth_me(request: Request, db= Depends(get_db)):
     u = get_current_user_cookie(request, db)
     # 👇 normaliza plan/flags según expiración
     try:
@@ -434,7 +434,7 @@ def logout_alias():
     return RedirectResponse(url="/logout", status_code=302)
 
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
+def dashboard(request: Request, db= Depends(get_db)):
     try:
         user = get_current_user_cookie(request, db)
     except HTTPException as e:
