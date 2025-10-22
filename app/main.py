@@ -1,4 +1,3 @@
-# app/main.py
 # ============================================
 # AlertTrail API - Main
 # ============================================
@@ -84,6 +83,8 @@ Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+# 👇 Hacemos accesibles los templates para los routers (billing, etc.)
+app.state.templates = templates
 
 # ---- DB helpers ----
 def get_db():
@@ -499,3 +500,6 @@ def head_root(): return Response(status_code=200)
 def _log_routes():
     paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
     print("\n=== ROUTES ==="); [print(p) for p in paths]; print("==============\n")
+    # Aviso útil si /billing no está montado
+    if not any(p.startswith("/billing") for p in paths):
+        print("[WARN] No hay rutas registradas bajo /billing — verifica app/routers/billing.py y su import.")
