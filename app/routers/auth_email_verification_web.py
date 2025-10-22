@@ -49,7 +49,7 @@ def verify_page(request: Request, email: str = ""):
 
 # --- Enviar código (web, vía <form>) ---
 @router.post("/register/email-code/web", include_in_schema=False)
-def send_code_web(email: str = Form(...), db: Session = Depends(get_db)):
+def send_code_web(email: str = Form(...), db= Depends(get_db)):
     email = email.strip().lower()
     user = db.query(User).filter(User.email.ilike(email)).first()
     if not user:
@@ -79,7 +79,7 @@ def send_code_web(email: str = Form(...), db: Session = Depends(get_db)):
 
 # --- Verificar código (web, vía <form>) ---
 @router.post("/auth/verify-email/web", include_in_schema=False)
-def verify_email_web(email: str = Form(...), code: str = Form(...), db: Session = Depends(get_db)):
+def verify_email_web(email: str = Form(...), code: str = Form(...), db= Depends(get_db)):
     email = email.strip().lower()
     code = code.strip()
     user = db.query(User).filter(User.email.ilike(email)).first()
