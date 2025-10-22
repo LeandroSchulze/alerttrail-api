@@ -1,7 +1,12 @@
 # app/routers/webhooks.py
 from __future__ import annotations
 
-import os, json, hmac, hashlib, re, datetime as dt
+import os
+import json
+import hmac
+import hashlib
+import re
+import datetime as dt
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request
@@ -16,14 +21,21 @@ from app.models import User
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
-MP_WEBHOOK_SECRET = os.getenv("MP_WEBHOOK_SECRET")  # opcional (HMAC compartido)
-PLAN_PRO_DAYS = int(os.getenv("PLAN_PRO_DAYS", "30"))
+# HMAC compartido opcional (si lo configurás en tu proxy o MP)
+MP_WEBHOOK_SECRET = (os.getenv("MP_WEBHOOK_SECRET") or "").strip()
+PLAN_PRO_DAYS = int(os.getenv("PLAN_PRO_DAYS", "30") or "30")
+
 
 def _ok(payload: dict) -> JSONResponse:
     return JSONResponse(payload, status_code=200)
 
+
 # ---------- Payments table helpers ----------
-def _ensure_payments_table(db: Session):
+def _ensure_payments_table(db: Session) -> None:
+    """
+    Crea la tabla 'payments' si no existe, compatible con SQLite y Postgres.
+    Evita fallar si ya existe (idempotente).
+    """
     eng = db.get_bind()
     dialect = getattr(eng.dialect, "name", "sqlite")
     if dialect == "sqlite":
@@ -72,6 +84,7 @@ def _ensure_payments_table(db: Session):
             db.execute(text(s))
     db.commit()
 
+
 def _upsert_payment(
     db: Session,
     *,
@@ -84,14 +97,14 @@ def _upsert_payment(
     external_reference: Optional[str],
     paid_at: Optional[str],
     raw: dict,
-):
+) -> None:
     _ensure_payments_table(db)
     now = dt.datetime.utcnow().isoformat()
     raw_json = json.dumps(raw, ensure_ascii=False)
 
-    # Intento UPDATE
     upd = db.execute(
-        text("""
+        text(
+            """
             UPDATE payments SET
                 user_id = COALESCE(:user_id, user_id),
                 email = COALESCE(:email, email),
@@ -103,7 +116,8 @@ def _upsert_payment(
                 raw = :raw,
                 updated_at = :now
             WHERE payment_id = :payment_id
-        """),
+            """
+        ),
         {
             "payment_id": payment_id,
             "user_id": user_id,
@@ -115,20 +129,21 @@ def _upsert_payment(
             "paid_at": paid_at,
             "raw": raw_json,
             "now": now,
-        }
+        },
     )
-    if upd.rowcount and upd.rowcount > 0:
+    if getattr(upd, "rowcount", 0) and upd.rowcount > 0:
         db.commit()
         return
 
-    # Si no existía, INSERT
     db.execute(
-        text("""
+        text(
+            """
             INSERT INTO payments
                 (payment_id, user_id, email, status, currency, amount, external_reference, paid_at, raw, created_at, updated_at)
             VALUES
                 (:payment_id, :user_id, :email, :status, :currency, :amount, :external_reference, :paid_at, :raw, :now, :now)
-        """),
+            """
+        ),
         {
             "payment_id": payment_id,
             "user_id": user_id,
@@ -140,9 +155,10 @@ def _upsert_payment(
             "paid_at": paid_at,
             "raw": raw_json,
             "now": now,
-        }
+        },
     )
     db.commit()
+
 
 # ---------- User resolution helpers ----------
 def _parse_user_from_external_reference(ext_ref: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
@@ -172,27 +188,36 @@ def _parse_user_from_external_reference(ext_ref: Optional[str]) -> Tuple[Optiona
             pass
     return (None, None)
 
+
 def _resolve_user(db: Session, user_id: Optional[int], email: Optional[str]) -> Optional[User]:
     if user_id:
-        u = db.query(User).get(user_id)
+        u = db.get(User, user_id)  # SQLAlchemy 2.x-friendly
         if u:
             return u
     if email:
         return db.query(User).filter(User.email.ilike(email)).first()
     return None
 
+
+def _secure_compare(a: str, b: str) -> bool:
+    try:
+        return hmac.compare_digest(a.encode(), b.encode())
+    except Exception:
+        return False
+
+
 # ---------- Webhook ----------
 @router.post("/mercadopago", response_class=JSONResponse)
 async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Webhook Mercado Pago:
-    - Verifica HMAC si MP_WEBHOOK_SECRET.
-    - Soporta 'payment' y 'merchant_order'; también query (?topic=payment&id=...).
-    - Lee el pago desde MP SDK; si 'approved' → activate_pro(user, days).
-    - Registra/actualiza el pago en la tabla 'payments'.
-    - Siempre responde 200.
+    Webhook Mercado Pago (idempotente):
+    - Verifica HMAC si MP_WEBHOOK_SECRET (header 'x-signature' o 'X-Webhook-Secret').
+    - Tolera múltiples formatos de MP: 'type/topic', 'action' (payment.*), query (?topic=payment&id=...).
+    - Lee el pago con SDK; si 'approved' → activate_pro(user, PLAN_PRO_DAYS).
+    - Registra/actualiza el pago en 'payments'.
+    - Siempre responde 200 (para evitar reintentos agresivos).
     """
-    # 1) payload
+    # 1) payload crudo
     body_bytes = await request.body()
     try:
         payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
@@ -201,24 +226,37 @@ async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
 
     # 2) firma opcional
     if MP_WEBHOOK_SECRET:
-        signature = request.headers.get("x-signature")
-        if not signature:
+        # Aceptamos dos variantes: firma directa del body o header compartido simple
+        signed = request.headers.get("x-signature") or ""
+        shared = request.headers.get("X-Webhook-Secret") or ""
+        if signed:
+            expected = hmac.new(MP_WEBHOOK_SECRET.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+            if not _secure_compare(expected, signed):
+                return _ok({"status": "invalid-signature"})
+        elif shared:
+            if not _secure_compare(MP_WEBHOOK_SECRET, shared):
+                return _ok({"status": "invalid-shared-secret"})
+        else:
             return _ok({"status": "missing-signature"})
-        expected = hmac.new(MP_WEBHOOK_SECRET.encode(), body_bytes, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
-            return _ok({"status": "invalid-signature"})
 
-    # 3) tipo e id
-    ntype = payload.get("type") or payload.get("topic")
-    data = payload.get("data", {}) or {}
+    # 3) detectar tipo e id
+    ntype = payload.get("type") or payload.get("topic") or ""
+    action = payload.get("action") or ""  # ej: "payment.created"
+    data = payload.get("data") or {}
     payment_id = data.get("id") or payload.get("resource")
+
+    # fallbacks por querystring (?topic=payment&id=...)
     if not ntype:
-        ntype = request.query_params.get("topic")
+        ntype = request.query_params.get("topic") or ""
     if not payment_id:
         payment_id = request.query_params.get("id")
 
-    if ntype in ("payment", "merchant_order") and payment_id:
-        # obtener pago
+    # Algunas integraciones envían 'action' sin 'type'
+    if not ntype and action.startswith("payment."):
+        ntype = "payment"
+
+    if ntype in {"payment", "merchant_order"} and payment_id:
+        # 4) obtener pago desde MP
         try:
             pinfo = sdk.payment().get(payment_id)
         except Exception as e:
@@ -231,10 +269,12 @@ async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
         payer = resp.get("payer") or {}
 
         # datos útiles
-        currency = resp.get("currency_id") or (resp.get("transaction_details") or {}).get("financial_institution")  # fallback raro
-        amount = resp.get("transaction_amount") or (resp.get("order") or {}).get("total_amount") or None
+        currency = resp.get("currency_id")
+        amount = resp.get("transaction_amount") or (resp.get("order") or {}).get("total_amount")
         paid_at = resp.get("date_approved") or resp.get("money_release_date")
         email = metadata.get("email") or payer.get("email")
+
+        # user hints
         meta_uid = metadata.get("user_id")
         try:
             meta_uid = int(meta_uid) if meta_uid is not None else None
@@ -246,16 +286,16 @@ async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
         candidate_uid = meta_uid or uid_ext
         user = _resolve_user(db, user_id=candidate_uid, email=candidate_email)
 
-        # activar PRO si aprobado
+        # 5) activar PRO si aprobado
         approved = (status == "approved")
         if approved and user:
             try:
                 activate_pro(db, user_id=user.id, payment_id=str(payment_id), days=PLAN_PRO_DAYS)
             except Exception as e:
-                # Seguimos, igual registramos el pago
+                # Log suave; igual registramos el pago
                 print("[webhooks] activate_pro error:", e)
 
-        # registrar/actualizar pago
+        # 6) registrar/actualizar pago
         try:
             _upsert_payment(
                 db,
@@ -272,13 +312,15 @@ async def mercadopago_webhook(request: Request, db: Session = Depends(get_db)):
         except Exception as e:
             print("[webhooks] upsert_payment error:", e)
 
-        return _ok({
-            "status": "ok",
-            "approved": approved,
-            "user_found": bool(user),
-            "user_id": getattr(user, "id", None) if user else None,
-            "email": getattr(user, "email", None) if user else candidate_email,
-            "payment_id": str(payment_id),
-        })
+        return _ok(
+            {
+                "status": "ok",
+                "approved": approved,
+                "user_found": bool(user),
+                "user_id": (user.id if user else None),
+                "email": (user.email if user else candidate_email),
+                "payment_id": str(payment_id),
+            }
+        )
 
     return _ok({"status": "ignored"})
