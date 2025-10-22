@@ -1,4 +1,3 @@
-# app/routers/__init__.py
 """
 Paquete de routers de AlertTrail.
 
@@ -31,4 +30,3 @@ def __getattr__(name):
     if name in __all__:
         return import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
