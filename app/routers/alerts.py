@@ -141,7 +141,7 @@ def create_alert(
 
 # 3) unread-count
 @router.get("/unread-count")
-def unread_count(request: Request, db: Session = Depends(get_db)):
+def unread_count(request: Request, db= Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
@@ -151,7 +151,7 @@ def unread_count(request: Request, db: Session = Depends(get_db)):
 
 # 4) Página HTML del Centro de Alertas
 @router.get("", response_class=HTMLResponse)
-def alerts_page(request: Request, db: Session = Depends(get_db)):
+def alerts_page(request: Request, db= Depends(get_db)):
     # Sólo para asegurar columnas si cae aquí primero
     _ensure_mail_alerts_auth_columns(db)
     user = get_current_user_cookie(request, db)
@@ -168,7 +168,7 @@ def alerts_list(
     status: Optional[str] = Query(None, description="pending|ack"),
     days: Optional[int] = Query(7, description="últimos N días"),
     limit: int = Query(500, ge=1, le=1000),
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
 ):
     user = get_current_user_cookie(request, db)
     if not user:
@@ -284,7 +284,7 @@ def push_alert(
     score: int = Query(0),
     link: str = Query("/mail/scanner"),
     ext_key: Optional[str] = Query(None, description="Idempotency key (opcional)"),
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
 ):
     token = request.headers.get("x-alert-push-token", "")
     if ALERT_PUSH_TOKEN and token != ALERT_PUSH_TOKEN:
@@ -334,7 +334,7 @@ def push_alert(
 
 # 7) pending (usa _uid)
 @router.get("/pending", response_class=JSONResponse)
-def pending_alert(db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
+def pending_alert(db= Depends(get_db), user=Depends(get_current_user_cookie)):
     uid = _uid(user)
     if not uid:
         return JSONResponse({"ok": False, "reason": "unauthorized"}, status_code=401)
@@ -374,7 +374,7 @@ def pending_alert(db: Session = Depends(get_db), user=Depends(get_current_user_c
 
 # 8) ACK (usa _uid)
 @router.post("/{alert_id}/ack", response_class=JSONResponse)
-def ack_alert(alert_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
+def ack_alert(alert_id: int, db= Depends(get_db), user=Depends(get_current_user_cookie)):
     uid = _uid(user)
     if not uid:
         return JSONResponse({"ok": False, "reason": "unauthorized"}, status_code=401)
