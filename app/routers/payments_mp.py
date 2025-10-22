@@ -177,7 +177,7 @@ def _finalize_successful_payment(
 # --------- Public routes ---------
 
 @router.post("/webhook", include_in_schema=False)
-async def mp_webhook(request: Request, db: Session = Depends(get_db)):
+async def mp_webhook(request: Request, db = Depends(get_db)):  # <- sin type hint en dep
     """
     Webhook de Mercado Pago (notificaciones).
     Verifica (opcionalmente) la firma y procesa payments aprobados.
@@ -228,7 +228,7 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db)):
                 meta = payment.get("metadata") or {}
                 plan = (meta.get("plan") or "pro").lower()
                 period = (meta.get("period") or "monthly").lower()
-                ph = _finalize_successful_payment(
+                _finalize_successful_payment(
                     db, user=user, payment=payment, plan=plan, period=period, origin="webhook"
                 )
                 _mark_event_processed(db, ev)
@@ -268,8 +268,8 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db)):
 def start_checkout(
     plan: str = Query("pro", pattern="^(?i:pro)$", description="Solo PRO de momento"),
     period: str = Query("monthly", pattern="^(?i:monthly|yearly|trial)$"),
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user_cookie),
+    db = Depends(get_db),                               # <- sin type hint en dep
+    user = Depends(get_current_user_cookie),            # <- sin type hint en dep
 ):
     """
     Crea una preferencia de Mercado Pago y devuelve la URL de pago.
