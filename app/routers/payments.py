@@ -1,5 +1,6 @@
 # app/routers/payments.py
-# --- Updated: adds webhook handler, shared sync logic, and optional sync on return page ---
+# --- Updated: webhook signature (optional), robust MP calls, idempotent sync/activate ---
+
 import os
 import json
 import uuid
@@ -20,6 +21,9 @@ router = APIRouter()
 
 # ====== Config / Env ======
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+MP_WEBHOOK_SECRET = (os.getenv("MP_WEBHOOK_SECRET") or "").strip()
+
+REQ_TIMEOUT = int(os.getenv("MP_REQ_TIMEOUT_SEC", "25"))
 
 def _require_mp_token():
     if not MP_ACCESS_TOKEN:
@@ -27,6 +31,13 @@ def _require_mp_token():
 
 def _mp_headers():
     return {"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Content-Type": "application/json"}
+
+def _secure_compare(a: str, b: str) -> bool:
+    try:
+        import hmac
+        return hmac.compare_digest(a.encode(), b.encode())
+    except Exception:
+        return False
 
 # ====== Precio / moneda ======
 def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
@@ -47,7 +58,6 @@ def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
     plan_norm  = (plan or "PRO").upper()
 
     if plan_norm == "BIZ":
-        # Se cobran extras recién por arriba de los asientos incluidos
         total_seats = max(int(seats or included), 1)
         extras = max(0, total_seats - included)
         amount = biz_base + extras * biz_extra
@@ -91,7 +101,6 @@ def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reas
     """
     Crea el payload para /preapproval (suscripción).
     """
-    # Mercado Pago usa "currency_id" y "transaction_amount" dentro de "auto_recurring"
     return {
         "payer_email": payer_email,
         "auto_recurring": {
@@ -108,26 +117,32 @@ def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reas
 
 def _mp_get_preapproval(preapproval_id: str) -> dict:
     url = f"https://api.mercadopago.com/preapproval/{preapproval_id}"
-    r = requests.get(url, headers=_mp_headers(), timeout=20)
+    try:
+        r = requests.get(url, headers=_mp_headers(), timeout=REQ_TIMEOUT)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"MP GET preapproval error: {e}")
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"MP GET preapproval error {r.status_code}: {r.text}")
     return r.json()
 
 def _mp_update_preapproval(preapproval_id: str, payload: dict) -> dict:
     url = f"https://api.mercadopago.com/preapproval/{preapproval_id}"
-    r = requests.put(url, headers=_mp_headers(), data=json.dumps(payload), timeout=20)
+    try:
+        r = requests.put(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"MP PUT preapproval error: {e}")
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"MP PUT preapproval error {r.status_code}: {r.text}")
     return r.json()
 
 # ====== Persistencia local y activación de plan ======
-def _upsert_subscription(db: Session, *, user_id: int, preapproval_id: str, data: dict, plan: Optional[str] = None, seats: Optional[int] = None):
+def _upsert_subscription(db: Session, *, user_id: Optional[int], preapproval_id: str, data: dict, plan: Optional[str] = None, seats: Optional[int] = None):
     status_mp = (data.get("status") or "").lower()
     next_payment_date = (data.get("auto_recurring") or {}).get("next_payment_date") or ""
     currency = (data.get("auto_recurring") or {}).get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper()
     amount = (data.get("auto_recurring") or {}).get("transaction_amount") or 0
     plan_final = (plan or data.get("reason") or "PRO").upper()
-    # Normalización de plan si viene en reason:
+
     if "BIZ" in plan_final.upper():
         plan_final = "BIZ"
     elif "PRO" in plan_final.upper():
@@ -149,6 +164,8 @@ def _upsert_subscription(db: Session, *, user_id: int, preapproval_id: str, data
         sub.next_payment_date = next_payment_date
         sub.raw = json.dumps(data, ensure_ascii=False)
         sub.updated_at = datetime.now(timezone.utc)
+        if user_id is not None and not sub.user_id:
+            sub.user_id = user_id
     else:
         try:
             amt = int(round(float(amount)))
@@ -179,32 +196,34 @@ def _activate_user_plan_if_authorized(db: Session, *, sub: Subscription):
     if (sub.status or "").lower() == "authorized" and sub.user_id:
         u = db.query(User).get(sub.user_id)
         if u:
-            u.plan = (sub.plan or "PRO").upper()
+            if hasattr(u, "plan"):
+                u.plan = (sub.plan or "PRO").upper()
+            if hasattr(u, "is_pro"):
+                try:
+                    setattr(u, "is_pro", u.plan.upper() == "PRO" if hasattr(u, "plan") else True)
+                except Exception:
+                    setattr(u, "is_pro", True)
             # Intento tolerante de setear pro_expires_at si existe en el modelo:
             if hasattr(u, "pro_expires_at") and sub.next_payment_date:
                 iso = str(sub.next_payment_date)
-                dt = None
                 try:
-                    # Soporta 'YYYY-MM-DDTHH:MM:SS.sss±HH:MM' o similares
-                    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                    u.pro_expires_at = datetime.fromisoformat(iso.replace("Z", "+00:00"))
                 except Exception:
-                    # Fallback: ignorar si no parsea
-                    dt = None
-                if dt:
-                    u.pro_expires_at = dt
-            # Actualiza updated_at si el modelo lo tiene
+                    pass
             if hasattr(u, "updated_at"):
                 u.updated_at = datetime.now(timezone.utc)
             db.commit()
 
 def _sync_preapproval(db: Session, *, preapproval_id: str) -> dict:
     detail = _mp_get_preapproval(preapproval_id)
-    # Buscar user_id desde DB si ya existe el registro
+
+    # Resolver user_id:
     existing = db.query(Subscription).filter(Subscription.preapproval_id == preapproval_id).first()
     user_id = existing.user_id if existing else None
+
     sub = _upsert_subscription(
         db,
-        user_id=user_id if user_id is not None else (existing.user_id if existing else None),
+        user_id=user_id,
         preapproval_id=preapproval_id,
         data=detail,
         plan=(existing.plan if existing else None),
@@ -215,6 +234,7 @@ def _sync_preapproval(db: Session, *, preapproval_id: str) -> dict:
         "ok": True,
         "status": (detail.get("status") or "").lower(),
         "next_payment_date": (detail.get("auto_recurring") or {}).get("next_payment_date") or "",
+        "preapproval_id": preapproval_id,
     }
 
 # ====== Endpoints ======
@@ -248,7 +268,10 @@ def payments_subscribe(
         external_ref=external_ref,
     )
     url = "https://api.mercadopago.com/preapproval"
-    r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=25)
+    try:
+        r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"MP preapproval error {r.status_code}: {r.text}")
 
@@ -301,8 +324,15 @@ async def payments_webhook(request: Request, db: Session = Depends(get_db)):
       - body: {"type":"preapproval", "action":"status", "data":{"id":"<preapproval_id>"}, ...}
     o query params: ?type=preapproval&id=<preapproval_id>&topic=preapproval
     Este endpoint sincroniza la suscripción local y activa el plan si corresponde.
+    Si seteaste MP_WEBHOOK_SECRET, se valida contra el header `X-Webhook-Secret`.
     """
     _require_mp_token()
+
+    if MP_WEBHOOK_SECRET:
+        provided = request.headers.get("X-Webhook-Secret", "")
+        if not _secure_compare(MP_WEBHOOK_SECRET, provided):
+            # Respondemos 200 para evitar reintentos infinitos, pero marcamos error.
+            return JSONResponse({"ok": False, "error": "firma inválida"}, status_code=200)
 
     preapproval_id = None
     topic = None
@@ -325,14 +355,11 @@ async def payments_webhook(request: Request, db: Session = Depends(get_db)):
         topic = qp.get("topic") or qp.get("type") or topic
 
     if not preapproval_id:
-        # No podemos sincronizar sin ID
         return JSONResponse({"ok": False, "ignored": True, "reason": "sin id"}, status_code=200)
 
-    # Hacer sync y activar si corresponde
     try:
         result = _sync_preapproval(db, preapproval_id=preapproval_id)
     except HTTPException as he:
-        # Respondemos 200 para que MP no reintente eternamente si hay datos inconsistentes
         return JSONResponse({"ok": False, "error": he.detail}, status_code=200)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
