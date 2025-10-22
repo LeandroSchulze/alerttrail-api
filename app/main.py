@@ -468,7 +468,7 @@ from fastapi.responses import HTMLResponse as _HTMLResponse
 async def http_exc_handler(request: Request, exc: HTTPException):
     accept = (request.headers.get("accept") or "")
     wants_html = "text/html" in accept
-    if exc.status_code == 401 && wants_html:
+    if exc.status_code == 401 and wants_html:
         path = request.url.path or ""
         if not path.startswith("/auth"):
             return RedirectResponse(url="/auth/login", status_code=302)
