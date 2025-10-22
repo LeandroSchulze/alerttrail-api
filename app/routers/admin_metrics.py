@@ -36,7 +36,7 @@ def _is_business_domain(email: str) -> bool:
     return dom and dom not in FREE_EMAIL_DOMAINS
 
 @router.get("/metrics")
-def admin_metrics(request: Request, db: Session = Depends(get_db)):
+def admin_metrics(request: Request, db= Depends(get_db)):
     user = get_current_user_cookie(request, db)
     if not user or not bool(getattr(user, "is_admin", False)):
         raise HTTPException(status_code=403, detail="forbidden")
@@ -72,7 +72,7 @@ def admin_metrics(request: Request, db: Session = Depends(get_db)):
     }
 
 @router.get("/metrics/extended")
-def admin_metrics_extended(request: Request, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def admin_metrics_extended(request: Request, db= Depends(get_db)) -> Dict[str, Any]:
     user = get_current_user_cookie(request, db)
     if not user or not bool(getattr(user, "is_admin", False)):
         raise HTTPException(status_code=403, detail="forbidden")
