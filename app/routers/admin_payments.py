@@ -1,12 +1,11 @@
 # app/routers/admin_payments.py
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any, Annotated
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
 from app.database import get_db
@@ -15,9 +14,6 @@ from app.deps.admin_guard import require_admin
 
 router = APIRouter(prefix="/admin/payments", tags=["admin-payments"])
 
-DbDep = Annotated[Session, Depends(get_db)]
-AdminDep = Annotated[object, Depends(require_admin)]
-
 def _discover_pro_expiry_attr() -> str:
     return "pro_expires_at"
 
@@ -25,14 +21,17 @@ def _now_utc():
     return datetime.now(timezone.utc)
 
 @router.get("", response_class=HTMLResponse, response_model=None)
-def admin_payments_page(request: Request, admin: AdminDep):
+def admin_payments_page(request: Request, admin = Depends(require_admin)):
     return request.app.state.templates.TemplateResponse(
         "admin_payments.html",
         {"request": request, "page_title": "Pagos | Admin"},
     )
 
 @router.get("/metrics", response_model=None)
-def payments_metrics(db: DbDep, admin: AdminDep):
+def payments_metrics(
+    db = Depends(get_db),
+    admin = Depends(require_admin),
+):
     now = _now_utc()
     days_30 = now - timedelta(days=30)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -102,8 +101,8 @@ def payments_metrics(db: DbDep, admin: AdminDep):
 
 @router.get("/list", response_model=None)
 def payments_list(
-    db: DbDep,
-    admin: AdminDep,
+    db = Depends(get_db),
+    admin = Depends(require_admin),
     email: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="approved|authorized|pending|rejected|refunded|cancelled"),
     provider: Optional[str] = Query(None, description="mercado_pago|internal|stripe|..."),
@@ -123,7 +122,7 @@ def payments_list(
     if provider:
         q = q.filter(func.lower(PaymentHistory.provider) == provider.strip().lower())
 
-    def _parse_date(s: str) -> Optional[datetime]:
+    def _parse_date(s: str):
         try:
             if len(s) == 10 and s[4] == "-" and s[7] == "-":
                 return datetime.fromisoformat(s + "T00:00:00+00:00")
