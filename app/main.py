@@ -6,6 +6,7 @@
 import os, re
 from pathlib import Path
 from importlib import import_module
+
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,10 +16,6 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-from app.routers import billing_ui, payments_history
-app.include_router(billing_ui.router)
-app.include_router(payments_history.router)  # si no lo tenías ya
-
 
 from app.database import SessionLocal
 from app.security import (
@@ -26,7 +23,7 @@ from app.security import (
     clear_access_cookie, decode_token, COOKIE_NAME,
 )
 
-# === Crear la app ANTES de agregar middlewares ===
+# === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
@@ -471,7 +468,7 @@ from fastapi.responses import HTMLResponse as _HTMLResponse
 async def http_exc_handler(request: Request, exc: HTTPException):
     accept = (request.headers.get("accept") or "")
     wants_html = "text/html" in accept
-    if exc.status_code == 401 and wants_html:
+    if exc.status_code == 401 && wants_html:
         path = request.url.path or ""
         if not path.startswith("/auth"):
             return RedirectResponse(url="/auth/login", status_code=302)
@@ -502,4 +499,3 @@ def head_root(): return Response(status_code=200)
 def _log_routes():
     paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
     print("\n=== ROUTES ==="); [print(p) for p in paths]; print("==============\n")
-
