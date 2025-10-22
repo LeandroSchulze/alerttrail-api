@@ -21,7 +21,7 @@ def _ip_on() -> bool:
 # ----- guards públicos -----
 def require_pro(
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
 ) -> int:
     user = db.query(User).get(user_id)
     if not user or not _is_paid(user):
@@ -30,7 +30,7 @@ def require_pro(
 
 def require_admin(
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
 ) -> int:
     user = db.query(User).get(user_id)
     if not user or user.role != "admin":
@@ -40,7 +40,7 @@ def require_admin(
 def require_ip_allowed(
     request: Request,
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
 ) -> int:
     if not _ip_on():
         return user_id
