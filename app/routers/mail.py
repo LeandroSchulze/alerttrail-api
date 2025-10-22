@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
 from app.database import get_db
 from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse, response_model=None)
 def mail_index(request: Request, db = Depends(get_db), user = Depends(get_current_user_cookie)):
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
@@ -22,7 +21,7 @@ def mail_index(request: Request, db = Depends(get_db), user = Depends(get_curren
     """
     return HTMLResponse(html)
 
-@router.post("/add")
+@router.post("/add", response_model=None)
 def add_mail_account(email: str = Form(...), db = Depends(get_db), user = Depends(get_current_user_cookie)):
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
