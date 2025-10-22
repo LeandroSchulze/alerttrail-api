@@ -22,17 +22,20 @@ from app.security import (
     clear_access_cookie, decode_token, COOKIE_NAME,
 )
 
+# === Crear la app ANTES de agregar middlewares ===
+app = FastAPI(title="AlertTrail API", version="1.0.0")
+DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
+
 # -------- Security Headers Middleware --------
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from fastapi import Response
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
 
     async def dispatch(self, request, call_next):
-        resp: Response = await call_next(request)
+        resp = await call_next(request)
         # Cabeceras de seguridad recomendadas
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -42,13 +45,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:")
         # Permissions-Policy básica (ajustá según features que uses)
         resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # HSTS solo bajo HTTPS (Render envía x-forwarded-proto)
+        if (request.url.scheme == "https") or (request.headers.get("x-forwarded-proto") == "https"):
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
         return resp
 
 app.add_middleware(SecurityHeadersMiddleware)
-
-
-app = FastAPI(title="AlertTrail API", version="1.0.0")
-DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
 # ---- DB hotfix temprano ----
 try:
@@ -144,26 +146,13 @@ async def force_www(request: Request, call_next):
 @app.middleware("http")
 async def redirect_auth_register_mw(request: Request, call_next):
     path = request.url.path.rstrip("/")
+    ctype = (request.headers.get("content-type") or "").lower()
     if path == "/auth/register":
-        ctype = (request.headers.get("content-type") or "").lower()
         if request.method == "GET":
             return RedirectResponse("/register", status_code=302)
         if request.method in ("POST", "PUT", "PATCH") and not ctype.startswith("application/json"):
             return RedirectResponse("/register", status_code=307)
     return await call_next(request)
-
-# --- Security headers (básicos y seguros) ---
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    resp = await call_next(request)
-    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    resp.headers.setdefault("Permissions-Policy",
-                            "geolocation=(), microphone=(), camera=(), payment=(self)")
-    if (request.url.scheme == "https") or (request.headers.get("x-forwarded-proto") == "https"):
-        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-    return resp
 
 # --- Guard de expiración PRO (liviano) ---
 from app.database import SessionLocal as _GuardSessionLocal
@@ -203,7 +192,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if os.getenv("CORS_ALLOW_ORIGINS") else ["https://www.alerttrail.com"],
+        allow_origins=[x.strip() for x in (os.getenv("CORS_ALLOW_ORIGINS", "")).split(",") if x.strip()] or ["https://www.alerttrail.com"],
         allow_credentials=True,
         allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
         allow_headers=["*"],
@@ -305,7 +294,6 @@ def _favicon_alias():
         return FileResponse(path, media_type="image/x-icon")
     # Si no existe, devolvemos 204 para no ensuciar logs
     return Response(status_code=204)
-
 
 
 # ---- Home/Login/Dashboard (igual a tu versión con fallback) ----
