@@ -22,6 +22,31 @@ from app.security import (
     clear_access_cookie, decode_token, COOKIE_NAME,
 )
 
+# -------- Security Headers Middleware --------
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
+from fastapi import Response
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+
+    async def dispatch(self, request, call_next):
+        resp: Response = await call_next(request)
+        # Cabeceras de seguridad recomendadas
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        # CSP mínima; ajustá fonts/scripts si tu front los necesita
+        resp.headers.setdefault("Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:")
+        # Permissions-Policy básica (ajustá según features que uses)
+        resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        return resp
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
