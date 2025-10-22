@@ -5,15 +5,16 @@ import base64
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Annotated
 
 import jwt
-from fastapi import HTTPException, status, Request
+from fastapi import HTTPException, status, Request, Depends
 from fastapi.responses import Response
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.models import User
+from app.database import get_db
 
 # ================== Config ==================
 JWT_SECRET = os.getenv("JWT_SECRET") or None
@@ -96,7 +97,10 @@ def decode_token(token: str) -> Dict[str, Any]:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
-def get_current_user_cookie(request: Request, db: Session) -> User:
+def get_current_user_cookie(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta token")
@@ -104,7 +108,7 @@ def get_current_user_cookie(request: Request, db: Session) -> User:
     uid = data.get("user_id") or data.get("uid") or data.get("sub")
     if uid is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sin sujeto")
-    user = db.query(User).get(int(uid))
+    user = db.get(User, int(uid))  # SQLAlchemy 2.x friendly
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
     return user
