@@ -16,7 +16,7 @@ class LoginIn(BaseModel):
     password: str
 
 @router.post("/auth/login")
-def login_api(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
+def login_api(payload: LoginIn, response: Response, db= Depends(get_db)):
     email = payload.email.strip().lower()
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(payload.password, user.password or ""):
@@ -31,7 +31,7 @@ def login_api(payload: LoginIn, response: Response, db: Session = Depends(get_db
 def login_web(response: Response,
               email: str = Form(...),
               password: str = Form(...),
-              db: Session = Depends(get_db)):
+              db= Depends(get_db)):
     em = email.strip().lower()
     user = db.query(User).filter(User.email == em).first()
     if not user or not verify_password(password, user.password or ""):
