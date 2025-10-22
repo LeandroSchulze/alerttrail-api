@@ -19,6 +19,14 @@
     .btn-outline:hover{background:#111827;color:#fff}
     input[name="coupon"]{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;margin-right:8px}
     .msg{margin-top:10px;color:#6b7280}
+    .badge{display:inline-flex;align-items:center;border-radius:999px;padding:6px 10px;font-weight:600;font-size:.85rem}
+    .badge-free{background:#f3f4f6;color:#111827}
+    .badge-pro{background:#d1fae5;color:#065f46}
+    .muted{color:#6b7280}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #f3f4f6}
+    .right{text-align:right}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
   </style>
 </head>
 <body>
@@ -28,18 +36,28 @@
 </header>
 
 <main class="container">
+  <!-- ESTADO -->
   <div class="card">
-    <h1>Estado actual</h1>
-    <p><b>Plan:</b> {{ user.plan }}</p>
-    {% if days_left is not none %}
-      <p><b>Expira en:</b> {{ days_left }} día(s)</p>
-    {% endif %}
+    <h1 style="margin:0 0 10px 0;">Estado actual</h1>
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+      <div>
+        <div id="planBadge" class="badge badge-free">Cargando…</div>
+        <div id="expiryInfo" class="muted" style="margin-top:6px"></div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnMonthly">Activar PRO (Mensual)</button>
+        <button class="btn" id="btnYearly">Activar PRO (Anual)</button>
+        <button class="btn-outline" id="btnTrial">Probar 5 días (Trial)</button>
+        <button class="btn-outline" id="btnRefresh">Actualizar</button>
+      </div>
+    </div>
   </div>
 
+  <!-- PLANES -->
   <div class="grid" style="margin-top:16px">
     <!-- PLAN PRO -->
     <div class="tile">
-      <h2>PRO</h2>
+      <h2 style="margin:0 0 8px 0;">PRO</h2>
       <p><b>USD {{ '%0.2f'|format(price_month) }}/mes</b></p>
       <p>Anual: <b>USD {{ price_year }}</b> ({{ disc_pct }}% OFF)</p>
 
@@ -49,22 +67,19 @@
         <button type="submit" class="btn-outline">Activar PRO (cupón)</button>
       </form>
 
-      <!-- Pago con Mercado Pago -->
-      <div style="margin-top:10px">
-        <button class="btn" id="buyMpMonthly">Comprar PRO (Mensual) con Mercado Pago</button>
+      <!-- Pago con Mercado Pago (nuevo flujo unificado) -->
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="buyMpMonthly">Comprar PRO Mensual (MP)</button>
+        <button class="btn" id="buyMpYearly">Comprar PRO Anual (MP)</button>
       </div>
-      <!-- Si querés anual vía MP, podrías agregar otro botón y un endpoint opcional -->
-      <!-- <div style="margin-top:8px">
-        <button class="btn" id="buyMpYearly">Comprar PRO (Anual) con Mercado Pago</button>
-      </div> -->
 
       <div id="msgPro" class="msg"></div>
-      <p class="hint">Trial PRO 5 días para cuentas nuevas. Cupón opcional (ENV).</p>
+      <p class="hint">También podés activar un Trial PRO de 5 días si es tu primera vez.</p>
     </div>
 
-    <!-- PLAN BUSINESS -->
+    <!-- PLAN BUSINESS (placeholder v1) -->
     <div class="tile">
-      <h2>Business (Empresa)</h2>
+      <h2 style="margin:0 0 8px 0;">Business (Empresa)</h2>
       <p><b>USD {{ biz_price }}/mes</b> — incluye <b>{{ biz_included }}</b> cuentas.</p>
       <p>Asiento extra: <b>USD {{ '%0.2f'|format(biz_extra) }}</b>/mes</p>
       <p>Anual: <b>USD {{ biz_year }}</b> ({{ biz_disc }}% OFF)</p>
@@ -73,52 +88,186 @@
         <button type="submit" class="btn-outline">Activar Business</button>
       </form>
 
-      <!-- Si más adelante querés Business con MP, podés crear otro endpoint /billing/mp/checkout?plan=business -->
       <div id="msgBiz" class="msg"></div>
-      <p class="hint">Activa Business y luego agrega miembros desde soporte (v1 manual).</p>
+      <p class="hint">En v1 la gestión de miembros es manual. Próximamente flujo de suscripciones.</p>
     </div>
 
     <!-- VOLVER A FREE -->
     <div class="tile">
-      <h2>↩️ Volver a FREE</h2>
-      <p>Cancelar PRO/Business y volver a FREE (se reestablece el trial).</p>
+      <h2 style="margin:0 0 8px 0;">↩️ Volver a FREE</h2>
+      <p>Cancelar PRO/Business y volver a FREE.</p>
       <form method="post" action="/billing/cancel">
         <button type="submit" class="btn-outline">Volver a FREE</button>
       </form>
+      <p class="hint">Al volver a FREE, el acceso PRO se desactiva al vencer tu período.</p>
+    </div>
+  </div>
+
+  <!-- HISTORIAL -->
+  <div class="card" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Historial de pagos</h2>
+      <button class="btn-outline" id="btnReloadHistory">Actualizar historial</button>
+    </div>
+    <div style="overflow:auto;margin-top:10px">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Descripción</th>
+            <th>Monto</th>
+            <th>Estado</th>
+            <th>Vence</th>
+            <th>Origen</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td class="muted" colspan="6">Cargando…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </main>
 
 <script>
-async function mpCheckout(msgEl, planVariant){
-  // planVariant reservado por si agregás anual u otros planes via query (ej: ?variant=yearly)
-  msgEl.textContent = "Creando orden...";
+/**
+ * Versión actualizada para integrarse con:
+ *  - GET /billing/me           -> estado de plan
+ *  - GET /billing/history      -> historial
+ *  - GET /payments/checkout    -> crea preferencia (monthly/yearly/trial)
+ * El webhook de MP hace el alta real del PRO al aprobar el pago.
+ */
+
+function money(amount_cents, currency){
+  const v=(amount_cents||0)/100.0;
+  try{ return new Intl.NumberFormat(undefined,{style:'currency',currency:currency||'USD'}).format(v); }
+  catch(_){ return (v.toFixed(2)+' '+(currency||'USD')); }
+}
+function fmtDate(iso){
+  if(!iso) return '-';
+  const d=new Date(iso);
+  return d.toLocaleString();
+}
+
+const planBadge = document.getElementById('planBadge');
+const expiryInfo = document.getElementById('expiryInfo');
+const msgPro = document.getElementById('msgPro');
+const msgBiz = document.getElementById('msgBiz');
+const historyBody = document.getElementById('historyBody');
+
+async function loadStatus(){
   try{
-    const url = planVariant ? `/billing/mp/checkout?variant=${encodeURIComponent(planVariant)}` : '/billing/mp/checkout';
-    const r = await fetch(url, {method:'POST', credentials:'include'});
-    if(!r.ok){
-      msgEl.textContent = "Error creando la orden de pago.";
-      return;
-    }
-    const d = await r.json();
-    if(d.checkout_url){
-      window.location.href = d.checkout_url; // redirige a MP
+    const r = await fetch('/billing/me', {credentials:'include'});
+    const j = await r.json();
+    if(!j.ok) throw new Error('status not ok');
+
+    const isPro = !!j.is_pro;
+    const plan = (j.plan || 'FREE').toUpperCase();
+
+    planBadge.textContent = isPro ? 'PRO' : plan;
+    planBadge.className = 'badge ' + (isPro ? 'badge-pro' : 'badge-free');
+
+    if(j.pro_expires_at){
+      expiryInfo.textContent = 'Activo hasta ' + fmtDate(j.pro_expires_at) +
+        ` — quedan ${j.remaining_days ?? 0}d ${j.remaining_hours ?? 0}h`;
     }else{
-      msgEl.textContent = "No se recibió URL de pago.";
+      expiryInfo.textContent = isPro ? '' : 'Sin PRO activo';
     }
   }catch(e){
-    msgEl.textContent = "Error de red creando la orden.";
+    planBadge.textContent = 'Error';
+    planBadge.className = 'badge badge-free';
+    expiryInfo.textContent = '';
+    console.error(e);
   }
 }
 
-document.getElementById('buyMpMonthly').addEventListener('click', () => {
-  mpCheckout(document.getElementById('msgPro'), 'monthly');
-});
+async function loadHistory(){
+  try{
+    const r = await fetch('/billing/history?limit=100', {credentials:'include'});
+    const j = await r.json();
+    if(!j.ok) throw new Error('history not ok');
+    const items = j.items || [];
+    historyBody.innerHTML = '';
 
-// Si habilitás anual por MP, descomentá esto y el botón correspondiente arriba
-// document.getElementById('buyMpYearly').addEventListener('click', () => {
-//   mpCheckout(document.getElementById('msgPro'), 'yearly');
-// });
+    if(items.length===0){
+      historyBody.innerHTML = '<tr><td class="muted" colspan="6">No hay pagos registrados.</td></tr>';
+      return;
+    }
+
+    for(const it of items){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${fmtDate(it.created_at)}</td>
+        <td>${it.description || '-'}</td>
+        <td>${money(it.amount_cents, it.currency)}</td>
+        <td>${(it.status||'').toUpperCase()}</td>
+        <td>${fmtDate(it.expires_at)}</td>
+        <td>${it.origin || '-'}</td>
+      `;
+      historyBody.appendChild(tr);
+    }
+  }catch(e){
+    historyBody.innerHTML = '<tr><td class="muted" colspan="6">Error al cargar el historial.</td></tr>';
+    console.error(e);
+  }
+}
+
+async function startCheckout(period){
+  try{
+    msgPro.textContent = period==='trial' ? 'Activando trial…' : 'Creando orden…';
+    const url = `/payments/checkout?plan=pro&period=${encodeURIComponent(period)}`;
+    const r = await fetch(url, {credentials:'include'});
+    const j = await r.json();
+
+    if(period==='trial'){
+      if(j.ok && j.trial_activated){
+        msgPro.textContent = 'Trial PRO activado ✔';
+        await loadStatus();
+        await loadHistory();
+        return;
+      }
+      msgPro.textContent = 'No se pudo activar el trial.';
+      return;
+    }
+
+    const init = j.init_point;
+    if(j.ok && init){
+      window.location.href = init; // redirige a Mercado Pago
+    }else{
+      msgPro.textContent = 'No se pudo iniciar el checkout.';
+    }
+  }catch(e){
+    console.error(e);
+    msgPro.textContent = 'Error iniciando checkout.';
+  }
+}
+
+// Botones principales (estado)
+document.getElementById('btnMonthly').addEventListener('click', ()=> startCheckout('monthly'));
+document.getElementById('btnYearly').addEventListener('click', ()=> startCheckout('yearly'));
+document.getElementById('btnTrial').addEventListener('click', ()=> startCheckout('trial'));
+document.getElementById('btnRefresh').addEventListener('click', async ()=>{ await loadStatus(); await loadHistory(); });
+
+// Botones dentro de tarjeta PRO (compatibilidad visual)
+document.getElementById('buyMpMonthly').addEventListener('click', ()=> startCheckout('monthly'));
+document.getElementById('buyMpYearly').addEventListener('click', ()=> startCheckout('yearly'));
+
+// Carga inicial
+(async function(){
+  await loadStatus();
+  await loadHistory();
+
+  // Si MP devuelve /payments/return?status=success|failure|pending
+  const params = new URLSearchParams(location.search);
+  const pstatus = params.get('payment_status') || params.get('status');
+  if(pstatus){
+    if(pstatus === 'success'){ msgPro.textContent = 'Pago aprobado. Actualizando estado…'; }
+    else if(pstatus === 'pending'){ msgPro.textContent = 'Pago pendiente. Se activará al aprobarse.'; }
+    else if(pstatus === 'failure'){ msgPro.textContent = 'Pago fallido o cancelado.'; }
+    // refrescamos por si el webhook ya corrió
+    setTimeout(async ()=>{ await loadStatus(); await loadHistory(); }, 1200);
+  }
+})();
 </script>
 </body>
 </html>
