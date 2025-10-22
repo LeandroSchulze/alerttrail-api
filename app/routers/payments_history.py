@@ -1,7 +1,7 @@
 # app/routers/payments_history.py
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Annotated
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -12,6 +12,9 @@ from app.models import PaymentHistory, User
 from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+DbDep = Annotated[Session, Depends(get_db)]
+UserDep = Annotated[User, Depends(get_current_user_cookie)]
 
 def _safe_currency(code: Optional[str]) -> str:
     if not code:
@@ -24,13 +27,10 @@ def _discover_pro_expiry(user: User) -> Optional[datetime]:
             return getattr(user, candidate)
     return None
 
-@router.get("/me")
+@router.get("/me", response_model=None)
 def my_billing_status(
-    user: User = Depends(get_current_user_cookie),
+    user: UserDep,
 ):
-    """
-    Estado de suscripción del usuario actual.
-    """
     now = datetime.now(timezone.utc)
     pro_expiry = _discover_pro_expiry(user)
     is_pro = bool(pro_expiry and pro_expiry > now)
@@ -55,10 +55,10 @@ def my_billing_status(
         "remaining_hours": remaining_hours,
     }
 
-@router.get("/history")
+@router.get("/history", response_model=None)
 def my_payment_history(
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user_cookie),
+    db: DbDep,
+    user: UserDep,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -88,3 +88,4 @@ def my_payment_history(
             }
         )
     return {"ok": True, "count": len(result), "items": result}
+
