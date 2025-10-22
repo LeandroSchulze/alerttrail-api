@@ -1,27 +1,23 @@
 # app/routers/payments_history.py
 from __future__ import annotations
 
-from typing import Optional, List, Dict, Any, Annotated
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import PaymentHistory, User
+from app.models import PaymentHistory
 from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/billing", tags=["billing"])
-
-DbDep = Annotated[Session, Depends(get_db)]
-UserDep = Annotated[User, Depends(get_current_user_cookie)]
 
 def _safe_currency(code: Optional[str]) -> str:
     if not code:
         return "USD"
     return str(code).upper()
 
-def _discover_pro_expiry(user: User) -> Optional[datetime]:
+def _discover_pro_expiry(user) -> Optional[datetime]:
     for candidate in ("pro_expires_at", "plan_pro_expires_at", "pro_until", "pro_expiry"):
         if hasattr(user, candidate):
             return getattr(user, candidate)
@@ -29,8 +25,11 @@ def _discover_pro_expiry(user: User) -> Optional[datetime]:
 
 @router.get("/me", response_model=None)
 def my_billing_status(
-    user: UserDep,
+    user = Depends(get_current_user_cookie),   # <- sin type hints
 ):
+    """
+    Estado de suscripción del usuario actual.
+    """
     now = datetime.now(timezone.utc)
     pro_expiry = _discover_pro_expiry(user)
     is_pro = bool(pro_expiry and pro_expiry > now)
@@ -57,8 +56,8 @@ def my_billing_status(
 
 @router.get("/history", response_model=None)
 def my_payment_history(
-    db: DbDep,
-    user: UserDep,
+    db = Depends(get_db),                     # <- sin type hints
+    user = Depends(get_current_user_cookie),  # <- sin type hints
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -88,4 +87,3 @@ def my_payment_history(
             }
         )
     return {"ok": True, "count": len(result), "items": result}
-
