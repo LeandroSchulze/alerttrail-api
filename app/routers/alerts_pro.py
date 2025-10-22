@@ -14,7 +14,7 @@ def _ensure_pro(user: User):
         raise HTTPException(status_code=403, detail="Solo para usuarios PRO")
 
 @router.get("/prefs")
-def get_prefs(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
+def get_prefs(db= Depends(get_db), user= Depends(get_current_user_cookie)):
     _ensure_pro(user)
     pref = ensure_pref(db, user.id)
     return {
@@ -25,7 +25,7 @@ def get_prefs(db: Session = Depends(get_db), user: User = Depends(get_current_us
 
 @router.post("/prefs")
 def set_prefs(cooldown_min: int = 10, quiet_hours: str = "", push_enabled: bool = True,
-              db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
+              db= Depends(get_db), user= Depends(get_current_user_cookie)):
     _ensure_pro(user)
     pref = ensure_pref(db, user.id)
     pref.cooldown_min = max(0, cooldown_min)
@@ -35,13 +35,13 @@ def set_prefs(cooldown_min: int = 10, quiet_hours: str = "", push_enabled: bool 
     return {"ok": True}
 
 @router.post("/test")
-def send_test(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
+def send_test(db= Depends(get_db), user= Depends(get_current_user_cookie)):
     _ensure_pro(user)
     queue_or_push(db, user, title="AlertTrail PRO", body="Prueba de notificación PRO", url="/dashboard")
     return {"queued": True}
 
 @router.post("/flush")
-def flush_queue(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
+def flush_queue(db= Depends(get_db), user= Depends(get_current_user_cookie)):
     _ensure_pro(user)
     flush_if_needed(db, user.id)
     return {"flushed": True}
