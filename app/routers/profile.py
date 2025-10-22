@@ -8,8 +8,8 @@ router = APIRouter(prefix="/profile", tags=["profile"])
 
 @router.post("/change-password")
 def change_password(old_password: str, new_password: str,
-                    db: Session = Depends(get_db),
-                    user: models.User = Depends(get_current_user)):
+                    db= Depends(get_db),
+                    user= Depends(get_current_user)):
     if not verify_password(old_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Clave actual incorrecta")
     user.hashed_password = get_password_hash(new_password)
