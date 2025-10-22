@@ -149,7 +149,7 @@ def _list_routes(request) -> Dict[str, Any]:
 # ---- Endpoints -------------------------------------------------------------
 
 @router.get("/diag.json", response_class=JSONResponse)
-def diag_json(request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
+def diag_json(request, db= Depends(get_db), user=Depends(get_current_user_cookie)):
     if not _is_admin(user):
         raise HTTPException(status_code=403, detail="Solo administradores")
 
@@ -173,7 +173,7 @@ def diag_json(request, db: Session = Depends(get_db), user=Depends(get_current_u
     return JSONResponse(data)
 
 @router.get("/diag", response_class=HTMLResponse)
-def diag_html(request, db: Session = Depends(get_db), user=Depends(get_current_user_cookie)):
+def diag_html(request, db= Depends(get_db), user=Depends(get_current_user_cookie)):
     if not _is_admin(user):
         raise HTTPException(status_code=403, detail="Solo administradores")
 
