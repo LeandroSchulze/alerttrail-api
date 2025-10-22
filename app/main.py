@@ -15,6 +15,10 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
+from app.routers import billing_ui, payments_history
+app.include_router(billing_ui.router)
+app.include_router(payments_history.router)  # si no lo tenías ya
+
 
 from app.database import SessionLocal
 from app.security import (
