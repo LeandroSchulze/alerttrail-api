@@ -1,21 +1,55 @@
 services:
-- type: web
-name: alerttrail
-runtime: python
-region: oregon
-plan: free
-buildCommand: |
-pip install --upgrade pip && pip install -r requirements.txt
-startCommand: |
-python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-envVars:
-- key: PYTHON_VERSION
-value: 3.11
-- key: REPORTS_DIR
-value: /var/data/reports
-healthCheckPath: /health
-autoDeploy: true
-disk:
-name: data
-mountPath: /var/data
-sizeGB: 1
+  - type: web
+    name: alerttrail
+    runtime: python
+    region: oregon
+    plan: free
+
+    buildCommand: |
+      pip install --upgrade pip && pip install -r requirements.txt
+
+    startCommand: |
+      python scripts/init_db.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+      - key: REPORTS_DIR
+        value: /var/data/reports
+
+      # 🔐 JWT para sesiones (auto-genera un secreto seguro en Render)
+      - key: JWT_SECRET
+        generateValue: true
+
+      # 🌐 CORS: lista cerrada de orígenes (separados por coma, sin espacios)
+      - key: CORS_ALLOW_ORIGINS
+        value: https://www.alerttrail.com,https://app.alerttrail.com
+
+      # 🍪 Cookies seguras (HTTPS)
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: Lax  # usar "None" si necesitás iframes/subdominios (requiere HTTPS)
+
+      # 🗄️ DB persistente en el disco de Render
+      - key: DATABASE_URL
+        value: sqlite:////var/data/alerttrail.sqlite3
+
+      # 🧾 Logging por defecto
+      - key: LOG_LEVEL
+        value: INFO
+
+      # 💳 Mercado Pago (completá estos valores en Render > Environment)
+      - key: MP_ACCESS_TOKEN
+        value: ""   # <-- Pegar token de producción de MP
+      - key: MP_WEBHOOK_SECRET
+        generateValue: true  # secreto compartido para verificar el webhook
+
+    healthCheckPath: /health
+    autoDeploy: true
+
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
