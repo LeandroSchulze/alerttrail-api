@@ -48,7 +48,7 @@ def admin_billing_redirect():
 
 # ----------------- Stats (JSON) -----------------
 @router.get("/stats", name="admin_stats")
-def stats(db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
+def stats(db= Depends(get_db), current=Depends(get_current_user_cookie)):
     require_admin(current)
     now = datetime.utcnow()
     start = datetime(now.year, now.month, 1)
@@ -81,7 +81,7 @@ def stats(db: Session = Depends(get_db), current=Depends(get_current_user_cookie
 @router.get("/user/{email}/subscription", tags=["admin"])
 def admin_get_subscription(
     email: str,
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
     current=Depends(get_current_user_cookie),
 ):
     """
@@ -107,7 +107,7 @@ class ForceProReq(BaseModel):
 @router.post("/force_pro", tags=["admin"])
 def admin_force_pro(
     req: ForceProReq,
-    db: Session = Depends(get_db),
+    db= Depends(get_db),
     current=Depends(get_current_user_cookie),
 ):
     """
