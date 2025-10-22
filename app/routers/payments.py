@@ -1,5 +1,6 @@
 # app/routers/payments.py
 # --- Updated: webhook signature (optional), robust MP calls, idempotent sync/activate ---
+# --- Tweaks: FastAPI v2-friendly param validation (no regex in Query), SQLAlchemy .get() usage, minor hardening ---
 
 import os
 import json
@@ -7,7 +8,7 @@ import uuid
 from typing import Optional, Tuple
 
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
@@ -194,7 +195,8 @@ def _activate_user_plan_if_authorized(db: Session, *, sub: Subscription):
     Mejora mínima: setea pro_expires_at (si existe en el modelo) usando next_payment_date.
     """
     if (sub.status or "").lower() == "authorized" and sub.user_id:
-        u = db.query(User).get(sub.user_id)
+        # SQLAlchemy 2.x friendly
+        u = db.get(User, sub.user_id)
         if u:
             if hasattr(u, "plan"):
                 u.plan = (sub.plan or "PRO").upper()
@@ -241,10 +243,10 @@ def _sync_preapproval(db: Session, *, preapproval_id: str) -> dict:
 @router.get("/payments/subscribe", response_class=RedirectResponse)
 def payments_subscribe(
     request: Request,
-    plan: str = Query(..., regex="^(?i)(PRO|BIZ)$"),
+    plan: str = Query(..., description="Plan a suscribirse: PRO o BIZ"),
     seats: int = Query(1, ge=1),
     db: Session = Depends(get_db),
-    user = Depends(get_current_user_cookie),
+    user: User = Depends(get_current_user_cookie),
 ):
     """
     Crea un preapproval en MP y redirige a la URL de autorización del cliente.
@@ -255,7 +257,10 @@ def payments_subscribe(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Necesitás iniciar sesión")
 
-    plan_norm = plan.upper()
+    plan_norm = (plan or "").upper().strip()
+    if plan_norm not in {"PRO", "BIZ"}:
+        raise HTTPException(status_code=400, detail="Plan inválido: usar PRO o BIZ")
+
     amount, currency = _amount_currency(plan_norm, seats)
     external_ref = f"sub-{plan_norm}-{user.id}-{uuid.uuid4().hex[:8]}"
     reason = f"AlertTrail {plan_norm} ({currency} {amount})"
@@ -279,6 +284,9 @@ def payments_subscribe(
     preapproval_id = data.get("id")
     init_point = data.get("init_point") or data.get("sandbox_init_point")
 
+    if not preapproval_id:
+        raise HTTPException(status_code=502, detail="MP no devolvió preapproval id")
+
     # Guardar/actualizar suscripción local
     _upsert_subscription(
         db,
@@ -295,7 +303,7 @@ def payments_subscribe(
 def payments_status(
     preapproval_id: str = Query(...),
     db: Session = Depends(get_db),
-    user = Depends(get_current_user_cookie),
+    user: User = Depends(get_current_user_cookie),
 ):
     """Consulta estado en MP y sincroniza localmente + activa plan si procede."""
     _require_mp_token()
@@ -306,7 +314,7 @@ def payments_status(
 def payments_cancel(
     preapproval_id: str = Query(...),
     db: Session = Depends(get_db),
-    user = Depends(get_current_user_cookie),
+    user: User = Depends(get_current_user_cookie),
 ):
     """Cancela/pausa una suscripción en MP (si tu cuenta lo permite)."""
     _require_mp_token()
@@ -389,11 +397,16 @@ def billing_return(preapproval_id: Optional[str] = None, db: Session = Depends(g
 
 # ====== Utilidad opcional: sincronizar la última sub del usuario ======
 @router.get("/payments/sync_latest", response_class=JSONResponse)
-def payments_sync_latest(db: Session = Depends(get_db), user = Depends(get_current_user_cookie)):
+def payments_sync_latest(db: Session = Depends(get_db), user: User = Depends(get_current_user_cookie)):
     """Sincroniza rápidamente la suscripción más reciente del usuario logueado (si existe)."""
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Necesitás iniciar sesión")
-    sub = db.query(Subscription).filter(Subscription.user_id == user.id).order_by(Subscription.updated_at.desc()).first()
+    sub = (
+        db.query(Subscription)
+        .filter(Subscription.user_id == user.id)
+        .order_by(Subscription.updated_at.desc())
+        .first()
+    )
     if not sub:
         return {"ok": False, "reason": "sin suscripciones"}
     res = _sync_preapproval(db, preapproval_id=sub.preapproval_id)
