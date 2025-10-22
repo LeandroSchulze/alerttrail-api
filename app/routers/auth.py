@@ -100,7 +100,7 @@ def login_get(request: Request):
         return HTMLResponse(html)
 
 @router.post("/login")
-async def login_api(request: Request, response: Response, email: EmailStr = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def login_api(request: Request, response: Response, email: EmailStr = Form(...), password: str = Form(...), db= Depends(get_db)):
     await validate_csrf(request)
     ip = request.client.host if request.client else "unknown"
     _rl_check(ip)
@@ -115,7 +115,7 @@ async def login_api(request: Request, response: Response, email: EmailStr = Form
     return {"ok": True, "user_id": user.id}
 
 @router.post("/login/web")
-async def login_web(request: Request, email: EmailStr = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+async def login_web(request: Request, email: EmailStr = Form(...), password: str = Form(...), db= Depends(get_db)):
     await validate_csrf(request)
     ip = request.client.host if request.client else "unknown"
     _rl_check(ip)
@@ -139,7 +139,7 @@ def logout_get():
     r = RedirectResponse(url="/", status_code=303); clear_access_cookie(r); return r
 
 @router.get("/me")
-def me(request: Request, db: Session = Depends(get_db)):
+def me(request: Request, db= Depends(get_db)):
     u = get_current_user_cookie(request, db)
     return {
         "id": getattr(u, "id", None),
@@ -152,7 +152,7 @@ def me(request: Request, db: Session = Depends(get_db)):
     }
 
 @router.post("/register")
-def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
+def register(payload: RegisterIn, request: Request, db= Depends(get_db)):
     email = payload.email.strip().lower()
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(status_code=400, detail="Email ya registrado")
@@ -173,7 +173,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     return {"ok": True, "user_id": user.id}
 
 @router.post("/resend-code")
-def resend_code(request: Request, db: Session = Depends(get_db)):
+def resend_code(request: Request, db= Depends(get_db)):
     u = get_current_user_cookie(request, db)
     if not _must_verify(u):
         return {"ok": True, "already_verified": True}
@@ -181,7 +181,7 @@ def resend_code(request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 @router.post("/verify")
-def verify_email(request: Request, code: str = Form(...), db: Session = Depends(get_db)):
+def verify_email(request: Request, code: str = Form(...), db= Depends(get_db)):
     u = get_current_user_cookie(request, db)
     if not hasattr(u, "is_email_verified"):
         return {"ok": True, "skipped": True}
