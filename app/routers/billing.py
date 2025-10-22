@@ -1,25 +1,27 @@
-# app/routers/billing.py
-from __future__ import annotations
-from datetime import datetime, timedelta, timezone
+{% extends "base.html" %}
+{% block content %}
+<h1>Pagos</h1>
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
+{% if payments and payments|length %}
+<table>
+  <thead><tr><th>Fecha</th><th>Método</th><th>Importe</th><th>Estado</th></tr></thead>
+  <tbody>
+  {% for p in payments %}
+    <tr>
+      <td>{{ p.created_at }}</td>
+      <td>{{ p.provider or "—" }}</td>
+      <td>{{ p.amount }} {{ (p.currency or "USD")|upper }}</td>
+      <td>{{ p.status }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No hay pagos aún.</p>
+{% endif %}
 
-from app.security import get_current_user_cookie
-
-router = APIRouter(prefix="/billing", tags=["billing"])
-
-def _months_to_days(m: int) -> int:
-    return 30 * max(m, 1)
-
-@router.get("/preview", response_class=JSONResponse)
-def billing_preview(plan: str = Query("PRO"), months: int = Query(1, ge=1, le=12),
-                    user=Depends(get_current_user_cookie)):
-    now = datetime.now(timezone.utc)
-    exp = getattr(user, "pro_expires_at", None)
-    base = exp if (exp and isinstance(exp, datetime) and exp > now) else now
-    new_exp = base + timedelta(days=_months_to_days(months))
-    return {"ok": True, "plan": plan.upper(), "months": months,
-            "current_expires_at": exp.isoformat() if exp else None,
-            "new_expires_at": new_exp.isoformat()}
-
+<p class="mt-4">
+  <a href="{{ url_for('billing_payments') }}">Últimos pagos</a> ·
+  <a href="{{ url_for('billing_payments') }}?all=1">Ver todo el historial</a>
+</p>
+{% endblock %}
