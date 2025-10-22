@@ -45,8 +45,8 @@ def _recalc_seats_used(db: Session, org: models.Organization) -> int:
     db.commit()
     return used
 
-@router.get("/admin", response_class=HTMLResponse)
-def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+@router.get("/admin", response_class=HTMLResponse, response_model=None)
+def org_admin_panel(user=Depends(get_current_user_cookie), db = Depends(get_db)):
     _require_org_admin(user)
     org = db.query(models.Organization).get(user.org_id)
     if not org:
@@ -183,7 +183,7 @@ def org_admin_panel(user=Depends(get_current_user_cookie), db: Session = Depends
     return HTMLResponse(html_page)
 
 @router.get("/me")
-def my_org_summary(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+def my_org_summary(user=Depends(get_current_user_cookie), db = Depends(get_db)):
     if not user or not user.org_id:
         return {"org": None, "is_org_admin": False}
     org = db.query(models.Organization).get(user.org_id)
@@ -193,7 +193,7 @@ def my_org_summary(user=Depends(get_current_user_cookie), db: Session = Depends(
     return {"org": {"id": org.id, "name": org.name, "seats_total": org.seats_total, "seats_used": used, "billing_id": org.billing_id}, "is_org_admin": bool(user.is_org_admin)}
 
 @router.get("/invites")
-def list_invites(user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+def list_invites(user=Depends(get_current_user_cookie), db = Depends(get_db)):
     _require_org_admin(user)
     invites = db.query(models.OrgInvite).filter(models.OrgInvite.org_id == user.org_id).order_by(models.OrgInvite.created_at.desc()).all()
     out = []
@@ -210,7 +210,7 @@ def list_invites(user=Depends(get_current_user_cookie), db: Session = Depends(ge
 def create_invite(
     email: Optional[str] = Form(None),
     user=Depends(get_current_user_cookie),
-    db: Session = Depends(get_db),
+    db = Depends(get_db),
 ):
     _require_org_admin(user)
     org = db.query(models.Organization).get(user.org_id)
@@ -234,7 +234,7 @@ def create_invite(
     return {"ok": True, "invite_link": link, "token": token}
 
 @router.delete("/invites/{invite_id}")
-def delete_invite(invite_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+def delete_invite(invite_id: int, user=Depends(get_current_user_cookie), db = Depends(get_db)):
     _require_org_admin(user)
     inv = db.query(models.OrgInvite).filter(models.OrgInvite.id == invite_id, models.OrgInvite.org_id == user.org_id).first()
     if not inv:
@@ -243,12 +243,12 @@ def delete_invite(invite_id: int, user=Depends(get_current_user_cookie), db: Ses
     return {"ok": True}
 
 @router.post("/invites/{invite_id}/delete")
-def delete_invite_post(invite_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+def delete_invite_post(invite_id: int, user=Depends(get_current_user_cookie), db = Depends(get_db)):
     return delete_invite(invite_id, user, db)
 
 # ---------- NUEVO: Reenviar invitación ----------
 @router.post("/invites/{invite_id}/resend")
-def resend_invite(invite_id: int, user=Depends(get_current_user_cookie), db: Session = Depends(get_db)):
+def resend_invite(invite_id: int, user=Depends(get_current_user_cookie), db = Depends(get_db)):
     _require_org_admin(user)
     inv = db.query(models.OrgInvite).filter(models.OrgInvite.id == invite_id, models.OrgInvite.org_id == user.org_id).first()
     if not inv:
@@ -268,8 +268,8 @@ def resend_invite(invite_id: int, user=Depends(get_current_user_cookie), db: Ses
             return {"ok": False, "error": f"SMTP: {e}", "invite_link": link}
     return {"ok": True, "invite_link": link, "email": inv.email}
 
-@router.get("/accept-invite", response_class=HTMLResponse)
-def accept_invite_page(token: str, request: Request, db: Session = Depends(get_db)):
+@router.get("/accept-invite", response_class=HTMLResponse, response_model=None)
+def accept_invite_page(token: str, request: Request, db = Depends(get_db)):
     inv = db.query(models.OrgInvite).filter_by(token=token, used=False).first()
     if not inv:
         return HTMLResponse("<h3>Invitación inválida o usada</h3>", status_code=400)
@@ -316,7 +316,7 @@ def accept_invite(
     name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
-    db: Session = Depends(get_db),
+    db = Depends(get_db),
 ):
     inv = db.query(models.OrgInvite).filter_by(token=token, used=False).first()
     if not inv:
@@ -353,4 +353,3 @@ def accept_invite(
     _recalc_seats_used(db, org)
     db.commit()
     return RedirectResponse(url="/auth/login", status_code=status.HTTP_303_SEE_OTHER)
-
