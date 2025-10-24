@@ -4,9 +4,9 @@ import sqlalchemy as sa
 # Revisión actual
 revision = "xxxx_unique_payment_id"
 
-# Si no hay migrations previas o no importa encadenarlo, dejar como None
-# (antes decía "<poné la anterior>" y eso rompía Alembic)
-down_revision = None
+# Reemplazá ESTE valor por el id real del último migration que ya tenías
+down_revision = "REV_ANTERIOR"
+
 
 # Etiquetas opcionales (no es necesario tocarlas)
 branch_labels = None
