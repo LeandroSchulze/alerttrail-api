@@ -10,7 +10,7 @@ from sqlalchemy import func, and_
 
 from app.database import get_db
 from app.models import User, PaymentHistory
-from app.deps.admin_guard import require_admin
+from app.guards import require_admin  # <- FIX: antes apuntaba a app.deps.admin_guard
 
 router = APIRouter(prefix="/admin/payments", tags=["admin-payments"])
 
