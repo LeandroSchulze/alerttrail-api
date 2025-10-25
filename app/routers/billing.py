@@ -1,14 +1,13 @@
-# app/routers/billing.py
 from __future__ import annotations
 import os, uuid, requests
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.database import get_db
-from app.models import PaymentHistory
+from app.models import PaymentHistory, User
 from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -26,9 +25,12 @@ def _list_user_payments(db: Session, user_id: int, show_all: bool) -> List[Payme
 @router.get("", response_class=HTMLResponse, name="billing_page")
 def billing_page(request: Request, db: Session = Depends(get_db), all: int = Query(0)):
     """Renderiza tu template billing.html con la lista de pagos del usuario."""
-    user = get_current_user_cookie(request, db)
+    payload = get_current_user_cookie(request)
+    user = db.query(User).filter(User.id == payload["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
     payments = _list_user_payments(db, user.id, show_all=bool(all))
-    # Formateamos el contexto que espera tu template
     ctx_payments: List[Dict[str, Any]] = [
         {
             "created_at": p.created_at,
@@ -47,7 +49,11 @@ def billing_page(request: Request, db: Session = Depends(get_db), all: int = Que
 @router.get("/payments", name="billing_payments")
 def billing_payments(request: Request, db: Session = Depends(get_db), all: int = Query(0)):
     """Endpoint JSON que usan tus links url_for('billing_payments')."""
-    user = get_current_user_cookie(request, db)
+    payload = get_current_user_cookie(request)
+    user = db.query(User).filter(User.id == payload["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
     rows = _list_user_payments(db, user.id, show_all=bool(all))
     return {
         "ok": True,
@@ -64,7 +70,11 @@ def billing_payments(request: Request, db: Session = Depends(get_db), all: int =
 @router.post("/checkout/mp")
 def create_mp_checkout(request: Request, db: Session = Depends(get_db)):
     """Crea una preferencia de MP y devuelve init_point (no modifica tu template)."""
-    user = get_current_user_cookie(request, db)
+    payload = get_current_user_cookie(request)
+    user = db.query(User).filter(User.id == payload["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
     access_token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
     if not access_token:
         raise HTTPException(status_code=500, detail="MP_ACCESS_TOKEN no configurado")
@@ -107,3 +117,8 @@ def create_mp_checkout(request: Request, db: Session = Depends(get_db)):
     if r.status_code >= 300:
         raise HTTPException(status_code=502, detail=f"MP error {r.status_code}: {data}")
     return {"ok": True, "init_point": data.get("init_point"), "id": data.get("id")}
+
+# Alias rápido para evitar 404 hoy
+@router.get("/subscriptions", include_in_schema=False)
+def billing_subscriptions_alias():
+    return RedirectResponse(url="/billing", status_code=302)
