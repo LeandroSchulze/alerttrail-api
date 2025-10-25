@@ -1,41 +1,65 @@
+# scripts/init_db.py
 import os
-from app.database import Base, engine, SessionLocal
-from app.models import User
-from app.security import get_password_hash as hash_password
+from sqlalchemy.orm import Session
+from app.database import SessionLocal, engine, Base
+from app.models import User  # ajusta el import al path real
+from app.security import get_password_hash
 
-def upsert_admin():
-    admin_email = os.getenv("ADMIN_EMAIL")
-    admin_pass  = os.getenv("ADMIN_PASS")
-    admin_name  = os.getenv("ADMIN_NAME", "Admin")
-    force_reset = os.getenv("ADMIN_FORCE_RESET", "0") in ("1", "true", "True")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASS = os.getenv("ADMIN_PASS")
+ADMIN_NAME = os.getenv("ADMIN_NAME", "Admin")
+ADMIN_FORCE_RESET = os.getenv("ADMIN_FORCE_RESET", "false").strip().lower() in ("1", "true", "t", "yes", "y")
 
-    if not (admin_email and admin_pass):
-        print(">> ADMIN_EMAIL/ADMIN_PASS no configurados; omitiendo admin seed")
+def upsert_admin(db: Session):
+    if not ADMIN_EMAIL or not ADMIN_PASS:
+        print("[init_db] ADMIN_EMAIL/ADMIN_PASS faltan; no se crea admin")
         return
 
-    db = SessionLocal()
-    try:
-        u = db.query(User).filter(User.email == admin_email).first()
-        if u:
-            if force_reset:
-                u.name = admin_name
-                u.password_hash = hash_password(admin_pass)
-                u.plan = "pro"
-                db.commit()
-                print(">> Admin ACTUALIZADO:", admin_email)
-            else:
-                print(">> Admin ya existe (sin cambios):", admin_email)
-        else:
-            db.add(User(email=admin_email, name=admin_name,
-                        password_hash=hash_password(admin_pass), plan="pro"))
-            db.commit()
-            print(">> Admin CREADO:", admin_email)
-    finally:
-        db.close()
+    u = db.query(User).filter(User.email == ADMIN_EMAIL).one_or_none()
+    hp = get_password_hash(ADMIN_PASS)
+
+    if u is None:
+        u = User(
+            email=ADMIN_EMAIL,
+            name=ADMIN_NAME,
+            is_active=True,
+            is_admin=True,
+            hashed_password=hp,
+            password_hash=hp,   # <- normalizamos ambos
+        )
+        db.add(u)
+        db.commit()
+        print(f"[init_db] Admin creado: {ADMIN_EMAIL}")
+        return
+
+    changed = False
+    if ADMIN_FORCE_RESET:
+        u.hashed_password = hp
+        u.password_hash = hp
+        changed = True
+
+    # Aseguramos flags básicos
+    if not u.is_active:
+        u.is_active = True; changed = True
+    if not getattr(u, "is_admin", False):
+        u.is_admin = True; changed = True
+    if not u.name:
+        u.name = ADMIN_NAME; changed = True
+
+    if changed:
+        db.add(u)
+        db.commit()
+        print(f"[init_db] Admin actualizado (reset={ADMIN_FORCE_RESET}): {ADMIN_EMAIL}")
+    else:
+        print(f"[init_db] Admin ya OK: {ADMIN_EMAIL}")
 
 def main():
     Base.metadata.create_all(bind=engine)
-    upsert_admin()
+    db = SessionLocal()
+    try:
+        upsert_admin(db)
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     main()
