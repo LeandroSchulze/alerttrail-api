@@ -19,7 +19,7 @@ from jinja2 import TemplateNotFound
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
-    clear_access_cookie, decode_token, COOKIE_NAME,
+    clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,  # <-- import create_access_token
 )
 
 # === Crear la app ANTES de agregar middlewares y routers ===
@@ -102,7 +102,8 @@ def truthy(v):
 
 def get_current_user_optional(request: Request, db= Depends(get_db)):
     try:
-        return get_current_user_cookie(request, db)
+        # Antes: get_current_user_cookie(request, db)
+        return get_current_user_cookie(request)
     except Exception:
         return None
 
@@ -175,13 +176,17 @@ async def pro_expiry_guard(request: Request, call_next):
     db = _GuardSessionLocal()
     try:
         try:
-            user = _guard_get_user(request, db)
+            # Antes: user = _guard_get_user(request, db)
+            payload = _guard_get_user(request)
         except Exception:
-            user = None
-        if user and getattr(user, "id", None):
+            payload = None
+        if payload and payload.get("sub"):
             try:
                 from app.security.billing_guard import normalize_user_plan as _guard_normalize
-                _ = _guard_normalize(db, user)
+                # Lookup del usuario real para normalización
+                user_obj = db.query(User).filter(User.id == payload["sub"]).first()
+                if user_obj:
+                    _ = _guard_normalize(db, user_obj)
             except Exception:
                 pass
     finally:
@@ -342,7 +347,9 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     except Exception:
         pass
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    # ANTES: issue_access_cookie(r, {"sub": ..., "email": ...})
+    token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+    issue_access_cookie(r, token)
     return r
 
 if not _route_has_method("/auth/login", "GET"):
@@ -378,7 +385,8 @@ if not _route_has_method("/auth/login", "POST"):
         except Exception:
             pass
         r = RedirectResponse(url="/dashboard", status_code=303)
-        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        issue_access_cookie(r, token)
         return r
 
 if not _route_exists("/auth/login/web"):
@@ -395,12 +403,18 @@ if not _route_exists("/auth/login/web"):
         except Exception:
             pass
         r = RedirectResponse(url="/dashboard", status_code=303)
-        issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        issue_access_cookie(r, token)
         return r
 
 @app.get("/auth/me")
 def auth_me(request: Request, db= Depends(get_db)):
-    u = get_current_user_cookie(request, db)
+    # Antes: u = get_current_user_cookie(request, db)
+    payload = get_current_user_cookie(request)
+    # Lookup del usuario real para responder campos consistentes
+    u = db.query(User).filter(User.id == payload["sub"]).first()
+    if not u:
+        raise HTTPException(status_code=401, detail="No autenticado")
     # 👇 normaliza plan/flags según expiración
     try:
         from app.security.billing_guard import normalize_user_plan as _norm
@@ -434,7 +448,11 @@ def logout_alias():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db= Depends(get_db)):
     try:
-        user = get_current_user_cookie(request, db)
+        # Antes: user = get_current_user_cookie(request, db)
+        payload = get_current_user_cookie(request)
+        user = db.query(User).filter(User.id == payload["sub"]).first()
+        if not user:
+            return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
     except HTTPException as e:
         if e.status_code in (401, 403):
             return RedirectResponse(url="/auth/login", status_code=status.HTTP_302_FOUND)
