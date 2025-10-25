@@ -1,55 +1,36 @@
 # app/security.py
 import os
-import hmac
-import base64
-import hashlib
-import secrets
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, Annotated
+from typing import Any, Dict, Optional, Tuple
 
-import jwt
-from fastapi import HTTPException, status, Request, Depends
-from fastapi.responses import Response
+from fastapi import HTTPException, Request, status
+from jose import jwt, JWTError
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session
+from starlette.responses import Response
 
-from app.models import User
-from app.database import get_db
 
-# ================== Config ==================
-JWT_SECRET = os.getenv("JWT_SECRET") or None
-if not JWT_SECRET or JWT_SECRET.strip().lower() in {"changeme", "change-me", "secret", "123", "none"}:
-    raise RuntimeError("JWT_SECRET no configurado de forma segura en entorno de ejecución")
+# =========================
+# Configuración de Password Hash
+# =========================
+# Soporta ambos esquemas para compatibilidad con usuarios antiguos
+# y permite migración transparente.
+pwd_context = CryptContext(
+    schemes=["pbkdf2_sha256", "bcrypt"],
+    deprecated="auto",
+)
 
-ALGO = "HS256"
-TOKEN_TTL_MIN = int(os.getenv("TOKEN_TTL_MIN", "60"))  # 60 min por defecto
-
-COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
-COOKIE_PATH = os.getenv("COOKIE_PATH", "/")
-COOKIE_HTTPONLY = True
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"   # en prod: true
-COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "Lax")                   # "Lax" o "None"
-
-# CSRF
-CSRF_COOKIE = os.getenv("CSRF_COOKIE", "csrftoken")
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# ================== Utilidades ==================
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-def _secure_compare(a: str, b: str) -> bool:
-    try:
-        return hmac.compare_digest(a.encode(), b.encode())
-    except Exception:
-        return False
-
-# ================== Password hashing ==================
 def get_password_hash(password: str) -> str:
+    """Genera el hash de la contraseña con el esquema preferido."""
+    if not isinstance(password, str) or not password:
+        raise ValueError("Password inválido")
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Verificador clásico: mantiene compatibilidad con código existente.
+    (No rehashea automáticamente. Para eso usar verify_and_rehash.)
+    """
     if not plain_password or not hashed_password:
         return False
     try:
@@ -57,97 +38,160 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception:
         return False
 
-# ================== JWT helpers ==================
-def _encode(payload: Dict[str, Any]) -> str:
-    return jwt.encode(payload, JWT_SECRET, algorithm=ALGO)
+def verify_and_rehash(plain_password: str, hashed_password: str) -> Tuple[bool, Optional[str]]:
+    """
+    Verifica la contraseña y, si el hash está desactualizado, devuelve un nuevo hash.
+    Retorna (ok, new_hash or None).
+    """
+    if not plain_password or not hashed_password:
+        return False, None
+    try:
+        ok = pwd_context.verify(plain_password, hashed_password)
+        if not ok:
+            return False, None
+        # Si el hash no está con el esquema preferido, actualizamos
+        if pwd_context.needs_update(hashed_password):
+            return True, pwd_context.hash(plain_password)
+        return True, None
+    except Exception:
+        return False, None
 
-def _decode(token: str) -> Dict[str, Any]:
-    return jwt.decode(token, JWT_SECRET, algorithms=[ALGO])
 
-def issue_access_cookie(response: Response, claims: Dict[str, Any]) -> str:
-    """Genera JWT con expiración y lo setea en cookie HttpOnly."""
-    exp = _utc_now() + timedelta(minutes=TOKEN_TTL_MIN)
-    payload = {**claims, "exp": exp}
-    token = _encode(payload)
-    response.set_cookie(
-        key=COOKIE_NAME,
-        value=token,
-        max_age=TOKEN_TTL_MIN * 60,
-        httponly=COOKIE_HTTPONLY,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        path=COOKIE_PATH,
-    )
+# =========================
+# Configuración de JWT
+# =========================
+JWT_SECRET = os.getenv("JWT_SECRET", "change-me-please")  # Cambiar en producción
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+# Tiempo por defecto del token (en minutos)
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+def create_access_token(
+    data: Dict[str, Any],
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    """
+    Crea un JWT con expiración. Debe incluir, idealmente, 'sub' (user_id o email).
+    """
+    to_encode = data.copy()
+    expire = _now_utc() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire, "iat": _now_utc()})
+    token = jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
     return token
-
-def clear_access_cookie(response: Response) -> None:
-    response.delete_cookie(
-        key=COOKIE_NAME,
-        path=COOKIE_PATH,
-        httponly=COOKIE_HTTPONLY,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-    )
 
 def decode_token(token: str) -> Dict[str, Any]:
+    """
+    Decodifica y valida el token. Lanza 401 si no es válido/expirado.
+    """
     try:
-        return _decode(token)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expirado")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o expirado",
+        ) from e
 
-def get_current_user_cookie(
-    request: Request,
-    db: Annotated[Session, Depends(get_db)],
-) -> User:
+
+# =========================
+# Configuración de Cookies
+# =========================
+COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
+
+# IMPORTANTE:
+# - En desarrollo (HTTP local) conviene SECURE=False.
+# - En producción HTTPS, poner SECURE=True.
+def _env_bool(var_name: str, default: bool) -> bool:
+    v = os.getenv(var_name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "t", "yes", "y")
+
+COOKIE_SECURE = _env_bool("COOKIE_SECURE", False)
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")  # "lax" | "strict" | "none"
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)       # e.g. ".tudominio.com" o None
+COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))  # 7 días
+
+
+def issue_access_cookie(
+    response: Response,
+    token: str,
+    max_age: Optional[int] = None,
+) -> None:
+    """
+    Escribe la cookie HTTPOnly con el JWT.
+    """
+    # Samesite "none" requiere secure=True por los navegadores modernos.
+    samesite = COOKIE_SAMESITE.lower()
+    secure = COOKIE_SECURE or (samesite == "none")
+
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=max_age if max_age is not None else COOKIE_MAX_AGE,
+        expires=max_age if max_age is not None else COOKIE_MAX_AGE,
+        path="/",
+        domain=COOKIE_DOMAIN,
+        secure=secure,
+        httponly=True,
+        samesite=samesite,  # "lax"/"strict"/"none"
+    )
+
+def clear_access_cookie(response: Response) -> None:
+    """
+    Elimina la cookie del JWT.
+    """
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        domain=COOKIE_DOMAIN,
+    )
+
+
+# =========================
+# Utilidades de autenticación en requests
+# =========================
+def get_token_from_request(request: Request) -> str:
+    """
+    Obtiene el token desde la cookie.
+    Lanza 401 si no existe.
+    """
     token = request.cookies.get(COOKIE_NAME)
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falta token")
-    data = decode_token(token)
-    uid = data.get("user_id") or data.get("uid") or data.get("sub")
-    if uid is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sin sujeto")
-    user = db.get(User, int(uid))  # SQLAlchemy 2.x friendly
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
-    return user
-
-# ================== CSRF (para formularios HTML) ==================
-def issue_csrf(response: Response) -> str:
-    token = secrets.token_urlsafe(32)
-    response.set_cookie(
-        key=CSRF_COOKIE,
-        value=token,
-        httponly=False,  # legible por JS/form
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        path="/",
-    )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No autenticado",
+        )
     return token
 
-async def validate_csrf(request: Request):
-    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
-        return
-    sent = request.headers.get("X-CSRF-Token")
-    if not sent:
-        # si es form-urlencoded o multipart, intentamos leer del form
-        try:
-            form = await request.form()
-            sent = form.get("csrf_token")
-        except Exception:
-            sent = None
-    cookie = request.cookies.get(CSRF_COOKIE)
-    if not sent or not cookie or not _secure_compare(sent, cookie):
-        raise HTTPException(status_code=403, detail="CSRF token inválido")
+def get_current_user_cookie(request: Request) -> Dict[str, Any]:
+    """
+    Decodifica el token de la cookie y devuelve el payload.
+    - Si necesitás el usuario completo, en tus endpoints hacé el lookup por `sub` en la DB.
+    """
+    token = get_token_from_request(request)
+    payload = decode_token(token)
+    # Validación mínima: requerimos 'sub'
+    if "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token sin sujeto (sub)",
+        )
+    return payload
 
-# ================== Debug helpers opcionales ==================
-def _debug_cookie_flags() -> Dict[str, Any]:
-    return {
-        "COOKIE_NAME": COOKIE_NAME,
-        "COOKIE_HTTPONLY": COOKIE_HTTPONLY,
-        "COOKIE_SECURE": COOKIE_SECURE,
-        "COOKIE_SAMESITE": COOKIE_SAMESITE,
-        "COOKIE_PATH": COOKIE_PATH,
-        "TOKEN_TTL_MIN": TOKEN_TTL_MIN,
-    }
+
+# =========================
+# Helpers opcionales
+# =========================
+def minutes_from_now(minutes: int) -> datetime:
+    return _now_utc() + timedelta(minutes=minutes)
+
+def unix_ts(dt: Optional[datetime] = None) -> int:
+    """
+    Timestamp Unix (segundos) de ahora o de dt.
+    """
+    if dt is None:
+        dt = _now_utc()
+    return int(dt.timestamp())
