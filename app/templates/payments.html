@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Últimos pagos | AlertTrail</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{background:#f8fafc;color:#111827;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+    .container{max-width:960px;margin:20px auto;padding:0 12px}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+    th{font-size:.9rem;color:#6b7280}
+    .muted{color:#6b7280}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid #e5e7eb;font-size:.85rem;text-decoration:none;color:#111827}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Últimos pagos</h1>
+    <div class="card">
+      <table id="tbl"><thead><tr>
+        <th>Fecha</th><th>Descripción</th><th>Monto</th><th>Estado</th><th>Origen</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td class="muted" colspan="5">Cargando…</td></tr></tbody></table>
+    </div>
+    <p><a href="/billing" class="pill">Volver a Facturación</a></p>
+  </div>
+<script>
+(async ()=>{
+  try{
+    const r = await fetch('/billing/history', {credentials:'include'});
+    const data = await r.json();
+    const rows = document.getElementById('rows');
+    rows.innerHTML = '';
+    if(!data.items || data.items.length===0){
+      rows.innerHTML = '<tr><td class="muted" colspan="5">Sin pagos todavía.</td></tr>';
+      return;
+    }
+    for(const it of data.items){
+      const tr = document.createElement('tr');
+      const when = new Date(it.created_at || it.expires_at || Date.now());
+      const cents = Number(it.amount_cents || 0);
+      const amt = (cents/100).toFixed(2) + ' ' + (it.currency||'USD');
+      tr.innerHTML = `<td>${when.toLocaleDateString()}</td>
+        <td>${(it.description||'Plan PRO')}</td>
+        <td>${amt}</td>
+        <td>${it.status}</td>
+        <td>${it.origin||''}</td>`;
+      rows.appendChild(tr);
+    }
+  }catch(e){
+    document.getElementById('rows').innerHTML = '<tr><td colspan="5">Error cargando historial.</td></tr>';
+  }
+})();
+</script>
+</body>
+</html>
