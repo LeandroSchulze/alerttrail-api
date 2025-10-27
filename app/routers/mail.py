@@ -10,14 +10,11 @@ from typing import Generator
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
-# ========================
-#  Pop-ups (SSE) en memoria
-# ========================
+# ====== SSE pop-ups ======
 USER_EVENTS: dict[int, list[dict]] = {}
 def _emit_event(user_id: int, payload: dict):
     USER_EVENTS.setdefault(user_id, []).append(payload)
 
-# Heurísticas simples de sospecha
 SUSPICIOUS_PATTERNS = [
     re.compile(r"verify\\s+your\\s+account", re.I),
     re.compile(r"password\\s+expired", re.I),
@@ -42,29 +39,19 @@ def _is_suspicious(msg: email.message.Message) -> bool:
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                try:
-                    body += part.get_payload(decode=True).decode(errors="ignore")
-                except:
-                    pass
+                try: body += part.get_payload(decode=True).decode(errors="ignore")
+                except: pass
     else:
-        try:
-            body = msg.get_payload(decode=True).decode(errors="ignore")
-        except:
-            body = str(msg.get_payload())
+        try: body = msg.get_payload(decode=True).decode(errors="ignore")
+        except: body = str(msg.get_payload())
     return any(p.search(subject) or p.search(body) for p in SUSPICIOUS_PATTERNS)
 
-# =====================================================
-#  TUS RUTAS ORIGINALES (se mantienen idénticas)
-# =====================================================
-
+# ====== TUS RUTAS ORIGINALES (sin cambiar) ======
 @router.get("/", response_class=HTMLResponse, response_model=None)
 def mail_index(request: Request, db: Session = Depends(get_db)):
-    # payload desde cookie + lookup del usuario real
     payload = get_current_user_cookie(request)
     user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="No autenticado")
-
+    if not user: raise HTTPException(status_code=401, detail="No autenticado")
     html = f"""
     <h1>Casillas de correo</h1>
     <p>Bienvenido, {user.email}</p>
@@ -78,30 +65,17 @@ def mail_index(request: Request, db: Session = Depends(get_db)):
     return HTMLResponse(html)
 
 @router.post("/add", response_model=None)
-def add_mail_account(
-    request: Request,
-    email: str = Form(...),
-    db: Session = Depends(get_db),
-):
+def add_mail_account(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
     payload = get_current_user_cookie(request)
     user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="No autenticado")
-
-    # Lógica simplificada, deberías guardar la cuenta en la DB
+    if not user: raise HTTPException(status_code=401, detail="No autenticado")
     print(f"[mail] user={user.email} agregó cuenta {email}")
     return HTMLResponse(f"<p>Cuenta {email} agregada.</p><p><a href='/mail'>Volver</a></p>")
 
-# ==========================================
-#  NUEVAS RUTAS (vincular, escanear, SSE)
-# ==========================================
-
+# ====== NUEVAS RUTAS: vinculación + scanner + SSE ======
 @router.get("/connect", response_class=HTMLResponse)
 def connect_form(request: Request, user=Depends(get_current_user_cookie)):
-    return request.app.state.templates.TemplateResponse(
-        "mail_connect.html",
-        {"request": request, "ok": False}
-    )
+    return request.app.state.templates.TemplateResponse("mail_connect.html", {"request": request, "ok": False})
 
 @router.post("/connect", response_class=HTMLResponse)
 def connect_imap(
@@ -114,16 +88,13 @@ def connect_imap(
     use_ssl: bool = Form(False),
     user=Depends(get_current_user_cookie),
 ):
-    # Para demo: guardamos en variables de entorno (en producción -> DB cifrada)
     os.environ["IMAP_EMAIL"] = email_addr
     os.environ["IMAP_USER"]  = username
     os.environ["IMAP_PASS"]  = password
     os.environ["IMAP_SERVER"] = imap_server
     os.environ["IMAP_PORT"]   = str(imap_port)
     os.environ["IMAP_SSL"]    = "1" if use_ssl else "0"
-
-    ctx = {"request": request, "ok": True, "email_addr": email_addr}
-    return request.app.state.templates.TemplateResponse("mail_connect.html", ctx)
+    return request.app.state.templates.TemplateResponse("mail_connect.html", {"request": request, "ok": True, "email_addr": email_addr})
 
 @router.get("/scanner", response_class=HTMLResponse)
 def scanner_page(request: Request, user=Depends(get_current_user_cookie)):
@@ -144,8 +115,7 @@ def scanner_page(request: Request, user=Depends(get_current_user_cookie)):
     const es = new EventSource('/mail/stream');
     es.addEventListener('mail_alert', e=>{
       const data = JSON.parse(e.data);
-      try{ new Notification('Correo sospechoso', { body: `${data.subject} · ${data.from}` }); }
-      catch(err){ console.log('Notif:', err); }
+      try{ new Notification('Correo sospechoso', { body: `${data.subject} · ${data.from}` }); }catch(e){}
     });
     </script>
     <p><a href='/dashboard'>Volver</a></p>
@@ -160,10 +130,8 @@ def scan_now(user=Depends(get_current_user_cookie)):
     server     = os.getenv("IMAP_SERVER", "imap.gmail.com")
     port       = int(os.getenv("IMAP_PORT", "993"))
     use_ssl    = os.getenv("IMAP_SSL", "1") == "1"
-
     if not email_addr or not password:
         raise HTTPException(400, "No hay cuenta IMAP vinculada.")
-
     M = _imap_connect(server, port, use_ssl, username, password)
     findings = []
     try:
