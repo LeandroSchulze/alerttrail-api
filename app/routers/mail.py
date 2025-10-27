@@ -1,22 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.security import get_current_user_cookie
 from app.models import User
+
 import imaplib, email, re, time, json, os
 from typing import Generator
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
-# --- POP-UP SSE MEMORY QUEUE ---
+# ========================
+#  Pop-ups (SSE) en memoria
+# ========================
 USER_EVENTS: dict[int, list[dict]] = {}
-
 def _emit_event(user_id: int, payload: dict):
     USER_EVENTS.setdefault(user_id, []).append(payload)
 
-
-# --- SIMPLE DETECCIÓN DE CORREOS SOSPECHOSOS ---
+# Heurísticas simples de sospecha
 SUSPICIOUS_PATTERNS = [
     re.compile(r"verify\\s+your\\s+account", re.I),
     re.compile(r"password\\s+expired", re.I),
@@ -26,19 +27,14 @@ SUSPICIOUS_PATTERNS = [
     re.compile(r"paypal|mercado\\s*pago|stripe|crypto", re.I),
 ]
 
-
-def _imap_connect(imap_server: str, port: int, use_ssl: bool, username: str, password: str):
+def _imap_connect(server: str, port: int, use_ssl: bool, username: str, password: str):
     try:
-        if use_ssl:
-            M = imaplib.IMAP4_SSL(imap_server, port)
-        else:
-            M = imaplib.IMAP4(imap_server, port)
+        M = imaplib.IMAP4_SSL(server, port) if use_ssl else imaplib.IMAP4(server, port)
         M.login(username, password)
         M.select("INBOX")
         return M
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error IMAP: {e}")
-
 
 def _is_suspicious(msg: email.message.Message) -> bool:
     subject = msg.get("Subject", "")
@@ -57,11 +53,13 @@ def _is_suspicious(msg: email.message.Message) -> bool:
             body = str(msg.get_payload())
     return any(p.search(subject) or p.search(body) for p in SUSPICIOUS_PATTERNS)
 
-
-# === TUS RUTAS ORIGINALES (no se tocan) ===
+# =====================================================
+#  TUS RUTAS ORIGINALES (se mantienen idénticas)
+# =====================================================
 
 @router.get("/", response_class=HTMLResponse, response_model=None)
 def mail_index(request: Request, db: Session = Depends(get_db)):
+    # payload desde cookie + lookup del usuario real
     payload = get_current_user_cookie(request)
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user:
@@ -74,31 +72,36 @@ def mail_index(request: Request, db: Session = Depends(get_db)):
       <label>Dirección: <input name="email" type="email" required></label>
       <button type="submit">Agregar</button>
     </form>
+    <p><a href="/mail/connect">Vincular casilla (IMAP)</a></p>
     <p><a href="/dashboard">Volver</a></p>
     """
     return HTMLResponse(html)
 
-
 @router.post("/add", response_model=None)
-def add_mail_account(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
+def add_mail_account(
+    request: Request,
+    email: str = Form(...),
+    db: Session = Depends(get_db),
+):
     payload = get_current_user_cookie(request)
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
 
+    # Lógica simplificada, deberías guardar la cuenta en la DB
     print(f"[mail] user={user.email} agregó cuenta {email}")
     return HTMLResponse(f"<p>Cuenta {email} agregada.</p><p><a href='/mail'>Volver</a></p>")
 
-
-# === NUEVAS FUNCIONES ===
+# ==========================================
+#  NUEVAS RUTAS (vincular, escanear, SSE)
+# ==========================================
 
 @router.get("/connect", response_class=HTMLResponse)
 def connect_form(request: Request, user=Depends(get_current_user_cookie)):
-    """Formulario visual para vincular IMAP."""
     return request.app.state.templates.TemplateResponse(
-        "mail_connect.html", {"request": request, "ok": False}
+        "mail_connect.html",
+        {"request": request, "ok": False}
     )
-
 
 @router.post("/connect", response_class=HTMLResponse)
 def connect_imap(
@@ -111,17 +114,16 @@ def connect_imap(
     use_ssl: bool = Form(False),
     user=Depends(get_current_user_cookie),
 ):
-    """Vincula una casilla IMAP temporalmente (guarda en entorno para demo)."""
+    # Para demo: guardamos en variables de entorno (en producción -> DB cifrada)
     os.environ["IMAP_EMAIL"] = email_addr
-    os.environ["IMAP_USER"] = username
-    os.environ["IMAP_PASS"] = password
+    os.environ["IMAP_USER"]  = username
+    os.environ["IMAP_PASS"]  = password
     os.environ["IMAP_SERVER"] = imap_server
-    os.environ["IMAP_PORT"] = str(imap_port)
-    os.environ["IMAP_SSL"] = "1" if use_ssl else "0"
+    os.environ["IMAP_PORT"]   = str(imap_port)
+    os.environ["IMAP_SSL"]    = "1" if use_ssl else "0"
 
     ctx = {"request": request, "ok": True, "email_addr": email_addr}
     return request.app.state.templates.TemplateResponse("mail_connect.html", ctx)
-
 
 @router.get("/scanner", response_class=HTMLResponse)
 def scanner_page(request: Request, user=Depends(get_current_user_cookie)):
@@ -134,30 +136,30 @@ def scanner_page(request: Request, user=Depends(get_current_user_cookie)):
       const r = await fetch('/mail/scan', {method:'POST'});
       const d = await r.json();
       document.getElementById('out').innerHTML =
-        d.findings.map(f=>`<li>${f.subject} - ${f.from}</li>`).join('');
+        (d.findings||[]).map(f=>`<li>${f.subject} - ${f.from}</li>`).join('');
     }
     </script>
     <script>
+    if ('Notification' in window) Notification.requestPermission();
     const es = new EventSource('/mail/stream');
     es.addEventListener('mail_alert', e=>{
       const data = JSON.parse(e.data);
-      new Notification('Correo sospechoso', {body:`${data.subject} · ${data.from}`});
+      try{ new Notification('Correo sospechoso', { body: `${data.subject} · ${data.from}` }); }
+      catch(err){ console.log('Notif:', err); }
     });
     </script>
     <p><a href='/dashboard'>Volver</a></p>
     """
     return HTMLResponse(html)
 
-
 @router.post("/scan")
 def scan_now(user=Depends(get_current_user_cookie)):
-    """Escanea y emite eventos SSE."""
     email_addr = os.getenv("IMAP_EMAIL")
-    username = os.getenv("IMAP_USER")
-    password = os.getenv("IMAP_PASS")
-    server = os.getenv("IMAP_SERVER", "imap.gmail.com")
-    port = int(os.getenv("IMAP_PORT", "993"))
-    use_ssl = os.getenv("IMAP_SSL", "1") == "1"
+    username   = os.getenv("IMAP_USER") or email_addr
+    password   = os.getenv("IMAP_PASS")
+    server     = os.getenv("IMAP_SERVER", "imap.gmail.com")
+    port       = int(os.getenv("IMAP_PORT", "993"))
+    use_ssl    = os.getenv("IMAP_SSL", "1") == "1"
 
     if not email_addr or not password:
         raise HTTPException(400, "No hay cuenta IMAP vinculada.")
@@ -171,23 +173,22 @@ def scan_now(user=Depends(get_current_user_cookie)):
             typ, msg_data = M.fetch(eid, "(RFC822)")
             msg = email.message_from_bytes(msg_data[0][1])
             if _is_suspicious(msg):
-                finding = {"subject": msg.get("Subject", ""), "from": msg.get("From", "")}
+                finding = {"subject": msg.get("Subject", "(sin asunto)"), "from": msg.get("From", "")}
                 findings.append(finding)
                 _emit_event(user.id, {"type": "mail_alert", "data": finding})
         return {"ok": True, "findings": findings}
     finally:
-        M.logout()
-
+        try: M.logout()
+        except: pass
 
 @router.get("/stream")
 def stream_alerts(user=Depends(get_current_user_cookie)):
-    """Stream SSE para pop-ups."""
     def gen() -> Generator[bytes, None, None]:
-        yield b"event: ping\\ndata: {\"msg\":\"ready\"}\\n\\n"
+        yield b"event: init\\ndata: {\"ok\":true}\\n\\n"
         while True:
-            evs = USER_EVENTS.get(user.id, [])
-            while evs:
-                ev = evs.pop(0)
+            bucket = USER_EVENTS.get(user.id, [])
+            while bucket:
+                ev = bucket.pop(0)
                 yield f"event: {ev['type']}\\ndata: {json.dumps(ev['data'])}\\n\\n".encode()
             time.sleep(1)
     return StreamingResponse(gen(), media_type="text/event-stream")
