@@ -19,7 +19,7 @@ from jinja2 import TemplateNotFound
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
-    clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,  # <-- import create_access_token
+    clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,
 )
 
 # === Crear la app ANTES de agregar middlewares y routers ===
@@ -86,52 +86,16 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # 👇 Hacemos accesibles los templates para los routers (billing, etc.)
 app.state.templates = templates
 
-# --- Pegar en app/main.py (zona cercana a donde definís los fallbacks de /billing) ---
-def _billing_ctx_from_env(request, user):
-    import os
-    def _as_int(n, d): 
-        v = (os.getenv(n, "") or "").strip()
-        try: return int(v.replace("_","").replace(",",""))
-        except: return int(d)
-    def _as_float(n, d):
-        v = (os.getenv(n, "") or "").strip()
-        v = v.replace("_","").replace(" ","").replace(",",".")
-        try: return float(v)
-        except: return float(d)
-
-    cents = _as_int("PLAN_PRICE_CENTS", 1000)
-    price_month = round(cents/100.0, 2)
-    disc_pct = _as_int("PLAN_ANNUAL_DISCOUNT_PCT", 20)
-    price_year = round(price_month * 12 * (1 - disc_pct/100.0), 2)
-    currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
-
-    return {
-        "request": request, "user": user,
-        "price_month": price_month, "price_year": price_year,
-        "disc_pct": disc_pct, "currency": currency,
-        # claves que el template reclama
-        "biz_price": _as_float("BIZ_PRICE_MONTH_USD", 99.0),
-        "biz_included": _as_int("BIZ_INCLUDED_SEATS", 25),
-        "biz_extra": _as_float("BIZ_EXTRA_SEAT_USD", 3.0),
-        "empresas_price": _as_float("EMPRESAS_PRICE_MONTH", 49.0),
-    }
-
-
 
 # === UI Routers (billing, payments) ===
 try:
-    from importlib import import_module
     _billing_ui = import_module("app.routers.billing_ui")
     app.include_router(_billing_ui.router)
 except Exception as e:
     print("[WARN] billing_ui load failed:", e)
 
 try:
-    from import_module import import_module as _imp  # fallback si arriba falla
-except Exception:
-    from importlib import import_module as _imp
-try:
-    _payments_ui = _imp("app.routers.payments_ui")
+    _payments_ui = import_module("app.routers.payments_ui")
     app.include_router(_payments_ui.router)
 except Exception as e:
     print("[WARN] payments_ui load failed:", e)
@@ -143,54 +107,6 @@ try:
     app.include_router(stats_ui.router)
 except Exception as e:
     print("[WARN] stats_ui router:", e)
-
-
-# ===== Fallback UI: Billing/Subs (anti-502) =====
-# Sirve billing.html con contexto de precios seguro, incluso si otro router falla.
-try:
-    import builtins as _bi
-    from fastapi import Depends as _Depends
-
-    def _as_int(env_name: str, default: int) -> int:
-        v = (os.getenv(env_name, "") or "").strip()
-        try:
-            v = v.replace("_", "")
-            return int(v)
-        except Exception:
-            return int(default)
-
-    def _as_str(env_name: str, default: str) -> str:
-        v = (os.getenv(env_name) or default)
-        return (v or default).strip()
-
-    def _pricing_ctx():
-        cents = _as_int("PLAN_PRICE_CENTS", 1000)   # 1000 = USD 10
-        price_month = round(cents / 100.0, 2)
-        disc_pct = _as_int("PLAN_ANNUAL_DISCOUNT_PCT", 20)
-        disc_pct = max(0, min(95, disc_pct))
-        price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
-        currency = (_as_str("PLAN_CURRENCY", "USD") or "USD").upper()
-        return dict(price_month=price_month, price_year=price_year,
-                    disc_pct=disc_pct, currency=currency)
-
-    def _ctx(request: Request, user):
-        ctx = {"request": request, "user": user, "page_title": "Mi Suscripción | AlertTrail"}
-        ctx.update(_pricing_ctx())
-        ctx["biz_extra"] = ""
-        return ctx
-
-    @app.get("/billing", response_class=HTMLResponse)
-    def __billing_fallback(request: Request, user=_Depends(get_current_user_cookie)):
-        return app.state.templates.TemplateResponse("billing.html", _billing_ctx_from_env(request, user))
-
-
-    @app.get("/billing/subscriptions", response_class=HTMLResponse)
-    def __billing_subs_fallback(request: Request, user=_Depends(get_current_user_cookie)):
-        return app.state.templates.TemplateResponse("billing.html", _ctx(request, user))
-
-    print("[ui-fallback] /billing + /billing/subscriptions montados (anti-502).")
-except Exception as _e:
-    print("[ui-fallback][ERR]", _e)
 
 
 # ---- DB helpers ----
@@ -209,7 +125,6 @@ def truthy(v):
 
 def get_current_user_optional(request: Request, db= Depends(get_db)):
     try:
-        # Antes: get_current_user_cookie(request, db)
         return get_current_user_cookie(request)
     except Exception:
         return None
@@ -267,7 +182,6 @@ async def redirect_auth_register_mw(request: Request, call_next):
 # --- Guard de expiración PRO (liviano) ---
 from app.database import SessionLocal as _GuardSessionLocal
 from app.security import get_current_user_cookie as _guard_get_user
-# import diferido de normalize_user_plan dentro del middleware para evitar ciclos en import
 
 @app.middleware("http")
 async def pro_expiry_guard(request: Request, call_next):
@@ -283,14 +197,12 @@ async def pro_expiry_guard(request: Request, call_next):
     db = _GuardSessionLocal()
     try:
         try:
-            # Antes: user = _guard_get_user(request, db)
             payload = _guard_get_user(request)
         except Exception:
             payload = None
         if payload and payload.get("sub"):
             try:
                 from app.security.billing_guard import normalize_user_plan as _guard_normalize
-                # Lookup del usuario real para normalización
                 user_obj = db.query(User).filter(User.id == payload["sub"]).first()
                 if user_obj:
                     _ = _guard_normalize(db, user_obj)
@@ -320,7 +232,7 @@ ROUTER_MODULES = [
     "orgs", "stats", "payments", "alerts", "rules", "reports",
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push", "promo",
-    "diag",  # 👈 diagnóstico interno (/internal/diag, /internal/diag.json)
+    "diag",
 ]
 for name in ROUTER_MODULES:
     try:
@@ -363,123 +275,6 @@ for _extra in ("subscription", "webhooks"):
     except Exception as e:
         print(f"[routers] No pude cargar {_extra}: {e}")
 
-# ===== Fallback UI: Mail connect/scan/SSE (por si el router no está cargado) =====
-try:
-    import imaplib, email, re as _re_mail, os as _os_mail, json as _json_mail, time as _time_mail
-    from typing import Generator as _Gen
-    from fastapi.responses import StreamingResponse as _StreamingResponse
-
-    _USER_EVENTS = {}
-
-    def _emit(uid: int, payload: dict):
-        _USER_EVENTS.setdefault(uid, []).append(payload)
-
-    _PATTERNS = [
-        _re_mail.compile(r"verify\\s+your\\s+account", _re_mail.I),
-        _re_mail.compile(r"password\\s+expired", _re_mail.I),
-        _re_mail.compile(r"urgent\\s+action", _re_mail.I),
-        _re_mail.compile(r"click\\s+here", _re_mail.I),
-        _re_mail.compile(r"factura|invoice|payment", _re_mail.I),
-        _re_mail.compile(r"paypal|mercado\\s*pago|stripe|crypto", _re_mail.I),
-    ]
-
-    def _sus(msg: email.message.Message) -> bool:
-        sbj = msg.get("Subject", "")
-        body = ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain":
-                    try: body += part.get_payload(decode=True).decode(errors="ignore")
-                    except: pass
-        else:
-            try: body = msg.get_payload(decode=True).decode(errors="ignore")
-            except: body = str(msg.get_payload())
-        return any(p.search(sbj) or p.search(body) for p in _PATTERNS)
-
-    def _imap(server, port, ssl, user, pwd):
-        M = imaplib.IMAP4_SSL(server, port) if ssl else imaplib.IMAP4(server, port)
-        M.login(user, pwd); M.select("INBOX"); return M
-
-    @app.get("/mail/connect", response_class=HTMLResponse)
-    def __mail_connect_form(request: Request, user=Depends(get_current_user_cookie)):
-        return app.state.templates.TemplateResponse("mail_connect.html", {"request": request, "ok": False})
-
-    @app.post("/mail/connect", response_class=HTMLResponse)
-    def __mail_connect(request: Request,
-                       email_addr: str = Form(...), username: str = Form(...),
-                       password: str = Form(...), imap_server: str = Form(...),
-                       imap_port: int = Form(...), use_ssl: bool = Form(False),
-                       user=Depends(get_current_user_cookie)):
-        _os_mail.environ["IMAP_EMAIL"] = email_addr
-        _os_mail.environ["IMAP_USER"] = username
-        _os_mail.environ["IMAP_PASS"] = password
-        _os_mail.environ["IMAP_SERVER"] = imap_server
-        _os_mail.environ["IMAP_PORT"] = str(imap_port)
-        _os_mail.environ["IMAP_SSL"] = "1" if use_ssl else "0"
-        return app.state.templates.TemplateResponse("mail_connect.html", {"request": request, "ok": True, "email_addr": email_addr})
-
-    @app.get("/mail/scanner", response_class=HTMLResponse)
-    def __mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-        html = """
-        <h1>Mail Scanner</h1>
-        <button onclick="scan()">Escanear últimos correos</button>
-        <ul id='out'></ul>
-        <script>
-        async function scan(){
-          const r = await fetch('/mail/scan', {method:'POST'}); const d = await r.json();
-          document.getElementById('out').innerHTML = (d.findings||[]).map(f=>`<li>${f.subject} - ${f.from}</li>`).join('');
-        }
-        if ('Notification' in window) Notification.requestPermission();
-        const es = new EventSource('/mail/stream');
-        es.addEventListener('mail_alert', e=>{ const d = JSON.parse(e.data);
-          try{ new Notification('Correo sospechoso', { body: `${d.subject} · ${d.from}` }); }catch(e){} });
-        </script>
-        <p><a href='/dashboard'>Volver</a></p>
-        """
-        return HTMLResponse(html)
-
-    @app.post("/mail/scan")
-    def __mail_scan(user=Depends(get_current_user_cookie)):
-        email_addr = _os_mail.getenv("IMAP_EMAIL")
-        username   = _os_mail.getenv("IMAP_USER") or email_addr
-        password   = _os_mail.getenv("IMAP_PASS")
-        server     = _os_mail.getenv("IMAP_SERVER", "imap.gmail.com")
-        port       = int(_os_mail.getenv("IMAP_PORT", "993"))
-        use_ssl    = _os_mail.getenv("IMAP_SSL", "1") == "1"
-        if not email_addr or not password:
-            raise HTTPException(400, "No hay cuenta IMAP vinculada.")
-        M = _imap(server, port, use_ssl, username, password)
-        findings = []
-        try:
-            typ, data = M.search(None, "ALL")
-            ids = data[0].split()[-20:]
-            for eid in reversed(ids):
-                typ, msg_data = M.fetch(eid, "(RFC822)")
-                msg = email.message_from_bytes(msg_data[0][1])
-                if _sus(msg):
-                    f = {"subject": msg.get("Subject", "(sin asunto)"), "from": msg.get("From", "")}
-                    findings.append(f); _emit(user["sub"], {"type":"mail_alert", "data": f})
-            return {"ok": True, "findings": findings}
-        finally:
-            try: M.logout()
-            except: pass
-
-    @app.get("/mail/stream")
-    def __mail_stream(user=Depends(get_current_user_cookie)):
-        def gen():
-            yield b"event: init\ndata: {\"ok\":true}\n\n"
-            while True:
-                q = _USER_EVENTS.get(user["sub"], [])
-                while q:
-                    ev = q.pop(0)
-                    yield f"event: {ev['type']}\ndata: { _json_mail.dumps(ev['data']) }\n\n".encode()
-                _time_mail.sleep(1)
-        return _StreamingResponse(gen(), media_type="text/event-stream")
-
-    print("[ui-fallback] /mail/connect + /mail/scanner + /mail/scan + /mail/stream montados.")
-except Exception as _e:
-    print("[ui-fallback][MAIL][ERR]", _e)
-
 # Fallback /mail/alerts/unread_count
 from fastapi.routing import APIRoute as _APIRoute
 if not any(isinstance(r, _APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
@@ -493,13 +288,11 @@ from fastapi.routing import APIRoute as _APIRoute2
 if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/pending" for r in app.routes):
     @app.get("/alerts/pending")
     def _alerts_pending_fallback():
-        # Estructura esperada por el JS del dashboard
         return {"ok": True, "pending": False, "alert": None}
 
 if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/{id}/ack" for r in app.routes):
     @app.post("/alerts/{id}/ack")
     def _alerts_ack_fallback(id: str):
-        # No-op (solo para evitar 404 en el botón "Descartar")
         return {"ok": True, "ack": True, "id": id}
 
 
@@ -523,7 +316,6 @@ def _favicon_alias():
     path = os.path.join(STATIC_DIR, "favicon.ico")
     if os.path.exists(path):
         return FileResponse(path, media_type="image/x-icon")
-    # Si no existe, devolvemos 204 para no ensuciar logs
     return Response(status_code=204)
 
 
@@ -564,14 +356,12 @@ def login_action(response: Response, email: str = Form(...), password: str = For
     hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
     if not user or not verify_password(password, hp or ""):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
-    # (opcional) normalizar plan luego del login
     try:
         from app.security.billing_guard import normalize_user_plan as _norm
         _norm(db, user)
     except Exception:
         pass
     r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    # ANTES: issue_access_cookie(r, {"sub": ..., "email": ...})
     token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
     issue_access_cookie(r, token)
     return r
@@ -633,13 +423,10 @@ if not _route_exists("/auth/login/web"):
 
 @app.get("/auth/me")
 def auth_me(request: Request, db= Depends(get_db)):
-    # Antes: u = get_current_user_cookie(request, db)
     payload = get_current_user_cookie(request)
-    # Lookup del usuario real para responder campos consistentes
     u = db.query(User).filter(User.id == payload["sub"]).first()
     if not u:
         raise HTTPException(status_code=401, detail="No autenticado")
-    # 👇 normaliza plan/flags según expiración
     try:
         from app.security.billing_guard import normalize_user_plan as _norm
         _norm(db, u)
@@ -672,7 +459,6 @@ def logout_alias():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db= Depends(get_db)):
     try:
-        # Antes: user = get_current_user_cookie(request, db)
         payload = get_current_user_cookie(request)
         user = db.query(User).filter(User.id == payload["sub"]).first()
         if not user:
@@ -742,6 +528,61 @@ def head_root(): return Response(status_code=200)
 def _log_routes():
     paths = sorted([r.path for r in app.routes if isinstance(r, APIRoute)])
     print("\n=== ROUTES ==="); [print(p) for p in paths]; print("==============\n")
-    # Aviso útil si /billing no está montado
     if not any(p.startswith("/billing") for p in paths):
         print("[WARN] No hay rutas registradas bajo /billing — verifica app/routers/billing.py y su import.")
+
+# ============================================================
+# Fallback robusto para /billing/subscriptions
+# (evita el error 'must be real number, not str' en el template)
+# ============================================================
+from decimal import Decimal
+
+def __as_int(v, d):
+    try:
+        return int(v)
+    except Exception:
+        try:
+            return int(float(v))
+        except Exception:
+            return d
+
+def __as_money(v, d):
+    try:
+        return float(Decimal(str(v).replace(",", ".")))
+    except Exception:
+        return float(d)
+
+def __pricing_ctx_from_env():
+    if os.getenv("PLAN_PRICE_CENTS"):
+        try:
+            cents = int(os.getenv("PLAN_PRICE_CENTS", "1000"))
+        except Exception:
+            cents = 1000
+        price_month = round(cents / 100.0, 2)
+    else:
+        price_month = round(__as_money(os.getenv("PLAN_PRICE", "10"), 10.0), 2)
+
+    disc_pct = __as_int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"), 20)
+    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
+    currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
+
+    biz_price = round(__as_money(os.getenv("BIZ_PRICE_MONTH_USD", "99"), 99.0), 2)
+    biz_included = __as_int(os.getenv("BIZ_INCLUDED_SEATS", "25"), 25)
+    biz_extra = round(__as_money(os.getenv("BIZ_EXTRA_SEAT_USD", "3"), 3.0), 2)
+
+    return dict(
+        price_month=price_month,
+        price_year=price_year,
+        disc_pct=disc_pct,
+        currency=currency,
+        biz_price=biz_price,
+        biz_included=biz_included,
+        biz_extra=biz_extra,
+    )
+
+from fastapi.responses import HTMLResponse as _HTML
+@app.get("/billing/subscriptions", include_in_schema=False, response_class=_HTML)
+def __billing_subs_fallback(request: Request, user=Depends(get_current_user_cookie)):
+    ctx = {"request": request, "user": user, "page_title": "Mi Suscripción | AlertTrail"}
+    ctx.update(__pricing_ctx_from_env())
+    return app.state.templates.TemplateResponse("billing.html", ctx)
