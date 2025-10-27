@@ -21,7 +21,7 @@
 <body>
   <div class="card">
     <h1>Vincular casilla (IMAP)</h1>
-    {% if ok %}<div class="ok">¡Listo! Casilla {{ email_addr }} vinculada. Podés ir a <a href="/mail/scanner">Mail Scanner</a>.</div>{% endif %}
+    {% if ok %}<div class="ok">✅ Casilla {{ email_addr }} vinculada. Podés ir a <a href="/mail/scanner">Mail Scanner</a>.</div>{% endif %}
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
     <form method="post" action="/mail/connect">
       <label>Email</label>
