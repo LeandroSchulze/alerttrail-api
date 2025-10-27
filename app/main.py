@@ -618,6 +618,16 @@ def __pricing_ctx_from_env():
         biz_extra=biz_extra,
     )
 
+# --- Alias duro para /mail (sin barra) -> /mail/ (con barra) ---
+from fastapi.routing import APIRoute as _APIRoute_mail
+
+_mail_has_alias = any(isinstance(r, _APIRoute_mail) and r.path == "/mail" for r in app.routes)
+if not _mail_has_alias:
+    @app.get("/mail", include_in_schema=False)
+    def _alias_mail_root():
+        # Si /mail/ existe, redirige; si no existe, 404 (se mantiene comportamiento esperado)
+        return RedirectResponse(url="/mail/", status_code=307)
+
 from fastapi.responses import HTMLResponse as _HTML
 @app.get("/billing/subscriptions", include_in_schema=False, response_class=_HTML)
 def __billing_subs_fallback(request: Request, user=Depends(get_current_user_cookie)):
