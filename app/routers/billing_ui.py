@@ -7,13 +7,49 @@ from app.security import get_current_user_cookie
 
 router = APIRouter(tags=["billing-ui"])
 
+def _as_int(name: str, default: int) -> int:
+    v = (os.getenv(name, "") or "").strip()
+    try:
+        return int(v.replace("_", "").replace(",", ""))
+    except Exception:
+        return int(default)
+
+def _as_float(name: str, default: float) -> float:
+    v = (os.getenv(name, "") or "").strip()
+    if not v:
+        return float(default)
+    # admite "99", "99.0", "99,0"
+    v = v.replace("_", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(v)
+    except Exception:
+        return float(default)
+
 def _pricing_ctx():
-    cents = int(os.getenv("PLAN_PRICE_CENTS", "1000"))  # USD 10 por defecto
+    # plan PRO
+    cents = _as_int("PLAN_PRICE_CENTS", 1000)  # USD 10 por defecto
     price_month = round(cents / 100.0, 2)
-    disc_pct = int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"))  # 20% por defecto
-    price_year = round(price_month * 12 * (1 - disc_pct / 100), 2)
+    disc_pct = _as_int("PLAN_ANNUAL_DISCOUNT_PCT", 20)
+    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
     currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
-    return dict(price_month=price_month, price_year=price_year, disc_pct=disc_pct, currency=currency)
+
+    # bloques “Business / Empresas” que usa billing.html
+    biz_price = _as_float("BIZ_PRICE_MONTH_USD", 99.0)               # tarjeta “Business”
+    biz_included = _as_int("BIZ_INCLUDED_SEATS", 25)                 # asientos incluidos
+    biz_extra = _as_float("BIZ_EXTRA_SEAT_USD", 3.0)                 # precio asiento extra
+    empresas_price = _as_float("EMPRESAS_PRICE_MONTH", 49.0)         # si el template lo usa
+
+    return dict(
+        price_month=price_month,
+        price_year=price_year,
+        disc_pct=disc_pct,
+        currency=currency,
+        # claves esperadas por el template
+        biz_price=biz_price,
+        biz_included=biz_included,
+        biz_extra=biz_extra,
+        empresas_price=empresas_price,
+    )
 
 @router.get("/billing", response_class=HTMLResponse, include_in_schema=False)
 def billing_page_alias(request: Request, db=Depends(get_db), user=Depends(get_current_user_cookie)):
