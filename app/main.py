@@ -103,6 +103,14 @@ except Exception as e:
     print("[WARN] payments_ui load failed:", e)
 
 
+# === UI de estadísticas ===
+try:
+    from app.routers import stats_ui
+    app.include_router(stats_ui.router)
+except Exception as e:
+    print("[WARN] stats_ui router:", e)
+
+
 # ---- DB helpers ----
 def get_db():
     db = SessionLocal()
