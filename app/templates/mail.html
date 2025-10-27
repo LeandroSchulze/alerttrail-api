@@ -5,15 +5,18 @@
   <title>Casillas de correo — AlertTrail</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a}
-    .card{border:1px solid #e2e8f0;border-radius:16px;padding:16px;max-width:720px}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a;background:#f8fafc}
+    .card{border:1px solid #e2e8f0;border-radius:16px;padding:20px;max-width:740px;background:white;box-shadow:0 2px 6px rgba(0,0,0,.04)}
     .muted{color:#64748b}
-    input[type=text]{padding:8px 10px;border:1px solid #cbd5e1;border-radius:10px;width:280px}
-    button{padding:8px 12px;border-radius:10px;border:0;background:#0ea5e9;color:white;cursor:pointer}
+    input[type=text],input[type=password],input[type=number]{padding:8px 10px;border:1px solid #cbd5e1;border-radius:10px;width:100%;max-width:320px}
+    button{padding:8px 12px;border-radius:10px;border:0;background:#0ea5e9;color:white;cursor:pointer;font-weight:600}
     button.secondary{background:#0f172a1a;color:#0f172a}
-    .row{display:flex;gap:12px;align-items:center}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
     .hint{font-size:12px;color:#64748b;margin-top:6px}
     .ok{background:#ecfeff;border:1px solid #a5f3fc;padding:8px 10px;border-radius:10px}
+    details{margin-top:16px}
+    form.imap-form{display:grid;gap:8px;margin-top:12px;max-width:380px}
+    label{font-size:14px;color:#334155;font-weight:500}
   </style>
 </head>
 <body>
@@ -29,7 +32,6 @@
         </form>
         <a href="/mail/scanner"><button type="button" class="secondary">Abrir Scanner</button></a>
       </div>
-      <p class="hint">El scanner usa las variables de entorno IMAP. La dirección guardada es para referencia.</p>
     {% else %}
       <p class="muted">No hay ninguna casilla guardada para tu usuario.</p>
       <form method="post" action="/mail/connect" class="row">
@@ -40,8 +42,34 @@
     {% endif %}
 
     <hr style="margin:18px 0">
-    <details>
-      <summary style="cursor:pointer">Ver parámetros IMAP que usará el scanner</summary>
+
+    <!-- 🔐 Formulario para ingresar credenciales IMAP -->
+    <h3 style="margin-bottom:6px">Configuración IMAP</h3>
+    <form method="post" action="/mail/settings" class="imap-form">
+      <label>Servidor IMAP
+        <input type="text" name="host" placeholder="imap.gmail.com" value="{{ linked.imap_cfg.host if linked and linked.imap_cfg else defaults.host }}" required>
+      </label>
+      <label>Puerto
+        <input type="number" name="port" value="{{ linked.imap_cfg.port if linked and linked.imap_cfg else defaults.port }}" required>
+      </label>
+      <label>Usuario
+        <input type="text" name="username" placeholder="usuario@dominio.com" value="{{ linked.imap_cfg.username if linked and linked.imap_cfg else defaults.username }}">
+      </label>
+      <label>Contraseña / App Password
+        <input type="password" name="password" placeholder="********">
+      </label>
+      <label>Carpeta
+        <input type="text" name="folder" placeholder="INBOX" value="{{ linked.imap_cfg.folder if linked and linked.imap_cfg else defaults.folder }}">
+      </label>
+      <label><input type="checkbox" name="use_ssl" {% if linked and linked.imap_cfg and linked.imap_cfg.use_ssl %}checked{% elif defaults.use_ssl %}checked{% endif %}> Usar SSL</label>
+      <label><input type="checkbox" name="mark_seen" {% if linked and linked.imap_cfg and linked.imap_cfg.mark_seen %}checked{% elif defaults.mark_seen %}checked{% endif %}> Marcar como leído al escanear</label>
+      <button type="submit">Guardar configuración</button>
+    </form>
+
+    <p class="hint">Tu configuración se guarda cifrada en el servidor. El scanner usará estos datos para conectarse automáticamente.</p>
+
+    <details style="margin-top:20px">
+      <summary style="cursor:pointer">Ver parámetros IMAP por defecto</summary>
       <ul>
         <li>Servidor: <b>{{ defaults.host }}</b></li>
         <li>Puerto: <b>{{ defaults.port }}</b></li>
@@ -50,7 +78,7 @@
         <li>Carpeta: <b>{{ defaults.folder }}</b></li>
         <li>Marcar leído: <b>{{ 'Sí' if defaults.mark_seen else 'No' }}</b></li>
       </ul>
-      <p class="hint">Editá estas variables en Render: <code>MAIL_HOST</code>, <code>MAIL_PORT</code>, <code>MAIL_USE_SSL</code>, <code>MAIL_USERNAME</code>, <code>MAIL_PASSWORD</code>, <code>MAIL_FOLDER</code>, <code>MAIL_MARK_SEEN</code>.</p>
+      <p class="hint">Podés sobreescribir estos valores desde acá sin tocar las variables del entorno.</p>
     </details>
   </div>
 </body>
