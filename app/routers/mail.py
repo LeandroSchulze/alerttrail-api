@@ -3,19 +3,26 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 import os, json, imaplib, ssl
 from pathlib import Path
+from cryptography.fernet import Fernet
 
 from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
-# Archivo plano para guardar el mail “linkeado” por usuario (simple y suficiente)
+# === Config ===
 DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LINK_FILE = DATA_DIR / "mail_link.json"
 
+FERNET_KEY = os.getenv("MAIL_CRYPT_KEY")
+fernet = Fernet(FERNET_KEY.encode()) if FERNET_KEY else None
+
+
+# === Helpers ===
 def _env_bool(v: str, default=False) -> bool:
-    if v is None: return default
-    return str(v).strip().lower() in {"1","true","yes","y","on"}
+    if v is None:
+        return default
+    return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 def _load_linked():
     if LINK_FILE.exists():
@@ -29,7 +36,7 @@ def _save_linked(data: dict):
     LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _defaults_from_env():
-    """Valores que usa el scanner; se muestran como ayuda en el UI."""
+    """Valores por defecto (display)."""
     return dict(
         host=os.getenv("MAIL_HOST", "imap.gmail.com"),
         port=int(os.getenv("MAIL_PORT", "993") or 993),
@@ -39,32 +46,75 @@ def _defaults_from_env():
         mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
     )
 
+# === UI principal ===
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_current_user_cookie)):
-    # Estado
-    linked = _load_linked().get(str(user["sub"]))  # por usuario
+    linked = _load_linked().get(str(user["sub"]))
     ctx = {
         "request": request,
         "page_title": "Casillas de correo",
         "current_user": user,
-        "linked": linked,                # None o dict con {"address": "..."}
-        "defaults": _defaults_from_env() # host/port/ssl/etc (solo display)
+        "linked": linked,
+        "defaults": _defaults_from_env(),
     }
     return request.app.state.templates.TemplateResponse("mail.html", ctx)
 
-@router.post("/connect")
-def mail_connect(address: str = Form(...), user=Depends(get_current_user_cookie)):
-    address = (address or "").strip().lower()
-    if not address or "@" not in address:
-        raise HTTPException(status_code=400, detail="Dirección inválida")
 
+# === Conectar casilla (formulario) ===
+@router.get("/connect", response_class=HTMLResponse)
+def mail_connect_form(request: Request, user=Depends(get_current_user_cookie)):
+    ctx = {
+        "request": request,
+        "page_title": "Vincular casilla (IMAP)",
+        "current_user": user,
+        "defaults": _defaults_from_env(),
+    }
+    return request.app.state.templates.TemplateResponse("mail_connect.html", ctx)
+
+
+@router.post("/connect")
+def mail_connect_post(
+    request: Request,
+    email_addr: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    imap_server: str = Form("imap.gmail.com"),
+    imap_port: int = Form(993),
+    use_ssl: bool = Form(True),
+    db_user=Depends(get_current_user_cookie),
+):
+    email_addr = (email_addr or "").strip().lower()
+    if not email_addr or "@" not in email_addr:
+        raise HTTPException(status_code=400, detail="Email inválido")
+
+    user_id = str(db_user["sub"])
     data = _load_linked()
-    data[str(user["sub"])] = {"address": address}
+    enc_pass = fernet.encrypt(password.encode()).decode() if fernet else password
+
+    data[user_id] = {
+        "email": email_addr,
+        "username": username,
+        "imap_server": imap_server,
+        "imap_port": imap_port,
+        "use_ssl": use_ssl,
+        "password": enc_pass,
+    }
     _save_linked(data)
 
-    return RedirectResponse(url="/mail", status_code=303)
+    return RedirectResponse(url="/mail?ok=1", status_code=303)
 
-# ---- Scanner UI ----
+
+# === Mail Scanner ===
+class ScanResult(BaseModel):
+    ok: bool
+    login: bool
+    folder: str
+    unread: int
+    total: int
+    marked_seen: bool
+    message: str | None = None
+
+
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
     ctx = {
@@ -76,79 +126,80 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
     }
     return request.app.state.templates.TemplateResponse("mail_scanner.html", ctx)
 
-class ScanResult(BaseModel):
-    ok: bool
-    login: bool
-    folder: str
-    unread: int
-    total: int
-    marked_seen: bool
-    message: str | None = None
 
 @router.post("/scan", response_model=ScanResult)
 def mail_scan(user=Depends(get_current_user_cookie)):
-    # Usa las ENV para conectar
-    host   = os.getenv("MAIL_HOST", "imap.gmail.com")
-    port   = int(os.getenv("MAIL_PORT", "993") or 993)
-    use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
-    username = os.getenv("MAIL_USERNAME", "")
-    password = os.getenv("MAIL_PASSWORD", "")
-    folder   = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
+    # Primero intenta usar datos vinculados por usuario
+    user_id = str(user["sub"])
+    linked = _load_linked().get(user_id)
+
+    if linked:
+        host = linked.get("imap_server", "imap.gmail.com")
+        port = int(linked.get("imap_port", 993))
+        use_ssl = bool(linked.get("use_ssl", True))
+        username = linked.get("username")
+        password = linked.get("password")
+        if fernet:
+            try:
+                password = fernet.decrypt(password.encode()).decode()
+            except Exception:
+                pass
+    else:
+        # fallback a variables de entorno
+        host = os.getenv("MAIL_HOST", "imap.gmail.com")
+        port = int(os.getenv("MAIL_PORT", "993") or 993)
+        use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
+        username = os.getenv("MAIL_USERNAME", "")
+        password = os.getenv("MAIL_PASSWORD", "")
+
+    folder = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
     mark_seen = _env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False)
 
     if not username or not password:
-        raise HTTPException(status_code=400, detail="Faltan MAIL_USERNAME o MAIL_PASSWORD en variables de entorno")
+        raise HTTPException(status_code=400, detail="Faltan credenciales IMAP")
 
     imap = None
     try:
-        if use_ssl:
-            imap = imaplib.IMAP4_SSL(host, port)
-        else:
-            imap = imaplib.IMAP4(host, port)
-
+        imap = imaplib.IMAP4_SSL(host, port) if use_ssl else imaplib.IMAP4(host, port)
         typ, _ = imap.login(username, password)
         if typ != "OK":
-            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
-                              message="Login IMAP falló")
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0,
+                              marked_seen=False, message="Login IMAP falló")
 
         typ, _ = imap.select(folder, readonly=not mark_seen)
         if typ != "OK":
-            return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False,
-                              message=f"No se pudo seleccionar la carpeta {folder}")
+            return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0,
+                              marked_seen=False, message=f"No se pudo abrir {folder}")
 
-        # total
         typ, data = imap.search(None, "ALL")
         total = len((data[0] or b"").split()) if typ == "OK" else 0
 
-        # unread
         typ, data = imap.search(None, "UNSEEN")
-        unseen_ids = (data[0] or b"").split() if typ == "OK" else []
-        unread = len(unseen_ids)
+        unseen = (data[0] or b"").split() if typ == "OK" else []
+        unread = len(unseen)
 
-        marked = False
-        if mark_seen and unseen_ids:
-            # marcar como visto los primeros N para prueba (máx 10 para no arrasar)
-            for msg_id in unseen_ids[:10]:
+        if mark_seen and unseen:
+            for msg_id in unseen[:10]:
                 imap.store(msg_id, "+FLAGS", "\\Seen")
-            marked = True
 
         imap.close()
         imap.logout()
-        return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total,
-                          marked_seen=marked, message=None)
+
+        return ScanResult(ok=True, login=True, folder=folder,
+                          unread=unread, total=total, marked_seen=mark_seen, message=None)
     except imaplib.IMAP4.error as e:
-        try:
-            if imap is not None:
+        if imap:
+            try:
                 imap.logout()
-        except Exception:
-            pass
-        return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
-                          message=f"IMAP error: {e}")
+            except Exception:
+                pass
+        return ScanResult(ok=False, login=False, folder=folder,
+                          unread=0, total=0, marked_seen=False, message=f"IMAP error: {e}")
     except Exception as e:
-        try:
-            if imap is not None:
+        if imap:
+            try:
                 imap.logout()
-        except Exception:
-            pass
-        return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
-                          message=f"Error: {e}")
+            except Exception:
+                pass
+        return ScanResult(ok=False, login=False, folder=folder,
+                          unread=0, total=0, marked_seen=False, message=f"Error: {e}")
