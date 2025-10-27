@@ -86,6 +86,37 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # 👇 Hacemos accesibles los templates para los routers (billing, etc.)
 app.state.templates = templates
 
+# --- Pegar en app/main.py (zona cercana a donde definís los fallbacks de /billing) ---
+def _billing_ctx_from_env(request, user):
+    import os
+    def _as_int(n, d): 
+        v = (os.getenv(n, "") or "").strip()
+        try: return int(v.replace("_","").replace(",",""))
+        except: return int(d)
+    def _as_float(n, d):
+        v = (os.getenv(n, "") or "").strip()
+        v = v.replace("_","").replace(" ","").replace(",",".")
+        try: return float(v)
+        except: return float(d)
+
+    cents = _as_int("PLAN_PRICE_CENTS", 1000)
+    price_month = round(cents/100.0, 2)
+    disc_pct = _as_int("PLAN_ANNUAL_DISCOUNT_PCT", 20)
+    price_year = round(price_month * 12 * (1 - disc_pct/100.0), 2)
+    currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
+
+    return {
+        "request": request, "user": user,
+        "price_month": price_month, "price_year": price_year,
+        "disc_pct": disc_pct, "currency": currency,
+        # claves que el template reclama
+        "biz_price": _as_float("BIZ_PRICE_MONTH_USD", 99.0),
+        "biz_included": _as_int("BIZ_INCLUDED_SEATS", 25),
+        "biz_extra": _as_float("BIZ_EXTRA_SEAT_USD", 3.0),
+        "empresas_price": _as_float("EMPRESAS_PRICE_MONTH", 49.0),
+    }
+
+
 
 # === UI Routers (billing, payments) ===
 try:
