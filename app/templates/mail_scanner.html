@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Mail Scanner — AlertTrail</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a}
+    .card{border:1px solid #e2e8f0;border-radius:16px;padding:16px;max-width:720px}
+    button{padding:10px 14px;border-radius:10px;border:0;background:#0ea5e9;color:white;cursor:pointer}
+    pre{background:#0f172a0d;padding:12px;border-radius:10px;overflow:auto}
+    .muted{color:#64748b}
+    .ok{background:#ecfeff;border:1px solid #a5f3fc;padding:8px 10px;border-radius:10px}
+    .bad{background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:10px}
+  </style>
+</head>
+<body>
+  <h1 style="margin-top:0">Mail Scanner</h1>
+  <p class="muted">Usa las variables de entorno IMAP. Para cambiar host/usuario/clave, editá ENV y volvé a desplegar.</p>
+
+  <div class="card">
+    {% if linked %}
+      <p class="ok">Casilla guardada: <b>{{ linked.address }}</b></p>
+    {% else %}
+      <p class="muted">No hay casilla guardada en <a href="/mail">/mail</a> (opcional).</p>
+    {% endif %}
+
+    <div style="display:flex;gap:12px;align-items:center;margin-top:8px">
+      <form id="scanForm" method="post" action="/mail/scan">
+        <button>Ejecutar scan ahora</button>
+      </form>
+      <a href="/mail"><button type="button">Volver</button></a>
+    </div>
+
+    <div id="out" style="margin-top:16px"></div>
+
+    <hr style="margin:18px 0">
+    <details>
+      <summary style="cursor:pointer">Parámetros efectivos</summary>
+      <ul>
+        <li>Servidor: <b>{{ defaults.host }}</b></li>
+        <li>Puerto: <b>{{ defaults.port }}</b></li>
+        <li>SSL: <b>{{ 'Sí' if defaults.use_ssl else 'No' }}</b></li>
+        <li>Usuario (MAIL_USERNAME): <code>{{ defaults.username or '—' }}</code></li>
+        <li>Carpeta: <b>{{ defaults.folder }}</b></li>
+        <li>Marcar leído: <b>{{ 'Sí' if defaults.mark_seen else 'No' }}</b></li>
+      </ul>
+    </details>
+  </div>
+
+<script>
+  const form = document.getElementById('scanForm');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = document.getElementById('out');
+    out.innerHTML = '<p class="muted">Conectando IMAP…</p>';
+    try {
+      const res = await fetch('/mail/scan', {method:'POST'});
+      const data = await res.json();
+      if (data.ok) {
+        out.innerHTML = `
+          <div class="ok">
+            <b>Conexión OK.</b><br>
+            Carpeta: <b>${data.folder}</b><br>
+            Emails totales: <b>${data.total}</b><br>
+            No leídos: <b>${data.unread}</b><br>
+            Marcados como leídos en esta corrida: <b>${data.marked_seen ? 'Sí' : 'No'}</b>
+          </div>`;
+      } else {
+        out.innerHTML = `<div class="bad"><b>Error:</b> ${data.message || 'falló la conexión'}</div>`;
+      }
+      out.insertAdjacentHTML('beforeend', `<pre>${JSON.stringify(data, null, 2)}</pre>`);
+    } catch (err) {
+      out.innerHTML = `<div class="bad"><b>Excepción:</b> ${err}</div>`;
+    }
+  });
+</script>
+</body>
+</html>
