@@ -24,6 +24,10 @@ from app.security import (
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
+
+# 🔧 Evita bucles /mail <-> /mail/ cuando existen ambas rutas
+app.router.redirect_slashes = False
+
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
 
 # -------- Security Headers Middleware --------
@@ -90,44 +94,6 @@ app.state.templates = templates
 # === UI Routers (billing, payments) ===
 try:
     _billing_ui = import_module("app.routers.billing_ui")
-    # --- Patch mínimo: asegurar claves numéricas esperadas por billing.html ---
-    from decimal import Decimal
-    def _to_int(v, d):
-        try:
-            return int(v)
-        except Exception:
-            try:
-                return int(float(str(v).replace(",", ".")))
-            except Exception:
-                return d
-    def _to_money(v, d):
-        try:
-            return float(Decimal(str(v).replace(",", ".")))
-        except Exception:
-            return float(d)
-
-    if hasattr(_billing_ui, "_pricing_ctx"):
-        _orig_pricing_ctx = _billing_ui._pricing_ctx
-        def _pricing_ctx_patched():
-            ctx = {}
-            try:
-                ctx = _orig_pricing_ctx() or {}
-            except Exception:
-                ctx = {}
-            # Defaults seguros para keys usadas por billing.html
-            ctx["price_month"] = _to_money(ctx.get("price_month", os.getenv("PLAN_PRICE", "10")), 10.0)
-            ctx["price_year"]  = _to_money(ctx.get("price_year",
-                                    ctx["price_month"] * 12 * (1 - _to_int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"), 20)/100.0)
-                                ), round(ctx["price_month"] * 12 * 0.8, 2))
-            ctx["disc_pct"]    = _to_int(ctx.get("disc_pct", os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20")), 20)
-            ctx["currency"]    = (ctx.get("currency") or os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
-            # 👇 claves que faltaban y rompían el template
-            ctx["biz_price"]     = _to_money(ctx.get("biz_price", os.getenv("BIZ_PRICE_MONTH_USD", "99")), 99.0)
-            ctx["biz_included"]  = _to_int(ctx.get("biz_included", os.getenv("BIZ_INCLUDED_SEATS", "25")), 25)
-            ctx["biz_extra"]     = _to_money(ctx.get("biz_extra", os.getenv("BIZ_EXTRA_SEAT_USD", "3")), 3.0)
-            return ctx
-        _billing_ui._pricing_ctx = _pricing_ctx_patched  # ← parche en caliente
-    # --------------------------------------------------------------------------
     app.include_router(_billing_ui.router)
 except Exception as e:
     print("[WARN] billing_ui load failed:", e)
@@ -333,10 +299,16 @@ if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/{id}/ack" for r in a
     def _alerts_ack_fallback(id: str):
         return {"ok": True, "ack": True, "id": id}
 
-
 @app.get("/admin/subscriptions", include_in_schema=False)
 def _alias_admin_subscriptions():
     return RedirectResponse(url="/billing", status_code=302)
+
+# ---- Alias estable: /mail -> /mail/ (sin loop)
+from fastapi.routing import APIRoute as _APIRoute_mail_alias
+if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in app.routes):
+    @app.get("/mail", include_in_schema=False)
+    def _alias_mail_root():
+        return RedirectResponse(url="/mail/", status_code=307)
 
 # ---- Files básicos ----
 @app.get("/sw.js", include_in_schema=False)
@@ -617,16 +589,6 @@ def __pricing_ctx_from_env():
         biz_included=biz_included,
         biz_extra=biz_extra,
     )
-
-# --- Alias duro para /mail (sin barra) -> /mail/ (con barra) ---
-from fastapi.routing import APIRoute as _APIRoute_mail
-
-_mail_has_alias = any(isinstance(r, _APIRoute_mail) and r.path == "/mail" for r in app.routes)
-if not _mail_has_alias:
-    @app.get("/mail", include_in_schema=False)
-    def _alias_mail_root():
-        # Si /mail/ existe, redirige; si no existe, 404 (se mantiene comportamiento esperado)
-        return RedirectResponse(url="/mail/", status_code=307)
 
 from fastapi.responses import HTMLResponse as _HTML
 @app.get("/billing/subscriptions", include_in_schema=False, response_class=_HTML)
