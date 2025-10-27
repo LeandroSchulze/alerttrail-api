@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vincular casilla</title>
   <style>
-    body { font-family: system-ui, Arial, sans-serif; background:#f6fbff; margin:0; display:grid; place-items:center; height:100vh; }
+    body { font-family: system-ui, Arial, sans-serif; background:#f6fbff; margin:0; display:grid; place-items:center; min-height:100vh; }
     .card { background:#fff; padding:24px; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.07); width:100%; max-width:520px; }
     h1 { margin:0 0 12px; font-size:1.25rem; }
     label { display:block; font-size:.9rem; margin:10px 0 6px; }
@@ -21,7 +21,7 @@
 <body>
   <div class="card">
     <h1>Vincular casilla (IMAP)</h1>
-    {% if ok %}<div class="ok">✅ Casilla {{ email_addr }} vinculada. Podés ir a <a href="/mail/scanner">Mail Scanner</a>.</div>{% endif %}
+    {% if ok %}<div class="ok">¡Listo! Casilla {{ email_addr }} vinculada. Probá el <a href="/mail/scanner">Mail Scanner</a>.</div>{% endif %}
     {% if error %}<div class="err">{{ error }}</div>{% endif %}
     <form method="post" action="/mail/connect">
       <label>Email</label>
