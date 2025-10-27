@@ -6,40 +6,48 @@ from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-# Helpers robustos para ENV
-def _as_int(env_name: str, default: int) -> int:
-    v = (os.getenv(env_name, "") or "").strip()
+def _as_int(name: str, default: int) -> int:
+    v = (os.getenv(name, "") or "").strip()
     try:
-        v = v.replace("_", "")
-        return int(v)
+        return int(v.replace("_", "").replace(",", ""))
     except Exception:
         return int(default)
 
-def _as_str(env_name: str, default: str) -> str:
-    v = (os.getenv(env_name) or default)
-    return (v or default).strip()
-
-PLAN_PRICE_CENTS = _as_int("PLAN_PRICE_CENTS", 1000)          # 1000 = USD 10
-PLAN_CURRENCY    = (_as_str("PLAN_CURRENCY", "USD") or "USD").upper()
-REQ_TIMEOUT      = _as_int("MP_REQ_TIMEOUT_SEC", 25)
+def _as_float(name: str, default: float) -> float:
+    v = (os.getenv(name, "") or "").strip()
+    v = v.replace("_", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(v)
+    except Exception:
+        return float(default)
 
 def _pricing_ctx():
-    cents = PLAN_PRICE_CENTS
+    cents = _as_int("PLAN_PRICE_CENTS", 1000)
     price_month = round(cents / 100.0, 2)
     disc_pct = _as_int("PLAN_ANNUAL_DISCOUNT_PCT", 20)
-    disc_pct = max(0, min(95, disc_pct))
-    price_year = round(price_month * 12 * (1 - disc_pct/100.0), 2)
-    currency = PLAN_CURRENCY
-    return dict(price_month=price_month, price_year=price_year, disc_pct=disc_pct, currency=currency)
+    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
+    currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
+
+    biz_price   = _as_float("BIZ_PRICE_MONTH_USD", 99.0)
+    biz_included= _as_int("BIZ_INCLUDED_SEATS", 25)
+    biz_extra   = _as_float("BIZ_EXTRA_SEAT_USD", 3.0)
+    empresas_price = _as_float("EMPRESAS_PRICE_MONTH", 49.0)
+
+    return dict(
+        price_month=price_month, price_year=price_year, disc_pct=disc_pct, currency=currency,
+        biz_price=biz_price, biz_included=biz_included, biz_extra=biz_extra, empresas_price=empresas_price
+    )
 
 @router.get("/", response_class=HTMLResponse)
 def billing_page(request: Request, user=Depends(get_current_user_cookie)):
-    ctx = {"request": request, "user": user, **_pricing_ctx()}
+    ctx = {"request": request, "user": user}
+    ctx.update(_pricing_ctx())
     return request.app.state.templates.TemplateResponse("billing.html", ctx)
 
 @router.get("/subscriptions", response_class=HTMLResponse)
 def billing_subscriptions(request: Request, user=Depends(get_current_user_cookie)):
-    ctx = {"request": request, "user": user, **_pricing_ctx()}
+    ctx = {"request": request, "user": user}
+    ctx.update(_pricing_ctx())
     return request.app.state.templates.TemplateResponse("billing.html", ctx)
 
 @router.get("/me")
