@@ -2,7 +2,7 @@
 # AlertTrail API - Main
 # ============================================
 
-import os, re
+import os, re, json
 from pathlib import Path
 from importlib import import_module
 
@@ -24,8 +24,7 @@ from app.security import (
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
-
-# 🔧 Evita bucles /mail <-> /mail/ cuando existen ambas rutas
+# Evita bucles /mail <-> /mail/
 app.router.redirect_slashes = False
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
@@ -40,16 +39,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
-        # Cabeceras de seguridad recomendadas
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        # CSP mínima; ajustá fonts/scripts si tu front los necesita
         resp.headers.setdefault("Content-Security-Policy",
             "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:")
-        # Permissions-Policy básica (ajustá según features que uses)
         resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-        # HSTS solo bajo HTTPS (Render envía x-forwarded-proto)
         if (request.url.scheme == "https") or (request.headers.get("x-forwarded-proto") == "https"):
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
         return resp
@@ -87,9 +82,7 @@ Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
-# 👇 Hacemos accesibles los templates para los routers (billing, etc.)
 app.state.templates = templates
-
 
 # === UI Routers (billing, payments) ===
 try:
@@ -104,14 +97,12 @@ try:
 except Exception as e:
     print("[WARN] payments_ui load failed:", e)
 
-
 # === UI de estadísticas ===
 try:
     from app.routers import stats_ui
     app.include_router(stats_ui.router)
 except Exception as e:
     print("[WARN] stats_ui router:", e)
-
 
 # ---- DB helpers ----
 def get_db():
@@ -189,10 +180,6 @@ from app.security import get_current_user_cookie as _guard_get_user
 
 @app.middleware("http")
 async def pro_expiry_guard(request: Request, call_next):
-    """
-    En requests autenticadas, normaliza el plan del usuario si hace falta.
-    Se limita a rutas “de usuario” para evitar costo innecesario en assets.
-    """
     PATHS_GUARD = ("/dashboard", "/auth/me", "/billing", "/alerts", "/rules", "/reports", "/mail")
     fast_path = request.url.path
     if not any(fast_path.startswith(p) for p in PATHS_GUARD):
@@ -217,7 +204,7 @@ async def pro_expiry_guard(request: Request, call_next):
 
     return await call_next(request)
 
-# --- CORS (si necesitás front externo) ---
+# --- CORS ---
 try:
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
@@ -279,22 +266,177 @@ for _extra in ("subscription", "webhooks"):
     except Exception as e:
         print(f"[routers] No pude cargar {_extra}: {e}")
 
-# Fallback /mail/alerts/unread_count
-from fastapi.routing import APIRoute as _APIRoute
-if not any(isinstance(r, _APIRoute) and r.path == "/mail/alerts/unread_count" for r in app.routes):
+# ---- Alias estable /mail -> /mail/ (si existe el path /mail/, esto solo redirige)
+from fastapi.routing import APIRoute as _APIRoute_mail_alias
+if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in app.routes):
+    @app.get("/mail", include_in_schema=False)
+    def _alias_mail_root():
+        return RedirectResponse(url="/mail/", status_code=307)
+
+# ---- Fallback MAIL si el router no cargó ----
+def _route_exists(path: str) -> bool:
+    return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
+
+if not _route_exists("/mail/"):
+    print("[routers] WARN: /mail/ no registrado — activando fallback mínimo en main.py")
+
+    from fastapi import APIRouter
+    import imaplib
+    from pydantic import BaseModel
+
+    mail_router = APIRouter(prefix="/mail", tags=["mail"])
+
+    DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LINK_FILE = DATA_DIR / "mail_link.json"
+
+    def _env_bool(v: str, default=False) -> bool:
+        if v is None: return default
+        return str(v).strip().lower() in {"1","true","yes","y","on"}
+
+    def _load_linked():
+        if LINK_FILE.exists():
+            try:
+                return json.loads(LINK_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def _save_linked(data: dict):
+        LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _defaults_from_env():
+        return dict(
+            host=os.getenv("MAIL_HOST", "imap.gmail.com"),
+            port=int(os.getenv("MAIL_PORT", "993") or 993),
+            use_ssl=_env_bool(os.getenv("MAIL_USE_SSL", "true"), True),
+            username=os.getenv("MAIL_USERNAME", ""),
+            folder=os.getenv("MAIL_FOLDER", "INBOX") or "INBOX",
+            mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
+        )
+
+    @mail_router.get("/", response_class=HTMLResponse)
+    def mail_index(request: Request, user=Depends(get_current_user_cookie)):
+        linked = _load_linked().get(str(user["sub"]))
+        ctx = {"request": request, "page_title": "Casillas de correo",
+               "current_user": user, "linked": linked, "defaults": _defaults_from_env()}
+        try:
+            return app.state.templates.TemplateResponse("mail.html", ctx)
+        except TemplateNotFound:
+            html = f"""<!doctype html><meta charset='utf-8'>
+            <div style="font-family:system-ui;padding:24px">
+              <h1>Mail</h1>
+              <p>Cuenta linkeada: <b>{(linked or {}).get('address','-')}</b></p>
+              <p><a href="/mail/scanner">Ir al scanner</a></p>
+            </div>"""
+            return HTMLResponse(html)
+
+    @mail_router.post("/connect")
+    def mail_connect(address: str = Form(...), user=Depends(get_current_user_cookie)):
+        address = (address or "").strip().lower()
+        if not address or "@" not in address:
+            raise HTTPException(status_code=400, detail="Dirección inválida")
+        data = _load_linked()
+        data[str(user["sub"])] = {"address": address}
+        _save_linked(data)
+        return RedirectResponse(url="/mail/", status_code=303)
+
+    @mail_router.get("/scanner", response_class=HTMLResponse)
+    def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
+        ctx = {"request": request, "page_title": "Mail Scanner",
+               "current_user": user, "linked": _load_linked().get(str(user["sub"])),
+               "defaults": _defaults_from_env()}
+        try:
+            return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Mail Scanner</h1>")
+
+    class ScanResult(BaseModel):
+        ok: bool
+        login: bool
+        folder: str
+        unread: int
+        total: int
+        marked_seen: bool
+        message: str | None = None
+
+    @mail_router.post("/scan", response_model=ScanResult)
+    def mail_scan(user=Depends(get_current_user_cookie)):
+        host   = os.getenv("MAIL_HOST", "imap.gmail.com")
+        port   = int(os.getenv("MAIL_PORT", "993") or 993)
+        use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
+        username = os.getenv("MAIL_USERNAME", "")
+        password = os.getenv("MAIL_PASSWORD", "")
+        folder   = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
+        mark_seen = _env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False)
+
+        if not username or not password:
+            raise HTTPException(status_code=400, detail="Faltan MAIL_USERNAME o MAIL_PASSWORD")
+
+        imap = None
+        try:
+            if use_ssl:
+                imap = imaplib.IMAP4_SSL(host, port)
+            else:
+                imap = imaplib.IMAP4(host, port)
+
+            typ, _ = imap.login(username, password)
+            if typ != "OK":
+                return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
+                                  message="Login IMAP falló")
+
+            typ, _ = imap.select(folder, readonly=not mark_seen)
+            if typ != "OK":
+                return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False,
+                                  message=f"No se pudo seleccionar la carpeta {folder}")
+
+            typ, data = imap.search(None, "ALL")
+            total = len((data[0] or b"").split()) if typ == "OK" else 0
+
+            typ, data = imap.search(None, "UNSEEN")
+            unseen_ids = (data[0] or b"").split() if typ == "OK" else []
+            unread = len(unseen_ids)
+
+            marked = False
+            if mark_seen and unseen_ids:
+                for msg_id in unseen_ids[:10]:
+                    imap.store(msg_id, "+FLAGS", "\\Seen")
+                marked = True
+
+            imap.close(); imap.logout()
+            return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total,
+                              marked_seen=marked, message=None)
+        except imaplib.IMAP4.error as e:
+            try:
+                if imap is not None: imap.logout()
+            except Exception: pass
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
+                              message=f"IMAP error: {e}")
+        except Exception as e:
+            try:
+                if imap is not None: imap.logout()
+            except Exception: pass
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
+                              message=f"Error: {e}")
+
+    app.include_router(mail_router)
+
+# ---- Fallback /mail/alerts/unread_count
+from fastapi.routing import APIRoute as _APIRoute_1
+if not any(isinstance(r, _APIRoute_1) and r.path == "/mail/alerts/unread_count" for r in app.routes):
     @app.get("/mail/alerts/unread_count")
     def _fb_unread_count():
         return {"unread": 0, "count": 0}
 
-# Fallback /alerts/pending y /alerts/{id}/ack si no existen
-from fastapi.routing import APIRoute as _APIRoute2
+# Fallback /alerts/pending y /alerts/{id}/ack
+from fastapi.routing import APIRoute as _APIRoute_2
 
-if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/pending" for r in app.routes):
+if not any(isinstance(r, _APIRoute_2) and r.path == "/alerts/pending" for r in app.routes):
     @app.get("/alerts/pending")
     def _alerts_pending_fallback():
         return {"ok": True, "pending": False, "alert": None}
 
-if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/{id}/ack" for r in app.routes):
+if not any(isinstance(r, _APIRoute_2) and r.path == "/alerts/{id}/ack" for r in app.routes):
     @app.post("/alerts/{id}/ack")
     def _alerts_ack_fallback(id: str):
         return {"ok": True, "ack": True, "id": id}
@@ -302,13 +444,6 @@ if not any(isinstance(r, _APIRoute2) and r.path == "/alerts/{id}/ack" for r in a
 @app.get("/admin/subscriptions", include_in_schema=False)
 def _alias_admin_subscriptions():
     return RedirectResponse(url="/billing", status_code=302)
-
-# ---- Alias estable: /mail -> /mail/ (sin loop)
-from fastapi.routing import APIRoute as _APIRoute_mail_alias
-if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in app.routes):
-    @app.get("/mail", include_in_schema=False)
-    def _alias_mail_root():
-        return RedirectResponse(url="/mail/", status_code=307)
 
 # ---- Files básicos ----
 @app.get("/sw.js", include_in_schema=False)
@@ -320,7 +455,6 @@ def service_worker_root():
             sw_path = alt
     return FileResponse(sw_path, media_type="application/javascript")
 
-# Alias para favicon
 @app.get("/favicon.ico", include_in_schema=False)
 def _favicon_alias():
     path = os.path.join(STATIC_DIR, "favicon.ico")
@@ -328,8 +462,7 @@ def _favicon_alias():
         return FileResponse(path, media_type="image/x-icon")
     return Response(status_code=204)
 
-
-# ---- Home/Login/Dashboard (igual a tu versión con fallback) ----
+# ---- Home/Login/Dashboard ----
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_optional)):
     if user:
@@ -348,13 +481,11 @@ def home(request: Request, user=Depends(get_current_user_optional)):
 def login_alias():
     return RedirectResponse(url="/auth/login", status_code=302)
 
-from fastapi.routing import APIRoute
-def _route_exists(path: str) -> bool:
-    return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
+from fastapi.routing import APIRoute as _APIRoute_chk
 
 def _route_has_method(path: str, method: str) -> bool:
     for r in app.routes:
-        if isinstance(r, APIRoute) and r.path == path:
+        if isinstance(r, _APIRoute_chk) and r.path == path:
             if r.methods and method.upper() in r.methods:
                 return True
     return False
@@ -516,7 +647,6 @@ async def http_exc_handler(request: Request, exc: HTTPException):
                 "<div style='font-family:system-ui;padding:24px'>"
                 "<h2>Acceso denegado</h2>"
                 f"<p style='color:#475569'>{exc.detail or 'No autorizado'}</p>"
-                "<p><a href='/dashboard' style='color:#2563eb;text-decoration:none'>&larr; Volver</a></p>"
                 "</div>")
         return HTMLResponse(body, status_code=403)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
@@ -543,7 +673,6 @@ def _log_routes():
 
 # ============================================================
 # Fallback robusto para /billing/subscriptions
-# (evita el error 'must be real number, not str' en el template)
 # ============================================================
 from decimal import Decimal
 
