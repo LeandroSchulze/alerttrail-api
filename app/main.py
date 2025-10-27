@@ -181,7 +181,8 @@ try:
 
     @app.get("/billing", response_class=HTMLResponse)
     def __billing_fallback(request: Request, user=_Depends(get_current_user_cookie)):
-        return app.state.templates.TemplateResponse("billing.html", _ctx(request, user))
+        return app.state.templates.TemplateResponse("billing.html", _billing_ctx_from_env(request, user))
+
 
     @app.get("/billing/subscriptions", response_class=HTMLResponse)
     def __billing_subs_fallback(request: Request, user=_Depends(get_current_user_cookie)):
