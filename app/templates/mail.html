@@ -5,46 +5,174 @@
   <title>Casillas de correo — AlertTrail</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a;background:#f8fafc}
-    .card{border:1px solid #e2e8f0;border-radius:16px;padding:20px;max-width:740px;background:white;box-shadow:0 2px 6px rgba(0,0,0,.04)}
-    .muted{color:#64748b}
-    input[type=text],input[type=password],input[type=number]{padding:8px 10px;border:1px solid #cbd5e1;border-radius:10px;width:100%;max-width:320px}
-    button{padding:8px 12px;border-radius:10px;border:0;background:#0ea5e9;color:white;cursor:pointer;font-weight:600}
-    button.secondary{background:#0f172a1a;color:#0f172a}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    .hint{font-size:12px;color:#64748b;margin-top:6px}
-    .ok{background:#ecfeff;border:1px solid #a5f3fc;padding:8px 10px;border-radius:10px}
-    details{margin-top:16px}
-    form.imap-form{display:grid;gap:8px;margin-top:12px;max-width:380px}
-    label{font-size:14px;color:#334155;font-weight:500}
+    :root {
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --brand: #0ea5e9;
+      --accent: #e0f2fe;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+      color: var(--text);
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+      padding: 28px 32px;
+      width: 100%;
+      max-width: 600px;
+      animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+      from {opacity: 0; transform: translateY(10px);}
+      to {opacity: 1; transform: translateY(0);}
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 16px;
+      font-size: 1.6rem;
+    }
+
+    .ok {
+      background: var(--accent);
+      border: 1px solid #a5f3fc;
+      padding: 10px 12px;
+      border-radius: 12px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+
+    .muted { color: var(--muted); }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+    }
+
+    input[type=text],
+    input[type=password],
+    input[type=number] {
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      width: 100%;
+      max-width: 100%;
+      background: #f8fafc;
+      font-size: 15px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 0;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+    }
+
+    button.primary {
+      background: var(--brand);
+      color: #fff;
+      width: 100%;
+    }
+
+    button.secondary {
+      background: #f1f5f9;
+      color: var(--text);
+    }
+
+    form.imap-form {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    label {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    details {
+      margin-top: 20px;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: var(--brand);
+      font-weight: 600;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+      text-align: center;
+    }
+
+    hr {
+      margin: 20px 0;
+      border: 0;
+      border-top: 1px solid var(--border);
+    }
   </style>
 </head>
 <body>
-  <h1 style="margin-top:0">Casillas de correo</h1>
-
   <div class="card">
+    <h1>Casillas de correo</h1>
+
     {% if linked %}
       <p class="ok">Casilla linkeada: <b>{{ linked.address }}</b></p>
-      <div class="row" style="margin-top:8px;gap:8px">
+      <div class="row">
         <form method="post" action="/mail/connect">
           <input type="text" name="address" placeholder="otro@dominio.com" required>
-          <button>Reemplazar</button>
+          <button class="secondary">Reemplazar</button>
         </form>
         <a href="/mail/scanner"><button type="button" class="secondary">Abrir Scanner</button></a>
       </div>
     {% else %}
-      <p class="muted">No hay ninguna casilla guardada para tu usuario.</p>
-      <form method="post" action="/mail/connect" class="row">
-        <input type="text" name="address" placeholder="tu_correo@example.com" required>
-        <button>Vincular casilla</button>
+      <p class="muted" style="text-align:center;">No hay ninguna casilla guardada para tu usuario.</p>
+      <div class="row">
+        <form method="post" action="/mail/connect">
+          <input type="text" name="address" placeholder="tu_correo@example.com" required>
+          <button class="primary">Vincular casilla</button>
+        </form>
         <a href="/mail/scanner"><button type="button" class="secondary">Probar Scanner</button></a>
-      </form>
+      </div>
     {% endif %}
 
-    <hr style="margin:18px 0">
+    <hr>
 
-    <!-- 🔐 Formulario para ingresar credenciales IMAP -->
-    <h3 style="margin-bottom:6px">Configuración IMAP</h3>
+    <h3 style="text-align:center;margin-bottom:6px">Configuración IMAP</h3>
     <form method="post" action="/mail/settings" class="imap-form">
       <label>Servidor IMAP
         <input type="text" name="host" placeholder="imap.gmail.com" value="{{ linked.imap_cfg.host if linked and linked.imap_cfg else defaults.host }}" required>
@@ -61,16 +189,22 @@
       <label>Carpeta
         <input type="text" name="folder" placeholder="INBOX" value="{{ linked.imap_cfg.folder if linked and linked.imap_cfg else defaults.folder }}">
       </label>
-      <label><input type="checkbox" name="use_ssl" {% if linked and linked.imap_cfg and linked.imap_cfg.use_ssl %}checked{% elif defaults.use_ssl %}checked{% endif %}> Usar SSL</label>
-      <label><input type="checkbox" name="mark_seen" {% if linked and linked.imap_cfg and linked.imap_cfg.mark_seen %}checked{% elif defaults.mark_seen %}checked{% endif %}> Marcar como leído al escanear</label>
-      <button type="submit">Guardar configuración</button>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" name="use_ssl" {% if linked and linked.imap_cfg and linked.imap_cfg.use_ssl %}checked{% elif defaults.use_ssl %}checked{% endif %}>
+        Usar SSL
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" name="mark_seen" {% if linked and linked.imap_cfg and linked.imap_cfg.mark_seen %}checked{% elif defaults.mark_seen %}checked{% endif %}>
+        Marcar como leído al escanear
+      </label>
+      <button class="primary" type="submit">💾 Guardar configuración</button>
     </form>
 
     <p class="hint">Tu configuración se guarda cifrada en el servidor. El scanner usará estos datos para conectarse automáticamente.</p>
 
-    <details style="margin-top:20px">
-      <summary style="cursor:pointer">Ver parámetros IMAP por defecto</summary>
-      <ul>
+    <details>
+      <summary>Ver parámetros IMAP por defecto</summary>
+      <ul style="margin-top:8px">
         <li>Servidor: <b>{{ defaults.host }}</b></li>
         <li>Puerto: <b>{{ defaults.port }}</b></li>
         <li>SSL: <b>{{ 'Sí' if defaults.use_ssl else 'No' }}</b></li>
@@ -78,7 +212,6 @@
         <li>Carpeta: <b>{{ defaults.folder }}</b></li>
         <li>Marcar leído: <b>{{ 'Sí' if defaults.mark_seen else 'No' }}</b></li>
       </ul>
-      <p class="hint">Podés sobreescribir estos valores desde acá sin tocar las variables del entorno.</p>
     </details>
   </div>
 </body>
