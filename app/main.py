@@ -86,6 +86,23 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # 👇 Hacemos accesibles los templates para los routers (billing, etc.)
 app.state.templates = templates
 
+
+# === UI Routers (billing, payments) ===
+try:
+    from importlib import import_module
+    _billing_ui = import_module("app.routers.billing_ui")
+    app.include_router(_billing_ui.router)
+except Exception as e:
+    print("[WARN] billing_ui load failed:", e)
+
+try:
+    from importlib import import_module
+    _payments_ui = import_module("app.routers.payments_ui")
+    app.include_router(_payments_ui.router)
+except Exception as e:
+    print("[WARN] payments_ui load failed:", e)
+
+
 # ---- DB helpers ----
 def get_db():
     db = SessionLocal()
