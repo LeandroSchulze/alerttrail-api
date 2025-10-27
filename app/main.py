@@ -90,6 +90,44 @@ app.state.templates = templates
 # === UI Routers (billing, payments) ===
 try:
     _billing_ui = import_module("app.routers.billing_ui")
+    # --- Patch mínimo: asegurar claves numéricas esperadas por billing.html ---
+    from decimal import Decimal
+    def _to_int(v, d):
+        try:
+            return int(v)
+        except Exception:
+            try:
+                return int(float(str(v).replace(",", ".")))
+            except Exception:
+                return d
+    def _to_money(v, d):
+        try:
+            return float(Decimal(str(v).replace(",", ".")))
+        except Exception:
+            return float(d)
+
+    if hasattr(_billing_ui, "_pricing_ctx"):
+        _orig_pricing_ctx = _billing_ui._pricing_ctx
+        def _pricing_ctx_patched():
+            ctx = {}
+            try:
+                ctx = _orig_pricing_ctx() or {}
+            except Exception:
+                ctx = {}
+            # Defaults seguros para keys usadas por billing.html
+            ctx["price_month"] = _to_money(ctx.get("price_month", os.getenv("PLAN_PRICE", "10")), 10.0)
+            ctx["price_year"]  = _to_money(ctx.get("price_year",
+                                    ctx["price_month"] * 12 * (1 - _to_int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"), 20)/100.0)
+                                ), round(ctx["price_month"] * 12 * 0.8, 2))
+            ctx["disc_pct"]    = _to_int(ctx.get("disc_pct", os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20")), 20)
+            ctx["currency"]    = (ctx.get("currency") or os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
+            # 👇 claves que faltaban y rompían el template
+            ctx["biz_price"]     = _to_money(ctx.get("biz_price", os.getenv("BIZ_PRICE_MONTH_USD", "99")), 99.0)
+            ctx["biz_included"]  = _to_int(ctx.get("biz_included", os.getenv("BIZ_INCLUDED_SEATS", "25")), 25)
+            ctx["biz_extra"]     = _to_money(ctx.get("biz_extra", os.getenv("BIZ_EXTRA_SEAT_USD", "3")), 3.0)
+            return ctx
+        _billing_ui._pricing_ctx = _pricing_ctx_patched  # ← parche en caliente
+    # --------------------------------------------------------------------------
     app.include_router(_billing_ui.router)
 except Exception as e:
     print("[WARN] billing_ui load failed:", e)
