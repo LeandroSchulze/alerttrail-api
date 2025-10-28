@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Suscripciones — AlertTrail</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#f7fafc;--panel:#fff;--line:#e5e7eb;--text:#0f172a;--muted:#475569;--brand:#2563eb}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto}
+  .wrap{max-width:980px;margin:32px auto;padding:0 16px}
+  .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .title{font-size:1.6rem;margin:0}
+  .back{color:var(--brand);text-decoration:none}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+  .muted{color:var(--muted)}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1 1 320px}
+  .btn{display:inline-block;background:var(--brand);color:#fff;text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700}
+  .btn-outline{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:10px 14px;text-decoration:none;color:var(--text)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .chip{padding:8px 10px;border:1px solid var(--line);border-radius:999px;background:#f8fafc}
+</style>
+
+<div class="wrap">
+  <div class="header">
+    <h1 class="title">Suscripciones</h1>
+    <a class="back" href="/billing">← Volver a Facturación</a>
+  </div>
+
+  <div class="panel">
+    <p class="muted">Gestioná tu suscripción actual y el ciclo de facturación.</p>
+    <div class="row" style="margin-top:8px">
+      <div class="col">
+        <h3 style="margin:0 0 6px">Tu plan</h3>
+        <div class="chips">
+          <span class="chip">{{ (user.plan or 'FREE') }}</span>
+          <span class="chip">{{ currency }} {{ '%.2f' % price_month }} / mes</span>
+          <span class="chip">Anual: {{ currency }} {{ '%.2f' % price_year }} ({{ disc_pct }}% OFF)</span>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+          <a class="btn" href="/billing/checkout?plan=PRO">Cambiar a PRO</a>
+          <a class="btn-outline" href="/billing/checkout?plan=BIZ">Cambiar a EMPRESAS</a>
+          <a class="btn-outline" href="/billing">Ver historial y estado</a>
+        </div>
+      </div>
+      <div class="col">
+        <h3 style="margin:0 0 6px">EMPRESAS</h3>
+        <p class="muted" style="margin:0 0 8px">Incluye <b>{{ biz_included }}</b> cuentas, asientos extra <b>{{ currency }} {{ '%.2f' % biz_extra }}</b>/mes por usuario.</p>
+        <a class="btn-outline" href="/billing/checkout?plan=BIZ">Contratar Empresas</a>
+      </div>
+    </div>
+  </div>
+</div>
