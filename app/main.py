@@ -383,6 +383,29 @@ if not _route_exists("/mail/"):
             mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
         )
 
+    # ============================================================
+# Fallback simple para /billing (evita 404 si no hay router)
+# ============================================================
+from fastapi import Request, Depends
+from fastapi.responses import HTMLResponse as _HTML
+from app.security import get_current_user_cookie
+
+def __pricing_ctx_from_env():
+    import os
+    try:
+        price_month = float(os.getenv("PLAN_PRICE", "10"))
+    except:
+        price_month = 10.0
+    disc_pct = int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"))
+    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
+    return dict(price_month=price_month, price_year=price_year, disc_pct=disc_pct)
+
+@app.get("/billing", include_in_schema=False, response_class=_HTML)
+async def __billing_fallback(request: Request, user=Depends(get_current_user_cookie)):
+    ctx = {"request": request, "user": user, "page_title": "Facturación | AlertTrail"}
+    ctx.update(__pricing_ctx_from_env())
+    return app.state.templates.TemplateResponse("billing.html", ctx)
+
     @mail_router.get("/", response_class=HTMLResponse)
     def mail_index(request: Request, user=Depends(get_current_user_cookie)):
         linked = _load_linked().get(str(user["sub"]))
