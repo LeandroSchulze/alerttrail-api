@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Suscripciones — AlertTrail</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --line: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --brand: #2563eb;
+      --accent: #1e40af;
+      --ok: #16a34a;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 60px auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 1.8rem;
+    }
+
+    .muted { color: var(--muted); }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px;
+      margin-top: 20px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .chip {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      color: #1e3a8a;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      background: var(--brand);
+      color: #fff;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .btn:hover { filter: brightness(1.05); }
+
+    .btn.outline {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    .btn.outline:hover {
+      border-color: #cbd5e1;
+      box-shadow: 0 0 0 3px #e2e8f0;
+    }
+
+    .right {
+      text-align: right;
+      margin-top: 8px;
+    }
+
+    .link {
+      color: var(--brand);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Suscripciones</h1>
+    <p class="muted">Gestioná tu suscripción actual y el ciclo de facturación.</p>
+
+    <div class="panel">
+      <h3>Tu plan actual</h3>
+      <div class="chips">
+        <span class="chip">{{ plan }}</span>
+        <span class="chip">USD {{ "%.2f"|format(price_month) }} / mes</span>
+        <span class="chip">Anual: USD {{ "%.2f"|format(price_year) }} ({{ disc_pct if disc_pct else 20 }}% OFF)</span>
+      </div>
+
+      {% if is_admin %}
+        <p class="muted">Sos administrador — accedés al plan PRO de forma completa.</p>
+      {% elif is_pro %}
+        <p class="muted">Tenés una cuenta PRO activa.</p>
+      {% else %}
+        <p class="muted">Actualmente estás en el plan gratuito.</p>
+      {% endif %}
+
+      <div class="actions">
+        <a class="btn" href="/billing/checkout?plan=PRO">Cambiar a PRO</a>
+        <a class="btn outline" href="/billing/checkout?plan=BIZ">Cambiar a EMPRESAS</a>
+        <a class="btn outline" href="/billing">Ver historial y estado</a>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Empresas</h3>
+      <p class="muted">Incluye <strong>{{ biz_included }}</strong> cuentas. Asientos extra: <strong>USD {{ "%.2f"|format(biz_extra) }}</strong> / mes por usuario.</p>
+      <div class="actions">
+        <a class="btn outline" href="/billing/checkout?plan=BIZ">Contratar Empresas</a>
+      </div>
+    </div>
+
+    <div class="right">
+      <a href="/billing" class="link">&larr; Volver a Facturación</a>
+    </div>
+  </div>
+</body>
+</html>
