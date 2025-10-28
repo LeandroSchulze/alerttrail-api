@@ -165,6 +165,14 @@ try:
 except Exception as e:
     print("[WARN] payments_ui load failed:", e)
 
+# billing_subscriptions (nuevo)
+try:
+    from app.routers import billing_subscriptions
+    app.include_router(billing_subscriptions.router)
+    print("[routers] billing_subscriptions montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar billing_subscriptions: {e}")
+
 # === UI de estadísticas ===
 try:
     from app.routers import stats_ui
