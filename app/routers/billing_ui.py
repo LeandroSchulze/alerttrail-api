@@ -1,47 +1,24 @@
 # app/routers/billing_ui.py
-from __future__ import annotations
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import HTMLResponse
 import os
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
-
-from app.database import get_db
 from app.security import get_current_user_cookie
 
-router = APIRouter(tags=["billing-ui"])
+router = APIRouter(prefix="/billing", tags=["billing"])
 
-def _as_int(env_name: str, default: int) -> int:
-    v = os.getenv(env_name, "")
-    try:
-        return int(v)
+def _as_int(v, d):
+    try: return int(v)
     except Exception:
-        try:
-            return int(float(v))
-        except Exception:
-            return int(default)
+        try: return int(float(v))
+        except Exception: return d
 
-def _as_money(env_name: str, default: float) -> float:
-    """
-    Convierte env a número (float) de forma segura.
-    Acepta "10", "10.0", "10,0" y también centavos si viene PLAN_PRICE_CENTS.
-    """
-    v = os.getenv(env_name, "")
-    if not v:
-        return float(default)
-    try:
-        v = v.replace(",", ".")
-        return float(Decimal(v))
-    except Exception:
-        return float(default)
+def _as_money(v, d):
+    try: return float(Decimal(str(v).replace(",", ".")))
+    except Exception: return float(d)
 
-def _pricing_ctx():
-    """
-    Devuelve TODO lo que el template billing.html necesita, con tipos correctos.
-    - price_month / price_year / disc_pct / currency
-    - biz_price / biz_included / biz_extra
-    """
-    # Precio PRO mensual
+def _pricing_ctx_from_env():
     if os.getenv("PLAN_PRICE_CENTS"):
         try:
             cents = int(os.getenv("PLAN_PRICE_CENTS", "1000"))
@@ -49,65 +26,41 @@ def _pricing_ctx():
             cents = 1000
         price_month = round(cents / 100.0, 2)
     else:
-        price_month = round(_as_money("PLAN_PRICE", 10.0), 2)
+        price_month = round(_as_money(os.getenv("PLAN_PRICE", "10"), 10.0), 2)
 
-    # Descuento anual
-    disc_pct = _as_int("PLAN_ANNUAL_DISCOUNT_PCT", 20)
+    disc_pct = _as_int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"), 20)
     price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
-
     currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
 
-    # Business
-    biz_price = round(_as_money("BIZ_PRICE_MONTH_USD", 99.0), 2)
-    biz_included = _as_int("BIZ_INCLUDED_SEATS", 25)
-    biz_extra = round(_as_money("BIZ_EXTRA_SEAT_USD", 3.0), 2)
+    biz_price = round(_as_money(os.getenv("BIZ_PRICE_MONTH_USD", "99"), 99.0), 2)
+    biz_included = _as_int(os.getenv("BIZ_INCLUDED_SEATS", "25"), 25)
+    biz_extra = round(_as_money(os.getenv("BIZ_EXTRA_SEAT_USD", "3"), 3.0), 2)
 
     return dict(
         price_month=price_month,
         price_year=price_year,
         disc_pct=disc_pct,
         currency=currency,
-        # 👇 claves que el billing.html usa explícitamente
         biz_price=biz_price,
         biz_included=biz_included,
         biz_extra=biz_extra,
     )
 
-@router.get("/billing", response_class=HTMLResponse, include_in_schema=False)
-def billing_page_alias(
-    request: Request,
-    db=Depends(get_db),
-    user=Depends(get_current_user_cookie),
-):
+@router.get("/", response_class=HTMLResponse)
+def billing_home(request: Request, user=Depends(get_current_user_cookie)):
     """
-    Página principal de Facturación/Suscripción.
-    Renderiza billing.html y el front hace fetch a /billing/me y /billing/history.
+    FACTURACIÓN (estado, cambio de plan, historial)
     """
-    ctx = {"request": request, "user": user, "page_title": "Mi Suscripción | AlertTrail"}
-    ctx.update(_pricing_ctx())
+    ctx = {"request": request, "user": user, "page_title": "Facturación"}
+    ctx.update(_pricing_ctx_from_env())
     return request.app.state.templates.TemplateResponse("billing.html", ctx)
 
-@router.get("/account/billing", response_class=HTMLResponse, include_in_schema=False)
-def billing_page_legacy(
-    request: Request,
-    db=Depends(get_db),
-    user=Depends(get_current_user_cookie),
-):
+@router.get("/subscriptions", response_class=HTMLResponse)
+def billing_subscriptions(request: Request, user=Depends(get_current_user_cookie)):
     """
-    Alias legacy para compatibilidad con rutas antiguas.
+    SUSCRIPCIONES (gestión pura de la suscripción activa)
     """
-    ctx = {"request": request, "user": user, "page_title": "Mi Suscripción | AlertTrail"}
-    ctx.update(_pricing_ctx())
-    return request.app.state.templates.TemplateResponse("billing.html", ctx)
-
-# Algunos frontends aún navegan a /billing/subscriptions.
-# Lo dejamos servido acá para que siempre use el mismo contexto correcto.
-@router.get("/billing/subscriptions", response_class=HTMLResponse, include_in_schema=False)
-def billing_subscriptions_alias(
-    request: Request,
-    db=Depends(get_db),
-    user=Depends(get_current_user_cookie),
-):
-    ctx = {"request": request, "user": user, "page_title": "Mi Suscripción | AlertTrail"}
-    ctx.update(_pricing_ctx())
-    return request.app.state.templates.TemplateResponse("billing.html", ctx)
+    ctx = {"request": request, "user": user, "page_title": "Suscripciones"}
+    ctx.update(_pricing_ctx_from_env())
+    # usa un template distinto para que NO se vea igual que billing
+    return request.app.state.templates.TemplateResponse("subscriptions.html", ctx)
