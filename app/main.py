@@ -15,6 +15,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
+from app.routers.mail import start_mail_scheduler  # NEW
 
 from app.database import SessionLocal
 from app.security import (
@@ -70,6 +71,14 @@ def _startup_hotfix_columns():
             info = ensure_user_pro_columns(); print("[db_hotfix] run at startup:", info)
         except Exception as e:
             print("[db_hotfix] WARNING at startup:", e)
+
+# ... más abajo, en un on_event("startup") existente o crea uno nuevo:
+@app.on_event("startup")
+def _start_mail_sched():
+    try:
+        start_mail_scheduler(app)  # respeta SCHEDULER_ENABLED=1
+    except Exception as e:
+        print("[startup] mail scheduler error:", e)
 
 from app.models import User
 
