@@ -93,6 +93,65 @@ app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
+@app.middleware("http")
+async def _cookie_hardener(request: Request, call_next):
+    resp = await call_next(request)
+
+    sc = resp.headers.get("set-cookie")
+    if not sc:
+        return resp
+
+    # Solo tocamos la cookie de acceso
+    import re
+    def _patch_cookie(header: str) -> str:
+        # Solo si contiene access_token=
+        if "access_token=" not in header:
+            return header
+        # Asegurar Domain=.alerttrail.com (configurable por ENV si querés)
+        domain = os.getenv("ACCESS_COOKIE_DOMAIN", ".alerttrail.com")
+        if " domain=" not in header.lower():
+            header += f"; Domain={domain}"
+        # Asegurar Path=/ (por si acaso)
+        if " path=" not in header.lower():
+            header += "; Path=/"
+        # Asegurar SameSite=Lax y HttpOnly (idempotente)
+        if " samesite=" not in header.lower():
+            header += "; SameSite=Lax"
+        if " httponly" not in header.lower():
+            header += "; HttpOnly"
+        # Asegurar Max-Age si no vino (7 días)
+        if " max-age=" not in header.lower() and " expires=" not in header.lower():
+            header += "; Max-Age=604800"
+        # Secure si estamos detrás de HTTPS (Render)
+        xfproto = request.headers.get("x-forwarded-proto", "")
+        if (request.url.scheme == "https" or xfproto == "https") and " secure" not in header.lower():
+            header += "; Secure"
+        return header
+
+    # Si hay múltiples Set-Cookie, Starlette concatena; los separamos y parchamos individualmente
+    parts = [p.strip() for p in sc.split(",")]
+
+    # Heurística: recomponer cookies separadas por coma dentro de Expires.
+    rebuilt, buf = [], []
+    for p in parts:
+        buf.append(p)
+        # Una cookie válida suele terminar en un atributo (no en “GMT” sin más coma interna)
+        if re.search(r"(?i)(expires=.*gmt)", " ".join(buf)):
+            rebuilt.append(", ".join(buf))
+            buf = []
+        elif "=" in p.split(";")[0] and ("Max-Age=" in p or "Expires=" in p or "Path=" in p):
+            rebuilt.append(", ".join(buf))
+            buf = []
+    if buf: rebuilt.append(", ".join(buf))
+
+    patched = []
+    for c in rebuilt:
+        patched.append(_patch_cookie(c))
+
+    resp.headers["set-cookie"] = ", ".join(patched)
+    return resp
+
+
 # === UI Routers (billing, payments) ===
 try:
     _billing_ui = import_module("app.routers.billing_ui")
