@@ -53,7 +53,9 @@ def verify_and_rehash(plain_password: str, hashed_password: str) -> Tuple[bool, 
 # =========================
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-please")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+
+# Por defecto 7 días (evita que se cierre sesión al reiniciar el navegador)
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -80,23 +82,34 @@ def _env_bool(var_name: str, default: bool) -> bool:
     v = os.getenv(var_name)
     if v is None:
         return default
-    return v.strip().lower() in ("1", "true", "t", "yes", "y")
+    return v.strip().lower() in ("1", "true", "t", "yes", "y", "on")
 
 COOKIE_SECURE = _env_bool("COOKIE_SECURE", False)
-COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")  # "lax" | "strict" | "none"
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)       # e.g. ".tudominio.com" o None
-COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))  # 7 días
+COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # "lax" | "strict" | "none"
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # e.g. ".alerttrail.com" o None
+
+# 7 días por defecto
+COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))
 
 def issue_access_cookie(response: Response, token: str, max_age: Optional[int] = None) -> None:
-    samesite = (COOKIE_SAMESITE or "lax").lower()
+    """
+    Emite cookie persistente con Max-Age y Expires absoluto para mejor compatibilidad.
+    Si SameSite=None, fuerza Secure=True (requisito de los navegadores modernos).
+    """
+    ma = max_age if max_age is not None else COOKIE_MAX_AGE
+    # Fecha absoluta (UTC) para Expires (mejor soporte Safari/Chromium)
+    expires_dt = _now_utc() + timedelta(seconds=ma)
+
+    samesite = COOKIE_SAMESITE
     secure = COOKIE_SECURE or (samesite == "none")
+
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=max_age if max_age is not None else COOKIE_MAX_AGE,
-        expires=max_age if max_age is not None else COOKIE_MAX_AGE,
+        max_age=ma,
+        expires=expires_dt,   # datetime -> Starlette formatea a RFC 7231
         path="/",
-        domain=COOKIE_DOMAIN,
+        domain=COOKIE_DOMAIN, # Usa un dominio base (p.ej. ".alerttrail.com") si querés compartir entre subdominios
         secure=secure,
         httponly=True,
         samesite=samesite,
