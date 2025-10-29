@@ -87,7 +87,7 @@
                 style="margin-left:auto;padding:8px 12px;border:0;background:#2563eb;color:#fff;border-radius:10px;cursor:pointer">
           Activar prueba
         </button>
-        <a href="/billing" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
+        <a href="/billing/subscriptions" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
           Activar PRO por USD 10/mes →</a>
       </div>
       <div id="promo-pro-timer" style="margin-top:8px;color:#334155;display:none">
@@ -107,7 +107,7 @@
           <p class="muted">Rol: <strong>Usuario</strong></p>
         {% endif %}
         <div class="actions">
-          <a class="btn-primary" href="/billing">Cambiar plan</a>
+          <a class="btn-primary" href="/billing/subscriptions">Cambiar plan</a>
           <button id="openPlansModal" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
           <button id="btnPush" class="btn-outline" type="button">🔔 Activar notificaciones</button>
           {% if user.is_org_admin and user.org_id %}
@@ -127,7 +127,6 @@
           {% endif %}
           {% if is_admin %}
             <a class="chip" href="/stats">Estadísticas</a>
-            <a class="chip" href="/billing">Facturación</a>
             <a class="chip" href="/admin/subscriptions">Suscripciones</a>
           {% endif %}
         </div>
@@ -422,4 +421,3 @@
   </footer>
 </body>
 </html>
-
