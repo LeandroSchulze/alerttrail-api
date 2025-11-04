@@ -15,8 +15,8 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-# ⛔️ Quitado para evitar import circular con app.routers.mail
-# from app.routers.mail import start_mail_scheduler  # NEW
+# ⛔️ Evitar import circular con app.routers.mail
+# from app.routers.mail import start_mail_scheduler
 
 from app.database import SessionLocal
 from app.security import (
@@ -26,7 +26,6 @@ from app.security import (
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
-# Evita bucles /mail <-> /mail/
 app.router.redirect_slashes = False
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
@@ -87,7 +86,7 @@ def _startup_hotfix_columns():
         except Exception as e:
             print("[db_hotfix] WARNING at startup:", e)
 
-# --- (El scheduler de mail se inicia dentro del router propio; se elimina import directo para evitar circular) ---
+# --- (El scheduler de mail se inicia dentro del router de mail si corresponde) ---
 
 from app.models import User
 
@@ -345,7 +344,7 @@ for _extra in ("subscription", "webhooks"):
     except Exception as e:
         print(f"[routers] No pude cargar {_extra}: {e}")
 
-# ---- Alias estable /mail -> /mail/ (si existe el path /mail/, esto solo redirige)
+# ---- Alias estable /mail -> /mail/
 from fastapi.routing import APIRoute as _APIRoute_mail_alias
 if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in app.routes):
     @app.get("/mail", include_in_schema=False)
@@ -374,230 +373,52 @@ async def __billing_fallback(request: _ReqX, user=_DepX(_get_user_cookie_X)):
     ctx.update(__pricing_ctx_from_env())
     return app.state.templates.TemplateResponse("billing.html", ctx)
 
-# ---- Fallback MAIL si el router no cargó ----
+# ---- Utilidades globales de settings de mail (persistentes) ----
+DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+MAIL_SETTINGS_FILE = DATA_DIR / "mail_env.json"
+
+def __mail_load_settings() -> dict:
+    if MAIL_SETTINGS_FILE.exists():
+        try:
+            return json.loads(MAIL_SETTINGS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def __mail_save_settings(data: dict):
+    MAIL_SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def __mail_defaults_from_env() -> dict:
+    store = __mail_load_settings()
+    def _pick(key, env_key, cast, default):
+        if key in store and store[key] not in (None, ""):
+            return cast(store[key])
+        v = os.getenv(env_key, default)
+        return cast(v)
+    return dict(
+        host      = _pick("host",      "MAIL_HOST",     str,   "imap.gmail.com"),
+        port      = _pick("port",      "MAIL_PORT",     int,   993),
+        use_ssl   = _pick("use_ssl",   "MAIL_USE_SSL",  lambda x: str(x).lower() in {"1","true","yes","on"}, True),
+        username  = _pick("username",  "MAIL_USERNAME", str,   ""),
+        folder    = _pick("folder",    "MAIL_FOLDER",   str,   "INBOX") or "INBOX",
+        mark_seen = _pick("mark_seen", "MAIL_MARK_SEEN",lambda x: str(x).lower() in {"1","true","yes","on"}, False),
+    )
+
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
-if not _route_exists("/mail/"):
-    print("[routers] WARN: /mail/ no registrado — activando fallback robusto con listado de mails")
-
+# ---- Registrar SIEMPRE /mail/settings (si no existe ya) ----
+if not _route_exists("/mail/settings"):
     from fastapi import APIRouter
-    import imaplib, socket, email
-    from email.header import decode_header
-    from typing import List, Optional
-    from pydantic import BaseModel
+    mail_settings_router = APIRouter(prefix="/mail", tags=["mail"])
 
-    mail_router = APIRouter(prefix="/mail", tags=["mail"])
-
-    DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    LINK_FILE = DATA_DIR / "mail_link.json"
-    SETTINGS_FILE = DATA_DIR / "mail_env.json"
-
-    def _env_bool(v: str, default=False) -> bool:
-        if v is None: return default
-        return str(v).strip().lower() in {"1","true","yes","y","on"}
-
-    def _load_linked():
-        if LINK_FILE.exists():
-            try:
-                return json.loads(LINK_FILE.read_text(encoding="utf-8"))
-            except Exception:
-                return {}
-        return {}
-
-    def _save_linked(data: dict):
-        LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # --- settings persistentes (sin contraseña) ---
-    def _load_settings() -> dict:
-        if SETTINGS_FILE.exists():
-            try:
-                return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            except Exception:
-                return {}
-        return {}
-
-    def _save_settings(data: dict):
-        SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def _defaults_from_env():
-        store = _load_settings()
-        def _pick(key, env_key, cast=None, default=None):
-            if key in store and store[key] not in (None, ""):
-                return store[key] if cast is None else cast(store[key])
-            v = os.getenv(env_key, default)
-            return v if cast is None else cast(v)
-
-        return dict(
-            host      = _pick("host",      "MAIL_HOST",     str,   "imap.gmail.com"),
-            port      = _pick("port",      "MAIL_PORT",     int,   993),
-            use_ssl   = _pick("use_ssl",   "MAIL_USE_SSL",  lambda x: str(x).lower() in {"1","true","yes","on"}, True),
-            username  = _pick("username",  "MAIL_USERNAME", str,   ""),
-            folder    = _pick("folder",    "MAIL_FOLDER",   str,   "INBOX") or "INBOX",
-            mark_seen = _pick("mark_seen", "MAIL_MARK_SEEN",lambda x: str(x).lower() in {"1","true","yes","on"}, False),
-        )
-
-    # ---------- MODELOS ----------
-    class MailItem(BaseModel):
-        uid: str
-        from_email: Optional[str] = None
-        subject: Optional[str] = None
-        snippet: Optional[str] = None
-        date: Optional[str] = None
-        flags: Optional[List[str]] = None
-        suspicious: bool = False
-        score: float = 0.0
-        reason: Optional[str] = None
-        link: Optional[str] = None
-
-    class ScanResult(BaseModel):
-        ok: bool
-        login: bool
-        folder: str
-        unread: int
-        total: int
-        marked_seen: bool
-        message: Optional[str] = None
-        items: List[MailItem] = []
-
-    # ---------- FUNCIONES ----------
-    def _decode_hdr(v):
-        if not v:
-            return ""
-        if isinstance(v, bytes):
-            try:
-                v = v.decode("utf-8", "ignore")
-            except Exception:
-                v = v.decode("latin-1", "ignore")
-        parts = decode_header(v)
-        out = []
-        for txt, enc in parts:
-            if isinstance(txt, bytes):
-                try:
-                    out.append(txt.decode(enc or "utf-8", "ignore"))
-                except Exception:
-                    out.append(txt.decode("latin-1", "ignore"))
-            else:
-                out.append(txt)
-        return "".join(out).strip()
-
-    def _score_suspicious(subj: str, snip: str):
-        text = f"{subj} {snip}".lower()
-        kws = ["verify", "verificar", "password", "contraseña", "urgent", "urgente",
-               "invoice", "factura", "payment", "pago", "bank", "banco", "reset"]
-        hits = [k for k in kws if k in text]
-        score = min(1.0, len(hits) * 0.2)
-        return score, ", ".join(hits)
-
-    def _fetch_items(imap, folder, limit=50):
-        typ, data = imap.uid("search", None, "ALL")
-        uids = (data[0] or b"").split() if typ == "OK" else []
-        uids = uids[-limit:]
-        items = []
-        for uid in reversed(uids):
-            try:
-                typ, data = imap.uid("fetch", uid, b"(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.512>)")
-                if typ != "OK" or not data:
-                    continue
-                hdr_raw = b""
-                snippet_raw = b""
-                for part in data:
-                    if not isinstance(part, tuple):
-                        continue
-                    block = part[1] or b""
-                    if b"HEADER.FIELDS" in part[0]:
-                        hdr_raw += block
-                    elif b"TEXT" in part[0]:
-                        snippet_raw += block
-                msg = email.message_from_bytes(hdr_raw or b"")
-                from_email = _decode_hdr(msg.get("From"))
-                subject = _decode_hdr(msg.get("Subject"))
-                date = _decode_hdr(msg.get("Date"))
-                snippet = (snippet_raw or b"").decode("utf-8", "ignore")[:250]
-                score, reason = _score_suspicious(subject, snippet)
-                items.append(MailItem(
-                    uid=uid.decode(),
-                    from_email=from_email,
-                    subject=subject,
-                    date=date,
-                    snippet=snippet,
-                    suspicious=score >= 0.5,
-                    score=score,
-                    reason=reason,
-                    link=f"/mail/scanner?id={uid.decode()}",
-                ))
-            except Exception:
-                continue
-        return items
-
-    def _scan_impl():
-        eff = _defaults_from_env()
-        host      = eff["host"]
-        port      = int(eff["port"])
-        use_ssl   = bool(eff["use_ssl"])
-        username  = eff["username"]
-        password  = os.getenv("MAIL_PASSWORD", "")  # la clave sigue en ENV
-        folder    = eff["folder"]
-        mark_seen = bool(eff["mark_seen"])
-
-        if not username or not password:
-            raise HTTPException(status_code=400, detail="Faltan MAIL_USERNAME o MAIL_PASSWORD")
-
-        imap = None
-        try:
-            imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
-            typ, _ = imap.login(username, password)
-            if typ != "OK":
-                return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message="Login IMAP falló", items=[])
-            typ, _ = imap.select(folder, readonly=not mark_seen)
-            if typ != "OK":
-                return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False, message=f"No se pudo abrir {folder}", items=[])
-            typ, data = imap.search(None, "ALL")
-            total = len((data[0] or b"").split()) if typ == "OK" else 0
-            typ, data = imap.search(None, "UNSEEN")
-            unseen_ids = (data[0] or b"").split() if typ == "OK" else []
-            unread = len(unseen_ids)
-            items = _fetch_items(imap, folder)
-            try:
-                imap.close(); imap.logout()
-            except Exception:
-                pass
-            return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total, marked_seen=False, message=None, items=items)
-        except (imaplib.IMAP4.error, socket.timeout) as e:
-            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=str(e), items=[])
-        except Exception as e:
-            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
-
-    @mail_router.get("/", response_class=HTMLResponse)
-    def mail_index(request: Request, user=Depends(get_current_user_cookie)):
-        ctx = {"request": request, "page_title": "Casillas de correo", "current_user": user, "defaults": _defaults_from_env()}
-        try:
-            return app.state.templates.TemplateResponse("mail.html", ctx)
-        except TemplateNotFound:
-            html = """<!doctype html><meta charset='utf-8'>
-            <div style="font-family:system-ui;padding:24px">
-              <h1>Mail</h1>
-              <p><a href="/mail/scanner">Ir al scanner</a></p>
-            </div>"""
-            return HTMLResponse(html)
-
-    @mail_router.get("/scanner", response_class=HTMLResponse)
-    def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-        linked = _load_linked().get(str(user["sub"]))
-        ctx = {"request": request, "page_title": "Mail Scanner", "current_user": user, "defaults": _defaults_from_env(), "linked": linked}
-        try:
-            return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
-        except TemplateNotFound:
-            return HTMLResponse("<h1>Mail Scanner</h1>")
-
-    # --- settings: GET/POST (para que el frontend no de 404) ---
-    @mail_router.get("/settings")
+    @mail_settings_router.get("/settings")
     def mail_settings_get(user=Depends(get_current_user_cookie)):
-        return {"ok": True, "settings": _defaults_from_env()}
+        return {"ok": True, "settings": __mail_defaults_from_env()}
 
-    @mail_router.post("/settings")
-    def mail_settings_post(
+    @mail_settings_router.post("/settings")
+    async def mail_settings_post(
         request: Request,
         user=Depends(get_current_user_cookie),
         host: str = Form(None),
@@ -607,26 +428,37 @@ if not _route_exists("/mail/"):
         folder: str = Form(None),
         mark_seen: str = Form(None),
     ):
-        cur = _load_settings()
-        if host is not None: cur["host"] = host.strip()
+        cur = __mail_load_settings()
+
+        # Si viene JSON, mapearlo a los mismos campos (soporta ambos)
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "application/json" in ctype:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            host      = body.get("host", host)
+            port      = body.get("port", port)
+            use_ssl   = body.get("use_ssl", use_ssl)
+            username  = body.get("username", username)
+            folder    = body.get("folder", folder)
+            mark_seen = body.get("mark_seen", mark_seen)
+
+        if host is not None: cur["host"] = str(host).strip()
         if port is not None: cur["port"] = int(port)
-        if use_ssl is not None: cur["use_ssl"] = str(use_ssl).lower() in {"1","true","yes","on"}
-        if username is not None: cur["username"] = username.strip()
-        if folder is not None: cur["folder"] = (folder or "INBOX").strip() or "INBOX"
-        if mark_seen is not None: cur["mark_seen"] = str(mark_seen).lower() in {"1","true","yes","on"}
-        _save_settings(cur)
+        if use_ssl is not None: cur["use_ssl"] = (str(use_ssl).lower() in {"1","true","yes","on"})
+        if username is not None: cur["username"] = str(username).strip()
+        if folder is not None: cur["folder"] = (str(folder) or "INBOX").strip() or "INBOX"
+        if mark_seen is not None: cur["mark_seen"] = (str(mark_seen).lower() in {"1","true","yes","on"})
+
+        __mail_save_settings(cur)
 
         wants_json = "application/json" in (request.headers.get("accept") or "")
         if wants_json:
-            return {"ok": True, "saved": True, "settings": _defaults_from_env()}
+            return {"ok": True, "saved": True, "settings": __mail_defaults_from_env()}
         return RedirectResponse(url="/mail/", status_code=303)
 
-    @mail_router.get("/scan", response_model=ScanResult)
-    @mail_router.post("/scan", response_model=ScanResult)
-    def mail_scan(user=Depends(get_current_user_cookie)):
-        return _scan_impl()
-
-    app.include_router(mail_router)
+    app.include_router(mail_settings_router)
 
 # ---- Fallback /mail/alerts/unread_count
 from fastapi.routing import APIRoute as _APIRoute_1
@@ -826,7 +658,6 @@ def dashboard(request: Request, db= Depends(get_db)):
         "org_id": getattr(user, "org_id", None),
     }
     try:
-        # >>> PASAMOS EL IDIOMA AL TEMPLATE <<<
         lang = (request.cookies.get("lang") or "es").lower()[:2]
         resp = templates.TemplateResponse(
             "dashboard.html",
