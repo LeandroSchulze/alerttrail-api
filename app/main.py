@@ -17,6 +17,8 @@ from sqlalchemy import func
 from jinja2 import TemplateNotFound
 from app.routers.mail import start_mail_scheduler  # NEW
 
+from app.routers import i18n
+app.include_router(i18n.router)
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
