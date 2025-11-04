@@ -41,7 +41,7 @@
     .btn-primary:hover{filter:brightness(1.05)}
     .btn-outline{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:#0f172a;background:#fff;cursor:pointer}
     .btn-outline:hover{border-color:#cbd5e1;box-shadow:0 0 0 3px #e2e8f0}
-    footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:var(--muted);text-align:center}
+    footer.page-footer{margin-top:28px;padding:14px 0;border-top:1px solid var(--line);color:#var(--muted);text-align:center}
     footer.page-footer a{color:var(--brand);text-decoration:none}
 
     /* Bloque Últimos pagos */
@@ -127,7 +127,7 @@
           {% endif %}
           {% if is_admin %}
             <a class="chip" href="/stats">Estadísticas</a>
-            <a class="chip" href="/admin/subscriptions">Suscripciones</a>
+            <a class="chip" href="/billing/subscriptions">Suscripciones</a>
           {% endif %}
         </div>
       </section>
@@ -278,7 +278,7 @@
         const unread = (typeof data.unread === "number") ? data.unread
                       : (typeof data.count === "number") ? data.count
                       : 0;
-        if (unread > lastUnread) { showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso."); }
+                if (unread > lastUnread) { showDesktopNotif("Nueva alerta de correo", "Se detectó un correo sospechoso."); }
         lastUnread = unread;
       } catch (e) { console.error("Error chequeando alertas", e); }
     }
