@@ -72,11 +72,11 @@ def _startup_hotfix_columns():
         except Exception as e:
             print("[db_hotfix] WARNING at startup:", e)
 
-# ... más abajo, en un on_event("startup") existente o crea uno nuevo:
+# --- Scheduler de mail (respeta SCHEDULER_ENABLED=1) ---
 @app.on_event("startup")
 def _start_mail_sched():
     try:
-        start_mail_scheduler(app)  # respeta SCHEDULER_ENABLED=1
+        start_mail_scheduler(app)
     except Exception as e:
         print("[startup] mail scheduler error:", e)
 
@@ -93,6 +93,7 @@ app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
+# --- Endurecedor de cookies de sesión ---
 @app.middleware("http")
 async def _cookie_hardener(request: Request, call_next):
     resp = await call_next(request)
@@ -101,53 +102,38 @@ async def _cookie_hardener(request: Request, call_next):
     if not sc:
         return resp
 
-    # Solo tocamos la cookie de acceso
-    import re
+    import re as _re
     def _patch_cookie(header: str) -> str:
-        # Solo si contiene access_token=
         if "access_token=" not in header:
             return header
-        # Asegurar Domain=.alerttrail.com (configurable por ENV si querés)
         domain = os.getenv("ACCESS_COOKIE_DOMAIN", ".alerttrail.com")
         if " domain=" not in header.lower():
             header += f"; Domain={domain}"
-        # Asegurar Path=/ (por si acaso)
         if " path=" not in header.lower():
             header += "; Path=/"
-        # Asegurar SameSite=Lax y HttpOnly (idempotente)
         if " samesite=" not in header.lower():
             header += "; SameSite=Lax"
         if " httponly" not in header.lower():
             header += "; HttpOnly"
-        # Asegurar Max-Age si no vino (7 días)
         if " max-age=" not in header.lower() and " expires=" not in header.lower():
             header += "; Max-Age=604800"
-        # Secure si estamos detrás de HTTPS (Render)
         xfproto = request.headers.get("x-forwarded-proto", "")
         if (request.url.scheme == "https" or xfproto == "https") and " secure" not in header.lower():
             header += "; Secure"
         return header
 
-    # Si hay múltiples Set-Cookie, Starlette concatena; los separamos y parchamos individualmente
     parts = [p.strip() for p in sc.split(",")]
 
-    # Heurística: recomponer cookies separadas por coma dentro de Expires.
     rebuilt, buf = [], []
     for p in parts:
         buf.append(p)
-        # Una cookie válida suele terminar en un atributo (no en “GMT” sin más coma interna)
         if re.search(r"(?i)(expires=.*gmt)", " ".join(buf)):
-            rebuilt.append(", ".join(buf))
-            buf = []
+            rebuilt.append(", ".join(buf)); buf = []
         elif "=" in p.split(";")[0] and ("Max-Age=" in p or "Expires=" in p or "Path=" in p):
-            rebuilt.append(", ".join(buf))
-            buf = []
+            rebuilt.append(", ".join(buf)); buf = []
     if buf: rebuilt.append(", ".join(buf))
 
-    patched = []
-    for c in rebuilt:
-        patched.append(_patch_cookie(c))
-
+    patched = [_patch_cookie(c) for c in rebuilt]
     resp.headers["set-cookie"] = ", ".join(patched)
     return resp
 
@@ -349,6 +335,29 @@ if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in ap
     def _alias_mail_root():
         return RedirectResponse(url="/mail/", status_code=307)
 
+# ============================================================
+# Fallback simple para /billing (evita 404 si no hay router)
+# (MOVIDO a nivel top para evitar quedar dentro del bloque de /mail)
+# ============================================================
+from fastapi import Request as _ReqX, Depends as _DepX
+from fastapi.responses import HTMLResponse as _HTML
+from app.security import get_current_user_cookie as _get_user_cookie_X
+
+def __pricing_ctx_from_env():
+    try:
+        price_month = float(os.getenv("PLAN_PRICE", "10"))
+    except:
+        price_month = 10.0
+    disc_pct = int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"))
+    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
+    return dict(price_month=price_month, price_year=price_year, disc_pct=disc_pct)
+
+@app.get("/billing", include_in_schema=False, response_class=_HTML)
+async def __billing_fallback(request: _ReqX, user=_DepX(_get_user_cookie_X)):
+    ctx = {"request": request, "user": user, "page_title": "Facturación | AlertTrail"}
+    ctx.update(__pricing_ctx_from_env())
+    return app.state.templates.TemplateResponse("billing.html", ctx)
+
 # ---- Fallback MAIL si el router no cargó ----
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
@@ -390,29 +399,6 @@ if not _route_exists("/mail/"):
             folder=os.getenv("MAIL_FOLDER", "INBOX") or "INBOX",
             mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
         )
-
-    # ============================================================
-# Fallback simple para /billing (evita 404 si no hay router)
-# ============================================================
-from fastapi import Request, Depends
-from fastapi.responses import HTMLResponse as _HTML
-from app.security import get_current_user_cookie
-
-def __pricing_ctx_from_env():
-    import os
-    try:
-        price_month = float(os.getenv("PLAN_PRICE", "10"))
-    except:
-        price_month = 10.0
-    disc_pct = int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"))
-    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
-    return dict(price_month=price_month, price_year=price_year, disc_pct=disc_pct)
-
-@app.get("/billing", include_in_schema=False, response_class=_HTML)
-async def __billing_fallback(request: Request, user=Depends(get_current_user_cookie)):
-    ctx = {"request": request, "user": user, "page_title": "Facturación | AlertTrail"}
-    ctx.update(__pricing_ctx_from_env())
-    return app.state.templates.TemplateResponse("billing.html", ctx)
 
     @mail_router.get("/", response_class=HTMLResponse)
     def mail_index(request: Request, user=Depends(get_current_user_cookie)):
@@ -790,7 +776,7 @@ def __as_money(v, d):
     except Exception:
         return float(d)
 
-def __pricing_ctx_from_env():
+def __pricing_ctx_from_env_full():
     if os.getenv("PLAN_PRICE_CENTS"):
         try:
             cents = int(os.getenv("PLAN_PRICE_CENTS", "1000"))
@@ -822,5 +808,5 @@ from fastapi.responses import HTMLResponse as _HTML
 @app.get("/billing/subscriptions", include_in_schema=False, response_class=_HTML)
 def __billing_subs_fallback(request: Request, user=Depends(get_current_user_cookie)):
     ctx = {"request": request, "user": user, "page_title": "Mi Suscripción | AlertTrail"}
-    ctx.update(__pricing_ctx_from_env())
+    ctx.update(__pricing_ctx_from_env_full())
     return app.state.templates.TemplateResponse("billing.html", ctx)
