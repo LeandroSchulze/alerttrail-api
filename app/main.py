@@ -489,7 +489,7 @@ if not _route_exists("/mail/"):
                 hdr_raw = b""
                 snippet_raw = b""
                 for part in data:
-                    if not isinstance(part, tuple): 
+                    if not isinstance(part, tuple):
                         continue
                     block = part[1] or b""
                     if b"HEADER.FIELDS" in part[0]:
