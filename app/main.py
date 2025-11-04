@@ -385,10 +385,12 @@ def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
 if not _route_exists("/mail/"):
-    print("[routers] WARN: /mail/ no registrado — activando fallback mínimo en main.py")
+    print("[routers] WARN: /mail/ no registrado — activando fallback robusto con listado de mails")
 
     from fastapi import APIRouter
-    import imaplib
+    import imaplib, socket, email
+    from email.header import decode_header
+    from typing import List, Optional
     from pydantic import BaseModel
 
     mail_router = APIRouter(prefix="/mail", tags=["mail"])
@@ -422,41 +424,18 @@ if not _route_exists("/mail/"):
             mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
         )
 
-    @mail_router.get("/", response_class=HTMLResponse)
-    def mail_index(request: Request, user=Depends(get_current_user_cookie)):
-        linked = _load_linked().get(str(user["sub"]))
-        ctx = {"request": request, "page_title": "Casillas de correo",
-               "current_user": user, "linked": linked, "defaults": _defaults_from_env()}
-        try:
-            return app.state.templates.TemplateResponse("mail.html", ctx)
-        except TemplateNotFound:
-            html = f"""<!doctype html><meta charset='utf-8'>
-            <div style="font-family:system-ui;padding:24px">
-              <h1>Mail</h1>
-              <p>Cuenta linkeada: <b>{(linked or {}).get('address','-')}</b></p>
-              <p><a href="/mail/scanner">Ir al scanner</a></p>
-            </div>"""
-            return HTMLResponse(html)
-
-    @mail_router.post("/connect")
-    def mail_connect(address: str = Form(...), user=Depends(get_current_user_cookie)):
-        address = (address or "").strip().lower()
-        if not address or "@" not in address:
-            raise HTTPException(status_code=400, detail="Dirección inválida")
-        data = _load_linked()
-        data[str(user["sub"])] = {"address": address}
-        _save_linked(data)
-        return RedirectResponse(url="/mail/", status_code=303)
-
-    @mail_router.get("/scanner", response_class=HTMLResponse)
-    def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-        ctx = {"request": request, "page_title": "Mail Scanner",
-               "current_user": user, "linked": _load_linked().get(str(user["sub"])),
-               "defaults": _defaults_from_env()}
-        try:
-            return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
-        except TemplateNotFound:
-            return HTMLResponse("<h1>Mail Scanner</h1>")
+    # ---------- MODELOS ----------
+    class MailItem(BaseModel):
+        uid: str
+        from_email: Optional[str] = None
+        subject: Optional[str] = None
+        snippet: Optional[str] = None
+        date: Optional[str] = None
+        flags: Optional[List[str]] = None
+        suspicious: bool = False
+        score: float = 0.0
+        reason: Optional[str] = None
+        link: Optional[str] = None
 
     class ScanResult(BaseModel):
         ok: bool
@@ -465,16 +444,86 @@ if not _route_exists("/mail/"):
         unread: int
         total: int
         marked_seen: bool
-        message: str | None = None
+        message: Optional[str] = None
+        items: List[MailItem] = []
 
-    @mail_router.post("/scan", response_model=ScanResult)
-    def mail_scan(user=Depends(get_current_user_cookie)):
-        host   = os.getenv("MAIL_HOST", "imap.gmail.com")
-        port   = int(os.getenv("MAIL_PORT", "993") or 993)
+    # ---------- FUNCIONES ----------
+    def _decode_hdr(v):
+        if not v:
+            return ""
+        if isinstance(v, bytes):
+            try:
+                v = v.decode("utf-8", "ignore")
+            except Exception:
+                v = v.decode("latin-1", "ignore")
+        parts = decode_header(v)
+        out = []
+        for txt, enc in parts:
+            if isinstance(txt, bytes):
+                try:
+                    out.append(txt.decode(enc or "utf-8", "ignore"))
+                except Exception:
+                    out.append(txt.decode("latin-1", "ignore"))
+            else:
+                out.append(txt)
+        return "".join(out).strip()
+
+    def _score_suspicious(subj: str, snip: str):
+        text = f"{subj} {snip}".lower()
+        kws = ["verify", "verificar", "password", "contraseña", "urgent", "urgente",
+               "invoice", "factura", "payment", "pago", "bank", "banco", "reset"]
+        hits = [k for k in kws if k in text]
+        score = min(1.0, len(hits) * 0.2)
+        return score, ", ".join(hits)
+
+    def _fetch_items(imap, folder, limit=50):
+        typ, data = imap.uid("search", None, "ALL")
+        uids = (data[0] or b"").split() if typ == "OK" else []
+        uids = uids[-limit:]
+        items = []
+        for uid in reversed(uids):
+            try:
+                typ, data = imap.uid("fetch", uid, b"(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.512>)")
+                if typ != "OK" or not data:
+                    continue
+                hdr_raw = b""
+                snippet_raw = b""
+                for part in data:
+                    if not isinstance(part, tuple): 
+                        continue
+                    block = part[1] or b""
+                    if b"HEADER.FIELDS" in part[0]:
+                        hdr_raw += block
+                    elif b"TEXT" in part[0]:
+                        snippet_raw += block
+                msg = email.message_from_bytes(hdr_raw or b"")
+                from_email = _decode_hdr(msg.get("From"))
+                subject = _decode_hdr(msg.get("Subject"))
+                date = _decode_hdr(msg.get("Date"))
+                snippet = (snippet_raw or b"").decode("utf-8", "ignore")[:250]
+                score, reason = _score_suspicious(subject, snippet)
+                items.append(MailItem(
+                    uid=uid.decode(),
+                    from_email=from_email,
+                    subject=subject,
+                    date=date,
+                    snippet=snippet,
+                    suspicious=score >= 0.5,
+                    score=score,
+                    reason=reason,
+                    link=f"/mail/scanner?id={uid.decode()}",
+                ))
+            except Exception:
+                continue
+        return items
+
+    def _scan_impl():
+        host = os.getenv("MAIL_HOST", "imap.gmail.com")
+        port = int(os.getenv("MAIL_PORT", "993") or 993)
         use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
         username = os.getenv("MAIL_USERNAME", "")
         password = os.getenv("MAIL_PASSWORD", "")
-        folder   = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
+        folder = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
         mark_seen = _env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False)
 
         if not username or not password:
@@ -482,49 +531,54 @@ if not _route_exists("/mail/"):
 
         imap = None
         try:
-            if use_ssl:
-                imap = imaplib.IMAP4_SSL(host, port)
-            else:
-                imap = imaplib.IMAP4(host, port)
-
+            imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
             typ, _ = imap.login(username, password)
             if typ != "OK":
-                return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
-                                  message="Login IMAP falló")
-
+                return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message="Login IMAP falló", items=[])
             typ, _ = imap.select(folder, readonly=not mark_seen)
             if typ != "OK":
-                return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False,
-                                  message=f"No se pudo seleccionar la carpeta {folder}")
-
+                return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False, message=f"No se pudo abrir {folder}", items=[])
             typ, data = imap.search(None, "ALL")
             total = len((data[0] or b"").split()) if typ == "OK" else 0
-
             typ, data = imap.search(None, "UNSEEN")
             unseen_ids = (data[0] or b"").split() if typ == "OK" else []
             unread = len(unseen_ids)
-
-            marked = False
-            if mark_seen and unseen_ids:
-                for msg_id in unseen_ids[:10]:
-                    imap.store(msg_id, "+FLAGS", "\\Seen")
-                marked = True
-
-            imap.close(); imap.logout()
-            return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total,
-                              marked_seen=marked, message=None)
-        except imaplib.IMAP4.error as e:
+            items = _fetch_items(imap, folder)
             try:
-                if imap is not None: imap.logout()
-            except Exception: pass
-            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
-                              message=f"IMAP error: {e}")
+                imap.close(); imap.logout()
+            except Exception:
+                pass
+            return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total, marked_seen=False, message=None, items=items)
+        except (imaplib.IMAP4.error, socket.timeout) as e:
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=str(e), items=[])
         except Exception as e:
-            try:
-                if imap is not None: imap.logout()
-            except Exception: pass
-            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
-                              message=f"Error: {e}")
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
+
+    @mail_router.get("/", response_class=HTMLResponse)
+    def mail_index(request: Request, user=Depends(get_current_user_cookie)):
+        ctx = {"request": request, "page_title": "Casillas de correo", "current_user": user, "defaults": _defaults_from_env()}
+        try:
+            return app.state.templates.TemplateResponse("mail.html", ctx)
+        except TemplateNotFound:
+            html = """<!doctype html><meta charset='utf-8'>
+            <div style="font-family:system-ui;padding:24px">
+              <h1>Mail</h1>
+              <p><a href="/mail/scanner">Ir al scanner</a></p>
+            </div>"""
+            return HTMLResponse(html)
+
+    @mail_router.get("/scanner", response_class=HTMLResponse)
+    def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
+        ctx = {"request": request, "page_title": "Mail Scanner", "current_user": user, "defaults": _defaults_from_env()}
+        try:
+            return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Mail Scanner</h1>")
+
+    @mail_router.get("/scan", response_model=ScanResult)
+    @mail_router.post("/scan", response_model=ScanResult)
+    def mail_scan(user=Depends(get_current_user_cookie)):
+        return _scan_impl()
 
     app.include_router(mail_router)
 
