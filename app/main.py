@@ -57,7 +57,6 @@ class LangContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         resp = await call_next(request)
         try:
-            # Starlette TemplateResponse guarda el contexto en .context/.template_context
             ctx = getattr(resp, "context", None) or getattr(resp, "template_context", None)
             if ctx is not None and "lang" not in ctx:
                 ctx["lang"] = (request.cookies.get("lang") or "es").lower()[:2]
@@ -181,7 +180,7 @@ try:
 except Exception as e:
     print("[WARN] stats_ui router:", e)
 
-# === i18n (nuevo) — incluir router de cambio de idioma ===
+# === i18n (router de cambio de idioma) ===
 try:
     from app.routers import i18n
     app.include_router(i18n.router)
@@ -727,7 +726,12 @@ def dashboard(request: Request, db= Depends(get_db)):
         "org_id": getattr(user, "org_id", None),
     }
     try:
-        resp = templates.TemplateResponse("dashboard.html", {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin})
+        # >>> PASAMOS EL IDIOMA AL TEMPLATE <<<
+        lang = (request.cookies.get("lang") or "es").lower()[:2]
+        resp = templates.TemplateResponse(
+            "dashboard.html",
+            {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin, "lang": lang}
+        )
         resp.headers["Cache-Control"] = "no-store"; return resp
     except TemplateNotFound:
         html = f"""<!doctype html><meta charset='utf-8'>
