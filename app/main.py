@@ -15,7 +15,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-# >>>> IMPORT REMOVIDO PARA EVITAR CIRCULAR <<<<
+# ⛔️ Quitado para evitar import circular con app.routers.mail
 # from app.routers.mail import start_mail_scheduler  # NEW
 
 from app.database import SessionLocal
@@ -87,15 +87,7 @@ def _startup_hotfix_columns():
         except Exception as e:
             print("[db_hotfix] WARNING at startup:", e)
 
-# --- Scheduler de mail (respeta SCHEDULER_ENABLED=1) ---
-@app.on_event("startup")
-def _start_mail_sched():
-    try:
-        # >>> Import perezoso para evitar import circular <<<
-        from app.routers.mail import start_mail_scheduler  # type: ignore
-        start_mail_scheduler(app)
-    except Exception as e:
-        print("[startup] mail scheduler error:", e)
+# --- (El scheduler de mail se inicia dentro del router propio; se elimina import directo para evitar circular) ---
 
 from app.models import User
 
@@ -362,7 +354,6 @@ if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in ap
 
 # ============================================================
 # Fallback simple para /billing (evita 404 si no hay router)
-# (MOVIDO a nivel top para evitar quedar dentro del bloque de /mail)
 # ============================================================
 from fastapi import Request as _ReqX, Depends as _DepX
 from fastapi.responses import HTMLResponse as _HTML
@@ -401,6 +392,7 @@ if not _route_exists("/mail/"):
     DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LINK_FILE = DATA_DIR / "mail_link.json"
+    SETTINGS_FILE = DATA_DIR / "mail_env.json"
 
     def _env_bool(v: str, default=False) -> bool:
         if v is None: return default
@@ -417,14 +409,33 @@ if not _route_exists("/mail/"):
     def _save_linked(data: dict):
         LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # --- settings persistentes (sin contraseña) ---
+    def _load_settings() -> dict:
+        if SETTINGS_FILE.exists():
+            try:
+                return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def _save_settings(data: dict):
+        SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def _defaults_from_env():
+        store = _load_settings()
+        def _pick(key, env_key, cast=None, default=None):
+            if key in store and store[key] not in (None, ""):
+                return store[key] if cast is None else cast(store[key])
+            v = os.getenv(env_key, default)
+            return v if cast is None else cast(v)
+
         return dict(
-            host=os.getenv("MAIL_HOST", "imap.gmail.com"),
-            port=int(os.getenv("MAIL_PORT", "993") or 993),
-            use_ssl=_env_bool(os.getenv("MAIL_USE_SSL", "true"), True),
-            username=os.getenv("MAIL_USERNAME", ""),
-            folder=os.getenv("MAIL_FOLDER", "INBOX") or "INBOX",
-            mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
+            host      = _pick("host",      "MAIL_HOST",     str,   "imap.gmail.com"),
+            port      = _pick("port",      "MAIL_PORT",     int,   993),
+            use_ssl   = _pick("use_ssl",   "MAIL_USE_SSL",  lambda x: str(x).lower() in {"1","true","yes","on"}, True),
+            username  = _pick("username",  "MAIL_USERNAME", str,   ""),
+            folder    = _pick("folder",    "MAIL_FOLDER",   str,   "INBOX") or "INBOX",
+            mark_seen = _pick("mark_seen", "MAIL_MARK_SEEN",lambda x: str(x).lower() in {"1","true","yes","on"}, False),
         )
 
     # ---------- MODELOS ----------
@@ -521,13 +532,14 @@ if not _route_exists("/mail/"):
         return items
 
     def _scan_impl():
-        host = os.getenv("MAIL_HOST", "imap.gmail.com")
-        port = int(os.getenv("MAIL_PORT", "993") or 993)
-        use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
-        username = os.getenv("MAIL_USERNAME", "")
-        password = os.getenv("MAIL_PASSWORD", "")
-        folder = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
-        mark_seen = _env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False)
+        eff = _defaults_from_env()
+        host      = eff["host"]
+        port      = int(eff["port"])
+        use_ssl   = bool(eff["use_ssl"])
+        username  = eff["username"]
+        password  = os.getenv("MAIL_PASSWORD", "")  # la clave sigue en ENV
+        folder    = eff["folder"]
+        mark_seen = bool(eff["mark_seen"])
 
         if not username or not password:
             raise HTTPException(status_code=400, detail="Faltan MAIL_USERNAME o MAIL_PASSWORD")
@@ -572,16 +584,42 @@ if not _route_exists("/mail/"):
 
     @mail_router.get("/scanner", response_class=HTMLResponse)
     def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-        ctx = {"request": request, "page_title": "Mail Scanner", "current_user": user, "defaults": _defaults_from_env()}
+        linked = _load_linked().get(str(user["sub"]))
+        ctx = {"request": request, "page_title": "Mail Scanner", "current_user": user, "defaults": _defaults_from_env(), "linked": linked}
         try:
             return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
         except TemplateNotFound:
             return HTMLResponse("<h1>Mail Scanner</h1>")
 
-    # --- Alias /mail/settings -> /mail/ para evitar 404
-    @mail_router.get("/settings", include_in_schema=False)
-    def mail_settings_alias():
-        return RedirectResponse(url="/mail/", status_code=307)
+    # --- settings: GET/POST (para que el frontend no de 404) ---
+    @mail_router.get("/settings")
+    def mail_settings_get(user=Depends(get_current_user_cookie)):
+        return {"ok": True, "settings": _defaults_from_env()}
+
+    @mail_router.post("/settings")
+    def mail_settings_post(
+        request: Request,
+        user=Depends(get_current_user_cookie),
+        host: str = Form(None),
+        port: int = Form(None),
+        use_ssl: str = Form(None),
+        username: str = Form(None),
+        folder: str = Form(None),
+        mark_seen: str = Form(None),
+    ):
+        cur = _load_settings()
+        if host is not None: cur["host"] = host.strip()
+        if port is not None: cur["port"] = int(port)
+        if use_ssl is not None: cur["use_ssl"] = str(use_ssl).lower() in {"1","true","yes","on"}
+        if username is not None: cur["username"] = username.strip()
+        if folder is not None: cur["folder"] = (folder or "INBOX").strip() or "INBOX"
+        if mark_seen is not None: cur["mark_seen"] = str(mark_seen).lower() in {"1","true","yes","on"}
+        _save_settings(cur)
+
+        wants_json = "application/json" in (request.headers.get("accept") or "")
+        if wants_json:
+            return {"ok": True, "saved": True, "settings": _defaults_from_env()}
+        return RedirectResponse(url="/mail/", status_code=303)
 
     @mail_router.get("/scan", response_model=ScanResult)
     @mail_router.post("/scan", response_model=ScanResult)
