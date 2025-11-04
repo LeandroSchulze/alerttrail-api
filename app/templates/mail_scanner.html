@@ -38,7 +38,7 @@
 
     <div class="row">
       <form id="scanForm" method="post" action="/mail/scan">
-        <button type="submit">Ejecutar scan ahora</button>
+        <button>Ejecutar scan ahora</button>
       </form>
       <a href="/mail"><button type="button" class="btn-secondary">Volver</button></a>
       <span class="pill">Carpeta: <b style="margin-left:6px">{{ (defaults.folder or 'INBOX') if defaults else 'INBOX' }}</b></span>
@@ -52,12 +52,12 @@
     <details>
       <summary style="cursor:pointer">Parámetros efectivos</summary>
       <ul>
-        <li>Servidor: <b>{{ defaults.host if defaults else '—' }}</b></li>
-        <li>Puerto: <b>{{ defaults.port if defaults else '—' }}</b></li>
-        <li>SSL: <b>{{ 'Sí' if (defaults and defaults.use_ssl) else 'No' }}</b></li>
-        <li>Usuario (MAIL_USERNAME): <code>{{ (defaults.username or '—') if defaults else '—' }}</code></li>
-        <li>Carpeta: <b>{{ (defaults.folder or 'INBOX') if defaults else 'INBOX' }}</b></li>
-        <li>Marcar leído: <b>{{ 'Sí' if (defaults and defaults.mark_seen) else 'No' }}</b></li>
+        <li>Servidor: <b>{{ defaults.host }}</b></li>
+        <li>Puerto: <b>{{ defaults.port }}</b></li>
+        <li>SSL: <b>{{ 'Sí' if defaults.use_ssl else 'No' }}</b></li>
+        <li>Usuario (MAIL_USERNAME): <code>{{ defaults.username or '—' }}</code></li>
+        <li>Carpeta: <b>{{ defaults.folder }}</b></li>
+        <li>Marcar leído: <b>{{ 'Sí' if defaults.mark_seen else 'No' }}</b></li>
       </ul>
     </details>
   </div>
@@ -84,7 +84,7 @@
       const reasons = (it.analysis && Array.isArray(it.analysis.reasons)) ? it.analysis.reasons : [];
       const score = (typeof it.score === 'number') ? it.score : (it.analysis && typeof it.analysis.score === 'number' ? it.analysis.score : 0);
       const susp = (it.suspicious === true || level === 'medium' || level === 'high');
-      const who = (it.from || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const who = (it.from_email || it.from || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const subj = (it.subject || '—').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const snip = (it.snippet || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const badges = reasons.slice(0,4).map(r=>`<span class="chip">${(r||'').replace(/</g,'&lt;')}</span>`).join(' ');
@@ -98,7 +98,7 @@
             <div class="muted" style="font-size:12px">${(it.date||'').toString()}</div>
           </td>
           <td>
-            <div class="${susp ? 'susp' : 'muted'}">score: <span class="score">${score.toFixed(2)}</span></div>
+            <div class="${susp ? 'susp' : 'muted'}">score: <span class="score">${Number(score).toFixed(2)}</span></div>
             <div style="margin-top:6px">${badges || '<span class="muted">—</span>'}</div>
           </td>
           <td style="max-width:360px">${snip}</td>
