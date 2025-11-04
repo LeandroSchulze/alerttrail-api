@@ -3,7 +3,132 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Dashboard — AlertTrail</title>
+  <title>{% set _L=(lang or 'es') %}{% set TXT={
+    'es':{
+      'title':'Dashboard — AlertTrail',
+      'logout':'Cerrar sesión',
+      'welcome':'Bienvenido',
+      'your_email':'Tu email',
+      'account_status':'Estado de tu cuenta',
+      'current_plan':'Plan actual',
+      'role_admin':'Administrador',
+      'role_user':'Usuario',
+      'change_plan':'Cambiar plan',
+      'whats_included':'¿Qué incluye cada plan?',
+      'enable_notifications':'🔔 Activar notificaciones',
+      'org_admin':'Admin de organización',
+      'quick_access':'Acceso rápido',
+      'analysis':'Análisis',
+      'emails':'Emails',
+      'stats':'Estadísticas',
+      'subscriptions':'Suscripciones',
+      'pro_biz_features':'Funciones PRO / EMPRESAS',
+      'view_alerts':'Ver alertas',
+      'custom_rules':'Reglas personalizadas',
+      'reports':'Reportes',
+      'plans':'Planes',
+      'choose_pro':'Elegir PRO',
+      'choose_biz':'Elegir EMPRESAS',
+      'pro_price_line':'— US$ 10 / mes',
+      'biz_price_line':'— US$ 99 / mes',
+      'pro_usage':'Uso individual o equipo chico',
+      'pro_full':'Funciones completas del producto',
+      'pro_support':'Soporte estándar',
+      'biz_includes_25':'25 cuentas incluidas',
+      'biz_extra_seat':'Asientos adicionales: US$ 3/mes por usuario',
+      'biz_support':'Soporte prioritario',
+      'last_payments':'Últimos pagos',
+      'no_payments':'No encontramos pagos aún.',
+      'see_history':'Ver todo el historial',
+      'trial_title':'🔥 PRO gratis por 5 días',
+      'trial_msg':'Activalo ahora y probá todas las funciones PRO sin tarjeta.',
+      'trial_btn':'Activar prueba',
+      'trial_cta':'Activar PRO por USD 10/mes →',
+      'trial_left':'Te quedan <b id="promo-pro-countdown">—</b> de PRO gratis.',
+      'plans_modal_title':'Planes y beneficios',
+      'plans_tab_pro':'Plan PRO',
+      'plans_tab_biz':'Plan Empresas',
+      'per_month':'/mes',
+      'pro_modal_b1':'Escaneo de <strong>logs</strong> y <strong>emails</strong> sin límite práctico*',
+      'pro_modal_b2':'<strong>Reportes PDF</strong> avanzados',
+      'pro_modal_b3':'<strong>Alertas en tiempo real</strong> ante amenazas por correo',
+      'pro_modal_b4':'<strong>Análisis con IA</strong> (detección de patrones sospechosos)',
+      'pro_modal_b5':'Historial por usuario y <strong>descarga</strong> de resultados',
+      'pro_modal_note':'* Podrían aplicarse límites razonables contra abuso.',
+      'pro_modal_cta':'Hacete PRO',
+      'biz_modal_b1':'Incluye <strong>todo lo del PRO</strong>',
+      'biz_modal_b2':'<strong>25 cuentas</strong> de usuario incluidas',
+      'biz_modal_b3':'<strong>Asiento adicional</strong>: US$ 3/mes',
+      'biz_modal_b4':'<strong>Estadísticas</strong> para toda la organización',
+      'biz_modal_b5':'<strong>Soporte prioritario</strong>',
+      'biz_modal_cta':'Contratar Empresas',
+      'footer_terms':'Términos y Condiciones',
+      'footer_privacy':'Política de Privacidad',
+      'support':'Soporte'
+    },
+    'en':{
+      'title':'Dashboard — AlertTrail',
+      'logout':'Log out',
+      'welcome':'Welcome',
+      'your_email':'Your email',
+      'account_status':'Account status',
+      'current_plan':'Current plan',
+      'role_admin':'Administrator',
+      'role_user':'User',
+      'change_plan':'Change plan',
+      'whats_included':'What does each plan include?',
+      'enable_notifications':'🔔 Enable notifications',
+      'org_admin':'Org admin',
+      'quick_access':'Quick access',
+      'analysis':'Analysis',
+      'emails':'Emails',
+      'stats':'Statistics',
+      'subscriptions':'Subscriptions',
+      'pro_biz_features':'PRO / BUSINESS features',
+      'view_alerts':'View alerts',
+      'custom_rules':'Custom rules',
+      'reports':'Reports',
+      'plans':'Plans',
+      'choose_pro':'Choose PRO',
+      'choose_biz':'Choose BUSINESS',
+      'pro_price_line':'— US$ 10 / month',
+      'biz_price_line':'— US$ 99 / month',
+      'pro_usage':'Individual or small team use',
+      'pro_full':'Full product features',
+      'pro_support':'Standard support',
+      'biz_includes_25':'25 seats included',
+      'biz_extra_seat':'Extra seats: US$ 3/month per user',
+      'biz_support':'Priority support',
+      'last_payments':'Latest payments',
+      'no_payments':'No payments found yet.',
+      'see_history':'See full history',
+      'trial_title':'🔥 5-day PRO free trial',
+      'trial_msg':'Activate now and try all PRO features, no card required.',
+      'trial_btn':'Start trial',
+      'trial_cta':'Get PRO for USD 10/mo →',
+      'trial_left':'You have <b id="promo-pro-countdown">—</b> of PRO trial left.',
+      'plans_modal_title':'Plans & benefits',
+      'plans_tab_pro':'PRO Plan',
+      'plans_tab_biz':'Business Plan',
+      'per_month':'/mo',
+      'pro_modal_b1':'Scan <strong>logs</strong> and <strong>emails</strong> with no practical limit*',
+      'pro_modal_b2':'Advanced <strong>PDF reports</strong>',
+      'pro_modal_b3':'<strong>Real-time alerts</strong> for email threats',
+      'pro_modal_b4':'<strong>AI analysis</strong> (suspicious pattern detection)',
+      'pro_modal_b5':'User history and <strong>downloads</strong>',
+      'pro_modal_note':'* Reasonable anti-abuse limits may apply.',
+      'pro_modal_cta':'Go PRO',
+      'biz_modal_b1':'Includes <strong>everything in PRO</strong>',
+      'biz_modal_b2':'<strong>25 user seats</strong> included',
+      'biz_modal_b3':'<strong>Extra seat</strong>: US$ 3/mo',
+      'biz_modal_b4':'<strong>Organization-wide</strong> analytics',
+      'biz_modal_b5':'<strong>Priority support</strong>',
+      'biz_modal_cta':'Choose Business',
+      'footer_terms':'Terms & Conditions',
+      'footer_privacy':'Privacy Policy',
+      'support':'Support'
+    }
+  } %}{% macro t(k) %}{{ TXT.get(_L, TXT['es'])[k] }}{% endmacro %}{{ TXT.get(_L, TXT['es'])['title'] }}</title>
   <style>
     :root{
       --bg:#f7fafc; --panel:#ffffff; --text:#0f172a; --muted:#475569; --line:#e5e7eb;
@@ -74,17 +199,17 @@
         </div>
 
         <span class="pill">
-          👤 {{ user.name }} · Plan {{ user.plan }}{% if user.is_org_admin %} · Org Admin{% endif %}
+          👤 {{ user.name }} · Plan {{ user.plan }}{% if user.is_org_admin %} · {{ t('org_admin') }}{% endif %}
         </span>
-        <a class="logout" href="/logout">Cerrar sesión</a>
+        <a class="logout" href="/logout">{{ t('logout') }}</a>
       </div>
     </div>
   </header>
 
   <div class="container">
     <div class="card">
-      <h1>Bienvenido, {{ user.name }}</h1>
-      <p class="muted">Tu email: {{ user.email }}</p>
+      <h1>{{ t('welcome') }}, {{ user.name }}</h1>
+      <p class="muted">{{ t('your_email') }}: {{ user.email }}</p>
     </div>
 
     <!-- === PROMO PRO 5 DÍAS (solo particulares) === -->
@@ -93,17 +218,17 @@
          class="promo-box"
          style="display:none;margin:16px 0;padding:14px 16px;border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;">
       <div id="promo-pro-content" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <strong style="font-size:15px;">🔥 PRO gratis por 5 días</strong>
-        <span id="promo-pro-msg" style="color:#1f2937">Activalo ahora y probá todas las funciones PRO sin tarjeta.</span>
+        <strong style="font-size:15px;">{{ t('trial_title') }}</strong>
+        <span id="promo-pro-msg" style="color:#1f2937">{{ t('trial_msg') }}</span>
         <button id="promo-pro-btn"
                 style="margin-left:auto;padding:8px 12px;border:0;background:#2563eb;color:#fff;border-radius:10px;cursor:pointer">
-          Activar prueba
+          {{ t('trial_btn') }}
         </button>
         <a href="/billing/subscriptions" id="promo-pro-subscribe" style="display:none;margin-left:8px;text-decoration:none;color:#2563eb">
-          Activar PRO por USD 10/mes →</a>
+          {{ t('trial_cta') }}</a>
       </div>
       <div id="promo-pro-timer" style="margin-top:8px;color:#334155;display:none">
-        Te quedan <b id="promo-pro-countdown">—</b> de PRO gratis.
+        {{ t('trial_left')|safe }}
       </div>
       <div id="promo-pro-error" style="margin-top:8px;color:#b91c1c;display:none"></div>
     </div>
@@ -111,35 +236,35 @@
     <div class="grid">
       <!-- Estado + acciones de plan -->
       <section class="card">
-        <h3>Estado de tu cuenta</h3>
-        <p class="muted">Plan actual: <strong>{{ user.plan }}</strong></p>
+        <h3>{{ t('account_status') }}</h3>
+        <p class="muted">{{ t('current_plan') }}: <strong>{{ user.plan }}</strong></p>
         {% if is_admin %}
-          <p class="muted">Rol: <strong>Administrador</strong></p>
+          <p class="muted">Rol: <strong>{{ t('role_admin') }}</strong></p>
         {% else %}
-          <p class="muted">Rol: <strong>Usuario</strong></p>
+          <p class="muted">Rol: <strong>{{ t('role_user') }}</strong></p>
         {% endif %}
         <div class="actions">
-          <a class="btn-primary" href="/billing/subscriptions">Cambiar plan</a>
-          <button id="openPlansModal" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
-          <button id="btnPush" class="btn-outline" type="button">🔔 Activar notificaciones</button>
+          <a class="btn-primary" href="/billing/subscriptions">{{ t('change_plan') }}</a>
+          <button id="openPlansModal" class="btn-outline" type="button">{{ t('whats_included') }}</button>
+          <button id="btnPush" class="btn-outline" type="button">{{ t('enable_notifications') }}</button>
           {% if user.is_org_admin and user.org_id %}
-            <a class="btn-outline" href="/org/admin">Admin de organización</a>
+            <a class="btn-outline" href="/org/admin">{{ t('org_admin') }}</a>
           {% endif %}
         </div>
       </section>
 
       <!-- Acceso rápido -->
       <section class="card">
-        <h3>Acceso rápido</h3>
+        <h3>{{ t('quick_access') }}</h3>
         <div class="quick">
-          <a class="chip" href="/analysis">Análisis</a>
-          <a class="chip" href="/mail">Emails</a>
+          <a class="chip" href="/analysis">{{ t('analysis') }}</a>
+          <a class="chip" href="/mail">{{ t('emails') }}</a>
           {% if user.is_org_admin and user.org_id %}
-            <a class="chip" href="/org/admin">Admin de organización</a>
+            <a class="chip" href="/org/admin">{{ t('org_admin') }}</a>
           {% endif %}
           {% if is_admin %}
-            <a class="chip" href="/stats">Estadísticas</a>
-            <a class="chip" href="/admin/subscriptions">Suscripciones</a>
+            <a class="chip" href="/stats">{{ t('stats') }}</a>
+            <a class="chip" href="/admin/subscriptions">{{ t('subscriptions') }}</a>
           {% endif %}
         </div>
       </section>
@@ -147,11 +272,11 @@
       <!-- Funciones PRO / EMPRESAS -->
       {% if (user.plan or "").upper() in ["PRO","BIZ","EMPRESAS","EMPRESA"] %}
       <section class="card" style="grid-column:1/-1">
-        <h3>Funciones PRO / EMPRESAS</h3>
+        <h3>{{ t('pro_biz_features') }}</h3>
         <div class="quick">
-          <a class="chip" href="/alerts">Ver alertas</a>
-          <a class="chip" href="/rules">Reglas personalizadas</a>
-          <a class="chip" href="/reports">Reportes</a>
+          <a class="chip" href="/alerts">{{ t('view_alerts') }}</a>
+          <a class="chip" href="/rules">{{ t('custom_rules') }}</a>
+          <a class="chip" href="/reports">{{ t('reports') }}</a>
         </div>
       </section>
       {% endif %}
@@ -159,41 +284,41 @@
       <!-- Planes -->
       <section class="card" style="grid-column:1/-1">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <h3 style="margin:0">Planes</h3>
-          <button id="openPlansModal2" class="btn-outline" type="button">¿Qué incluye cada plan?</button>
+          <h3 style="margin:0">{{ t('plans') }}</h3>
+          <button id="openPlansModal2" class="btn-outline" type="button">{{ t('whats_included') }}</button>
         </div>
         <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:stretch;margin-top:12px">
           <!-- PRO -->
           <div class="card" style="margin:0">
-            <h3 style="margin-bottom:6px">PRO <span class="muted" style="font-weight:400">— US$ 10 / mes</span></h3>
+            <h3 style="margin-bottom:6px">PRO <span class="muted" style="font-weight:400">{{ t('pro_price_line') }}</span></h3>
             <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
-              <li>Uso individual o equipo chico</li>
-              <li>Funciones completas del producto</li>
-              <li>Soporte estándar</li>
+              <li>{{ t('pro_usage') }}</li>
+              <li>{{ t('pro_full') }}</li>
+              <li>{{ t('pro_support') }}</li>
             </ul>
-            <a class="btn-primary" href="/billing/checkout?plan=PRO">Elegir PRO</a>
+            <a class="btn-primary" href="/billing/checkout?plan=PRO">{{ t('choose_pro') }}</a>
           </div>
           <!-- EMPRESAS -->
           <div class="card" style="margin:0">
-            <h3 style="margin-bottom:6px">EMPRESAS <span class="muted" style="font-weight:400">— US$ 99 / mes</span></h3>
+            <h3 style="margin-bottom:6px">EMPRESAS <span class="muted" style="font-weight:400">{{ t('biz_price_line') }}</span></h3>
             <ul class="muted" style="margin:8px 0 12px;padding-left:18px">
-              <li><strong>25 cuentas incluidas</strong></li>
-              <li>Asientos adicionales: <strong>US$ 3/mes</strong> por usuario</li>
-              <li>Soporte prioritario</li>
+              <li><strong>{{ t('biz_includes_25') }}</strong></li>
+              <li>{{ t('biz_extra_seat') }}</li>
+              <li>{{ t('biz_support') }}</li>
             </ul>
-            <a class="btn-primary" href="/billing/checkout?plan=BIZ">Elegir EMPRESAS</a>
+            <a class="btn-primary" href="/billing/checkout?plan=BIZ">{{ t('choose_biz') }}</a>
           </div>
         </div>
       </section>
 
       <!-- 🆕 Últimos pagos -->
       <section class="card" style="grid-column:1/-1">
-        <h3 style="margin:0 0 6px">Últimos pagos</h3>
-        <p class="muted" id="pay-empty" style="display:none">No encontramos pagos aún.</p>
+        <h3 style="margin:0 0 6px">{{ t('last_payments') }}</h3>
+        <p class="muted" id="pay-empty" style="display:none">{{ t('no_payments') }}</p>
         <div id="pay-list" class="paylist" aria-live="polite"></div>
         <div id="pay-error" class="muted" style="display:none;color:#b91c1c">No se pudo cargar el historial.</div>
         <div style="margin-top:8px">
-          <a class="btn-outline" href="/billing/payments">Ver todo el historial</a>
+          <a class="btn-outline" href="/billing/payments">{{ t('see_history') }}</a>
         </div>
       </section>
     </div>
@@ -203,47 +328,46 @@
   <div id="plansModal" class="plans-modal" role="dialog" aria-modal="true" aria-labelledby="plansModalTitle" aria-hidden="true">
     <div class="plans-dialog" role="document">
       <header class="plans-header">
-        <h2 id="plansModalTitle" class="plans-title">Planes y beneficios</h2>
+        <h2 id="plansModalTitle" class="plans-title">{{ t('plans_modal_title') }}</h2>
         <button class="plans-close" id="closePlansModal" aria-label="Cerrar">×</button>
       </header>
 
       <nav class="plans-tabs" role="tablist" aria-label="Tipos de plan">
-        <button class="plans-tab is-active" role="tab" aria-selected="true" aria-controls="tab-pro" id="tab-pro-btn">Plan PRO</button>
-        <button class="plans-tab" role="tab" aria-selected="false" aria-controls="tab-biz" id="tab-biz-btn">Plan Empresas</button>
+        <button class="plans-tab is-active" role="tab" aria-selected="true" aria-controls="tab-pro" id="tab-pro-btn">{{ t('plans_tab_pro') }}</button>
+        <button class="plans-tab" role="tab" aria-selected="false" aria-controls="tab-biz" id="tab-biz-btn">{{ t('plans_tab_biz') }}</button>
       </nav>
 
       <section id="tab-pro" class="plans-panel is-active" role="tabpanel" aria-labelledby="tab-pro-btn">
-        <div class="plans-price">US$ 10<span class="plans-price-per">/mes</span></div>
+        <div class="plans-price">US$ 10<span class="plans-price-per">{{ '/' + t('per_month') }}</span></div>
         <ul class="plans-list">
-          <li>Escaneo de <strong>logs</strong> y <strong>emails</strong> sin límite práctico*</li>
-          <li><strong>Reportes PDF</strong> avanzados</li>
-          <li><strong>Alertas en tiempo real</strong> ante amenazas por correo</li>
-          <li><strong>Análisis con IA</strong> (detección de patrones sospechosos)</li>
-          <li>Historial por usuario y <strong>descarga</strong> de resultados</li>
+          <li>{{ t('pro_modal_b1')|safe }}</li>
+          <li>{{ t('pro_modal_b2')|safe }}</li>
+          <li>{{ t('pro_modal_b3')|safe }}</li>
+          <li>{{ t('pro_modal_b4')|safe }}</li>
+          <li>{{ t('pro_modal_b5')|safe }}</li>
         </ul>
-        <p class="plans-note">* Podrían aplicarse límites razonables contra abuso.</p>
+        <p class="plans-note">{{ t('pro_modal_note') }}</p>
         <div class="plans-actions">
-          <a href="/billing/checkout?plan=PRO" class="plans-primary">Hacete PRO</a>
+          <a href="/billing/checkout?plan=PRO" class="plans-primary">{{ t('pro_modal_cta') }}</a>
         </div>
       </section>
 
       <section id="tab-biz" class="plans-panel" role="tabpanel" aria-labelledby="tab-biz-btn" hidden>
-        <div class="plans-price">US$ 99<span class="plans-price-per">/mes</span></div>
+        <div class="plans-price">US$ 99<span class="plans-price-per">{{ '/' + t('per_month') }}</span></div>
         <ul class="plans-list">
-          <li>Incluye <strong>todo lo del PRO</strong></li>
-          <li><strong>25 cuentas</strong> de usuario incluidas</li>
-          <li><strong>Asiento adicional</strong>: US$ 3/mes</li>
-          <li><strong>Estadísticas</strong> para toda la organización</li>
-          <li><strong>Soporte prioritario</li>
+          <li>{{ t('biz_modal_b1')|safe }}</li>
+          <li>{{ t('biz_modal_b2')|safe }}</li>
+          <li>{{ t('biz_modal_b3')|safe }}</li>
+          <li>{{ t('biz_modal_b4')|safe }}</li>
+          <li>{{ t('biz_modal_b5')|safe }}</li>
         </ul>
         <div class="plans-actions">
-          <a href="/billing/checkout?plan=BIZ" class="plans-primary">Contratar Empresas</a>
+          <a href="/billing/checkout?plan=BIZ" class="plans-primary">{{ t('biz_modal_cta') }}</a>
         </div>
       </section>
 
       <footer class="plans-footer">
-        ¿Dudas? Escribinos a
-        <a href="mailto:admin.alerttrail@gmail.com">admin.alerttrail@gmail.com</a>
+        {{ t('support') }}: <a href="mailto:admin.alerttrail@gmail.com">admin.alerttrail@gmail.com</a>
       </footer>
     </div>
   </div>
@@ -437,10 +561,9 @@
   </script>
 
   <footer class="page-footer">
-    <a href="/terms">Términos y Condiciones</a> ·
-    <a href="/privacy">Política de Privacidad</a> ·
-    Soporte: <a href="mailto:info.alerttrail@gmail.com">info.alerttrail@gmail.com</a>
+    <a href="/terms">{{ t('footer_terms') }}</a> ·
+    <a href="/privacy">{{ t('footer_privacy') }}</a> ·
+    {{ t('support') }}: <a href="mailto:info.alerttrail@gmail.com">info.alerttrail@gmail.com</a>
   </footer>
 </body>
 </html>
-
