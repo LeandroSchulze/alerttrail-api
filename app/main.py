@@ -17,8 +17,6 @@ from sqlalchemy import func
 from jinja2 import TemplateNotFound
 from app.routers.mail import start_mail_scheduler  # NEW
 
-from app.routers import i18n
-app.include_router(i18n.router)
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
@@ -53,6 +51,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return resp
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+# --- Middleware para exponer lang en templates (desde cookie "lang") ---
+class LangContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        resp = await call_next(request)
+        try:
+            # Starlette TemplateResponse guarda el contexto en .context/.template_context
+            ctx = getattr(resp, "context", None) or getattr(resp, "template_context", None)
+            if ctx is not None and "lang" not in ctx:
+                ctx["lang"] = (request.cookies.get("lang") or "es").lower()[:2]
+        except Exception:
+            pass
+        return resp
+
+app.add_middleware(LangContextMiddleware)
 
 # ---- DB hotfix temprano ----
 try:
@@ -167,6 +180,14 @@ try:
     app.include_router(stats_ui.router)
 except Exception as e:
     print("[WARN] stats_ui router:", e)
+
+# === i18n (nuevo) — incluir router de cambio de idioma ===
+try:
+    from app.routers import i18n
+    app.include_router(i18n.router)
+    print("[routers] i18n montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar i18n: {e}")
 
 # ---- DB helpers ----
 def get_db():
