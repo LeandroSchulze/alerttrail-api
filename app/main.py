@@ -15,7 +15,8 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-from app.routers.mail import start_mail_scheduler  # NEW
+# >>>> IMPORT REMOVIDO PARA EVITAR CIRCULAR <<<<
+# from app.routers.mail import start_mail_scheduler  # NEW
 
 from app.database import SessionLocal
 from app.security import (
@@ -90,6 +91,8 @@ def _startup_hotfix_columns():
 @app.on_event("startup")
 def _start_mail_sched():
     try:
+        # >>> Import perezoso para evitar import circular <<<
+        from app.routers.mail import start_mail_scheduler  # type: ignore
         start_mail_scheduler(app)
     except Exception as e:
         print("[startup] mail scheduler error:", e)
@@ -574,6 +577,11 @@ if not _route_exists("/mail/"):
             return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
         except TemplateNotFound:
             return HTMLResponse("<h1>Mail Scanner</h1>")
+
+    # --- Alias /mail/settings -> /mail/ para evitar 404
+    @mail_router.get("/settings", include_in_schema=False)
+    def mail_settings_alias():
+        return RedirectResponse(url="/mail/", status_code=307)
 
     @mail_router.get("/scan", response_model=ScanResult)
     @mail_router.post("/scan", response_model=ScanResult)
