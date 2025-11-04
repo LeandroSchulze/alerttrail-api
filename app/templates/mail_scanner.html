@@ -6,12 +6,23 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a}
-    .card{border:1px solid #e2e8f0;border-radius:16px;padding:16px;max-width:720px}
+    .card{border:1px solid #e2e8f0;border-radius:16px;padding:16px;max-width:980px}
     button{padding:10px 14px;border-radius:10px;border:0;background:#0ea5e9;color:white;cursor:pointer}
     pre{background:#0f172a0d;padding:12px;border-radius:10px;overflow:auto}
     .muted{color:#64748b}
     .ok{background:#ecfeff;border:1px solid #a5f3fc;padding:8px 10px;border-radius:10px}
     .bad{background:#fef2f2;border:1px solid #fecaca;padding:8px 10px;border-radius:10px}
+    .tbl{width:100%;border-collapse:collapse;margin-top:12px}
+    .tbl th,.tbl td{border-bottom:1px solid #e2e8f0;padding:8px;vertical-align:top}
+    .chip{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #c7d2fe;background:#eef2ff;color:#1e3a8a;font-size:12px;font-weight:700;margin-right:6px}
+    .chip.red{border-color:#fecaca;background:#fee2e2;color:#7f1d1d}
+    .chip.yellow{border-color:#fde68a;background:#fef3c7;color:#7c2d12}
+    .score{font-weight:800}
+    .susp{font-weight:700;color:#b91c1c}
+    .row{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
+    .btn-secondary{padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;color:#0f172a;cursor:pointer}
+    .btn-secondary:hover{box-shadow:0 0 0 3px #e2e8f0}
+    .pill{display:inline-block;border:1px solid #e2e8f0;border-radius:999px;padding:4px 8px;font-size:12px;color:#334155}
   </style>
 </head>
 <body>
@@ -25,14 +36,17 @@
       <p class="muted">No hay casilla guardada en <a href="/mail">/mail</a> (opcional).</p>
     {% endif %}
 
-    <div style="display:flex;gap:12px;align-items:center;margin-top:8px">
+    <div class="row">
       <form id="scanForm" method="post" action="/mail/scan">
         <button>Ejecutar scan ahora</button>
       </form>
-      <a href="/mail"><button type="button">Volver</button></a>
+      <a href="/mail"><button type="button" class="btn-secondary">Volver</button></a>
+      <span class="pill">Carpeta: <b style="margin-left:6px">{{ (defaults.folder or 'INBOX') if defaults else 'INBOX' }}</b></span>
     </div>
 
-    <div id="out" style="margin-top:16px"></div>
+    <div id="summary" style="margin-top:16px"></div>
+    <div id="list" style="margin-top:8px"></div>
+    <div id="raw" style="margin-top:16px"></div>
 
     <hr style="margin:18px 0">
     <details>
@@ -50,28 +64,92 @@
 
 <script>
   const form = document.getElementById('scanForm');
+  const summary = document.getElementById('summary');
+  const list = document.getElementById('list');
+  const raw = document.getElementById('raw');
+
+  function levelChip(level){
+    if(level === 'high') return '<span class="chip red">HIGH</span>';
+    if(level === 'medium') return '<span class="chip yellow">MEDIUM</span>';
+    return '<span class="chip">LOW</span>';
+  }
+
+  function renderItems(items){
+    if(!items || !items.length){
+      list.innerHTML = '<p class="muted">No se encontraron emails para mostrar.</p>';
+      return;
+    }
+    const rows = items.map(it=>{
+      const level = (it.analysis && it.analysis.danger_level) ? it.analysis.danger_level : 'low';
+      const reasons = (it.analysis && Array.isArray(it.analysis.reasons)) ? it.analysis.reasons : [];
+      const score = (typeof it.score === 'number') ? it.score : (it.analysis && typeof it.analysis.score === 'number' ? it.analysis.score : 0);
+      const susp = (it.suspicious === true || level === 'medium' || level === 'high');
+      const who = (it.from || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const subj = (it.subject || '—').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const snip = (it.snippet || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const badges = reasons.slice(0,4).map(r=>`<span class="chip">${(r||'').replace(/</g,'&lt;')}</span>`).join(' ');
+      const link = it.link || (it.uid ? (`/mail/scanner?id=${encodeURIComponent(it.uid)}`) : '#');
+      return `
+        <tr>
+          <td style="white-space:nowrap">${levelChip(level)}</td>
+          <td>
+            <div><a href="${link}" style="text-decoration:none;color:#0f172a;font-weight:700">${subj}</a></div>
+            <div class="muted" style="font-size:12px">${who}</div>
+            <div class="muted" style="font-size:12px">${(it.date||'').toString()}</div>
+          </td>
+          <td>
+            <div class="${susp ? 'susp' : 'muted'}">score: <span class="score">${score.toFixed(2)}</span></div>
+            <div style="margin-top:6px">${badges || '<span class="muted">—</span>'}</div>
+          </td>
+          <td style="max-width:360px">${snip}</td>
+        </tr>
+      `;
+    }).join('');
+
+    list.innerHTML = `
+      <table class="tbl" aria-label="Resultados del escaneo">
+        <thead>
+          <tr>
+            <th>Riesgo</th>
+            <th>Email</th>
+            <th>Análisis</th>
+            <th>Snippet</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const out = document.getElementById('out');
-    out.innerHTML = '<p class="muted">Conectando IMAP…</p>';
+    summary.innerHTML = '<p class="muted">Conectando IMAP…</p>';
+    list.innerHTML = '';
+    raw.innerHTML = '';
     try {
       const res = await fetch('/mail/scan', {method:'POST'});
       const data = await res.json();
+
       if (data.ok) {
-        out.innerHTML = `
+        summary.innerHTML = `
           <div class="ok">
             <b>Conexión OK.</b><br>
-            Carpeta: <b>${data.folder}</b><br>
-            Emails totales: <b>${data.total}</b><br>
-            No leídos: <b>${data.unread}</b><br>
+            Carpeta: <b>${data.folder || '-'}</b> ·
+            Emails totales: <b>${data.total ?? '-'}</b> ·
+            No leídos: <b>${data.unread ?? '-'}</b> ·
             Marcados como leídos en esta corrida: <b>${data.marked_seen ? 'Sí' : 'No'}</b>
           </div>`;
       } else {
-        out.innerHTML = `<div class="bad"><b>Error:</b> ${data.message || 'falló la conexión'}</div>`;
+        summary.innerHTML = `<div class="bad"><b>Error:</b> ${data.message || 'falló la conexión'}</div>`;
       }
-      out.insertAdjacentHTML('beforeend', `<pre>${JSON.stringify(data, null, 2)}</pre>`);
+
+      // Render de items si vienen del backend
+      renderItems(data.items || []);
+
+      // Debug crudo al final (como antes)
+      raw.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
     } catch (err) {
-      out.innerHTML = `<div class="bad"><b>Excepción:</b> ${err}</div>`;
+      summary.innerHTML = `<div class="bad"><b>Excepción:</b> ${String(err)}</div>`;
     }
   });
 </script>
