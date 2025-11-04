@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="{{ (lang or 'es') }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -222,7 +222,7 @@
           <li>Historial por usuario y <strong>descarga</strong> de resultados</li>
         </ul>
         <p class="plans-note">* Podrían aplicarse límites razonables contra abuso.</p>
-        <div class="plans-actions>
+        <div class="plans-actions">
           <a href="/billing/checkout?plan=PRO" class="plans-primary">Hacete PRO</a>
         </div>
       </section>
@@ -443,3 +443,4 @@
   </footer>
 </body>
 </html>
+
