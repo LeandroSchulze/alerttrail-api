@@ -460,6 +460,98 @@ if not _route_exists("/mail/settings"):
 
     app.include_router(mail_settings_router)
 
+# === [ADD] Vinculación de casilla: /mail/connect (GET/POST) ===
+# Reutilizamos DATA_DIR ya definido más arriba y creamos un archivo de vínculo simple.
+LINK_FILE = DATA_DIR / "mail_link.json"
+
+def __mail_load_linked() -> dict:
+    if LINK_FILE.exists():
+        try:
+            return json.loads(LINK_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+def __mail_save_linked(data: dict):
+    LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# Si existe el router de /mail/settings lo reutilizamos; si no, creamos uno nuevo.
+try:
+    mail_settings_router  # noqa: F401
+except NameError:
+    from fastapi import APIRouter
+    mail_settings_router = APIRouter(prefix="/mail", tags=["mail"])
+
+@mail_settings_router.get("/connect", response_class=HTMLResponse)
+def mail_connect_get(request: Request, user=Depends(get_current_user_cookie)):
+    """
+    Página mínima de vinculación (fallback). Si tenés template dedicado, se renderiza.
+    De lo contrario, muestra un form simple.
+    """
+    linked = __mail_load_linked()
+    ctx = {"request": request, "linked": linked, "page_title": "Vincular casilla"}
+    try:
+        # Si tenés un template "mail_connect.html", lo usa.
+        return app.state.templates.TemplateResponse("mail_connect.html", ctx)
+    except TemplateNotFound:
+        # Fallback HTML mínimo
+        html = f"""<!doctype html><meta charset='utf-8'>
+        <div style="font-family:system-ui;padding:24px;max-width:520px">
+          <h2>Vincular casilla</h2>
+          <form method="post" action="/mail/connect" style="display:grid;gap:8px">
+            <label>Correo a mostrar (solo se guarda para referencia visual):
+              <input name="address" type="email" placeholder="usuario@dominio" value="{(linked.get('address') or '') if linked else ''}" required>
+            </label>
+            <button style="padding:10px;border-radius:8px;background:#0ea5e9;color:#fff;border:0">Guardar</button>
+          </form>
+          <p style="color:#64748b;margin-top:10px">Esto no cambia las variables IMAP; solo guarda el correo “vinculado” que ves en la UI.</p>
+          <p><a href="/mail/">Volver</a></p>
+        </div>"""
+        return HTMLResponse(html)
+
+@mail_settings_router.post("/connect")
+async def mail_connect_post(
+    request: Request,
+    user=Depends(get_current_user_cookie),
+    address: str = Form(None),
+    action: str = Form(None),
+):
+    """
+    Guarda/elimina la casilla “vinculada” para mostrar en la UI.
+    No toca credenciales IMAP ni variables de entorno.
+    """
+    cur = __mail_load_linked()
+    # También aceptamos JSON por si la UI lo manda así
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" in ctype:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        address = body.get("address", address)
+        action = body.get("action", action)
+
+    if (action or "").lower() in {"unlink", "remove", "delete"}:
+        cur = {}
+    else:
+        if not address:
+            raise HTTPException(status_code=400, detail="Falta address")
+        cur["address"] = str(address).strip()
+
+    __mail_save_linked(cur)
+
+    # Si la UI espera JSON
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return {"ok": True, "linked": cur}
+
+    # Por defecto volvemos a /mail/
+    return RedirectResponse(url="/mail/", status_code=303)
+
+# Montamos (por si aún no se montó)
+app.include_router(mail_settings_router)
+# === [/ADD] ===
+
 # ---- Fallback /mail/alerts/unread_count
 from fastapi.routing import APIRoute as _APIRoute_1
 if not any(isinstance(r, _APIRoute_1) and r.path == "/mail/alerts/unread_count" for r in app.routes):
