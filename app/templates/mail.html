@@ -74,7 +74,8 @@
 
     input[type=text],
     input[type=password],
-    input[type=number] {
+    input[type=number],
+    input[type=email] {
       padding: 10px 12px;
       border: 1px solid #cbd5e1;
       border-radius: 10px;
@@ -154,7 +155,7 @@
       <p class="ok">Casilla linkeada: <b>{{ linked.address }}</b></p>
       <div class="row">
         <form method="post" action="/mail/connect">
-          <input type="text" name="address" placeholder="otro@dominio.com" required>
+          <input type="email" name="address" placeholder="otro@dominio.com" required>
           <button class="secondary">Reemplazar</button>
         </form>
         <a href="/mail/scanner"><button type="button" class="secondary">Abrir Scanner</button></a>
@@ -163,7 +164,7 @@
       <p class="muted" style="text-align:center;">No hay ninguna casilla guardada para tu usuario.</p>
       <div class="row">
         <form method="post" action="/mail/connect">
-          <input type="text" name="address" placeholder="tu_correo@example.com" required>
+          <input type="email" name="address" placeholder="tu_correo@example.com" required>
           <button class="primary">Vincular casilla</button>
         </form>
         <a href="/mail/scanner"><button type="button" class="secondary">Probar Scanner</button></a>
@@ -174,6 +175,17 @@
 
     <h3 style="text-align:center;margin-bottom:6px">Configuración IMAP</h3>
     <form method="post" action="/mail/settings" class="imap-form">
+      <!-- FIX CLAVE: el backend exige 'address'. Lo enviamos oculto si ya hay casilla -->
+      <input type="hidden" name="address" value="{{ linked.address if linked else '' }}">
+
+      {% if not linked %}
+        <!-- Si aún no hay casilla, mostramos el campo para que lo completes acá también -->
+        <label>Dirección de correo
+          <input type="email" name="address_visible" placeholder="tu_correo@example.com"
+                 oninput="this.form.address.value=this.value">
+        </label>
+      {% endif %}
+
       <label>Servidor IMAP
         <input type="text" name="host" placeholder="imap.gmail.com" value="{{ linked.imap_cfg.host if linked and linked.imap_cfg else defaults.host }}" required>
       </label>
