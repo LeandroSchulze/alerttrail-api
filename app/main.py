@@ -15,8 +15,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
-# ⛔️ Evitar import circular con app.routers.mail
-# from app.routers.mail import start_mail_scheduler
+from app.routers.mail import start_mail_scheduler  # NEW
 
 from app.database import SessionLocal
 from app.security import (
@@ -26,6 +25,7 @@ from app.security import (
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
+# Evita bucles /mail <-> /mail/
 app.router.redirect_slashes = False
 
 DEBUG_AUTH = (os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on"))
@@ -86,7 +86,13 @@ def _startup_hotfix_columns():
         except Exception as e:
             print("[db_hotfix] WARNING at startup:", e)
 
-# --- (El scheduler de mail se inicia dentro del router de mail si corresponde) ---
+# --- Scheduler de mail (respeta SCHEDULER_ENABLED=1) ---
+@app.on_event("startup")
+def _start_mail_sched():
+    try:
+        start_mail_scheduler(app)
+    except Exception as e:
+        print("[startup] mail scheduler error:", e)
 
 from app.models import User
 
@@ -344,7 +350,7 @@ for _extra in ("subscription", "webhooks"):
     except Exception as e:
         print(f"[routers] No pude cargar {_extra}: {e}")
 
-# ---- Alias estable /mail -> /mail/
+# ---- Alias estable /mail -> /mail/ (si existe el path /mail/, esto solo redirige)
 from fastapi.routing import APIRoute as _APIRoute_mail_alias
 if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in app.routes):
     @app.get("/mail", include_in_schema=False)
@@ -353,6 +359,7 @@ if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in ap
 
 # ============================================================
 # Fallback simple para /billing (evita 404 si no hay router)
+# (MOVIDO a nivel top para evitar quedar dentro del bloque de /mail)
 # ============================================================
 from fastapi import Request as _ReqX, Depends as _DepX
 from fastapi.responses import HTMLResponse as _HTML
@@ -373,184 +380,282 @@ async def __billing_fallback(request: _ReqX, user=_DepX(_get_user_cookie_X)):
     ctx.update(__pricing_ctx_from_env())
     return app.state.templates.TemplateResponse("billing.html", ctx)
 
-# ---- Utilidades globales de settings de mail (persistentes) ----
-DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-MAIL_SETTINGS_FILE = DATA_DIR / "mail_env.json"
-
-def __mail_load_settings() -> dict:
-    if MAIL_SETTINGS_FILE.exists():
-        try:
-            return json.loads(MAIL_SETTINGS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-def __mail_save_settings(data: dict):
-    MAIL_SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def __mail_defaults_from_env() -> dict:
-    store = __mail_load_settings()
-    def _pick(key, env_key, cast, default):
-        if key in store and store[key] not in (None, ""):
-            return cast(store[key])
-        v = os.getenv(env_key, default)
-        return cast(v)
-    return dict(
-        host      = _pick("host",      "MAIL_HOST",     str,   "imap.gmail.com"),
-        port      = _pick("port",      "MAIL_PORT",     int,   993),
-        use_ssl   = _pick("use_ssl",   "MAIL_USE_SSL",  lambda x: str(x).lower() in {"1","true","yes","on"}, True),
-        username  = _pick("username",  "MAIL_USERNAME", str,   ""),
-        folder    = _pick("folder",    "MAIL_FOLDER",   str,   "INBOX") or "INBOX",
-        mark_seen = _pick("mark_seen", "MAIL_MARK_SEEN",lambda x: str(x).lower() in {"1","true","yes","on"}, False),
-    )
-
+# ---- Fallback MAIL si el router no cargó ----
 def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
-# ---- Registrar SIEMPRE /mail/settings (si no existe ya) ----
-if not _route_exists("/mail/settings"):
+if not _route_exists("/mail/"):
+    print("[routers] WARN: /mail/ no registrado — activando fallback robusto con listado de mails")
+
     from fastapi import APIRouter
-    mail_settings_router = APIRouter(prefix="/mail", tags=["mail"])
+    import imaplib, socket, email
+    from email.header import decode_header
+    from typing import List, Optional
+    from pydantic import BaseModel
 
-    @mail_settings_router.get("/settings")
-    def mail_settings_get(user=Depends(get_current_user_cookie)):
-        return {"ok": True, "settings": __mail_defaults_from_env()}
+    mail_router = APIRouter(prefix="/mail", tags=["mail"])
 
-    @mail_settings_router.post("/settings")
-    async def mail_settings_post(
+    DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LINK_FILE = DATA_DIR / "mail_link.json"
+
+    def _env_bool(v: str, default=False) -> bool:
+        if v is None: return default
+        return str(v).strip().lower() in {"1","true","yes","y","on"}
+
+    # --- persistencia de casilla vinculada por usuario ---
+    def _load_linked() -> dict:
+        if LINK_FILE.exists():
+            try:
+                return json.loads(LINK_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def _save_linked(data: dict):
+        LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _defaults_from_env():
+        return dict(
+            host=os.getenv("MAIL_HOST", "imap.gmail.com"),
+            port=int(os.getenv("MAIL_PORT", "993") or 993),
+            use_ssl=_env_bool(os.getenv("MAIL_USE_SSL", "true"), True),
+            username=os.getenv("MAIL_USERNAME", ""),
+            folder=os.getenv("MAIL_FOLDER", "INBOX") or "INBOX",
+            mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
+        )
+
+    # ---------- MODELOS ----------
+    class MailItem(BaseModel):
+        uid: str
+        from_email: Optional[str] = None
+        subject: Optional[str] = None
+        snippet: Optional[str] = None
+        date: Optional[str] = None
+        flags: Optional[List[str]] = None
+        suspicious: bool = False
+        score: float = 0.0
+        reason: Optional[str] = None
+        link: Optional[str] = None
+
+    class ScanResult(BaseModel):
+        ok: bool
+        login: bool
+        folder: str
+        unread: int
+        total: int
+        marked_seen: bool
+        message: Optional[str] = None
+        items: List[MailItem] = []
+
+    # ---------- helpers ----------
+    def _decode_hdr(v):
+        if not v:
+            return ""
+        if isinstance(v, bytes):
+            try:
+                v = v.decode("utf-8", "ignore")
+            except Exception:
+                v = v.decode("latin-1", "ignore")
+        parts = decode_header(v)
+        out = []
+        for txt, enc in parts:
+            if isinstance(txt, bytes):
+                try:
+                    out.append(txt.decode(enc or "utf-8", "ignore"))
+                except Exception:
+                    out.append(txt.decode("latin-1", "ignore"))
+            else:
+                out.append(txt)
+        return "".join(out).strip()
+
+    def _score_suspicious(subj: str, snip: str):
+        text = f"{subj} {snip}".lower()
+        kws = ["verify", "verificar", "password", "contraseña", "urgent", "urgente",
+               "invoice", "factura", "payment", "pago", "bank", "banco", "reset"]
+        hits = [k for k in kws if k in text]
+        score = min(1.0, len(hits) * 0.2)
+        return score, ", ".join(hits)
+
+    def _fetch_items(imap, folder, limit=50):
+        typ, data = imap.uid("search", None, "ALL")
+        uids = (data[0] or b"").split() if typ == "OK" else []
+        uids = uids[-limit:]
+        items = []
+        for uid in reversed(uids):
+            try:
+                typ, data = imap.uid("fetch", uid, b"(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.512>)")
+                if typ != "OK" or not data:
+                    continue
+                hdr_raw = b""
+                snippet_raw = b""
+                for part in data:
+                    if not isinstance(part, tuple):
+                        continue
+                    block = part[1] or b""
+                    if b"HEADER.FIELDS" in part[0]:
+                        hdr_raw += block
+                    elif b"TEXT" in part[0]:
+                        snippet_raw += block
+                msg = email.message_from_bytes(hdr_raw or b"")
+                from_email = _decode_hdr(msg.get("From"))
+                subject = _decode_hdr(msg.get("Subject"))
+                date = _decode_hdr(msg.get("Date"))
+                snippet = (snippet_raw or b"").decode("utf-8", "ignore")[:250]
+                score, reason = _score_suspicious(subject, snippet)
+                items.append(MailItem(
+                    uid=uid.decode(),
+                    from_email=from_email,
+                    subject=subject,
+                    date=date,
+                    snippet=snippet,
+                    suspicious=score >= 0.5,
+                    score=score,
+                    reason=reason,
+                    link=f"/mail/scanner?id={uid.decode()}",
+                ))
+            except Exception:
+                continue
+        return items
+
+    def _scan_impl():
+        host = os.getenv("MAIL_HOST", "imap.gmail.com")
+        port = int(os.getenv("MAIL_PORT", "993") or 993)
+        use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
+        username = os.getenv("MAIL_USERNAME", "")
+        password = os.getenv("MAIL_PASSWORD", "")
+        folder = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
+        mark_seen = _env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False)
+
+        if not username or not password:
+            raise HTTPException(status_code=400, detail="Faltan MAIL_USERNAME o MAIL_PASSWORD")
+
+        imap = None
+        try:
+            imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
+            typ, _ = imap.login(username, password)
+            if typ != "OK":
+                return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message="Login IMAP falló", items=[])
+            typ, _ = imap.select(folder, readonly=not mark_seen)
+            if typ != "OK":
+                return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False, message=f"No se pudo abrir {folder}", items=[])
+            typ, data = imap.search(None, "ALL")
+            total = len((data[0] or b"").split()) if typ == "OK" else 0
+            typ, data = imap.search(None, "UNSEEN")
+            unseen_ids = (data[0] or b"").split() if typ == "OK" else []
+            unread = len(unseen_ids)
+            items = _fetch_items(imap, folder)
+            try:
+                imap.close(); imap.logout()
+            except Exception:
+                pass
+            return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total, marked_seen=False, message=None, items=items)
+        except (imaplib.IMAP4.error, socket.timeout) as e:
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=str(e), items=[])
+        except Exception as e:
+            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
+
+    # ---------- Vistas ----------
+    @mail_router.get("/", response_class=HTMLResponse)
+    def mail_index(request: Request, user=Depends(get_current_user_cookie)):
+        linked = _load_linked().get(str(user["sub"]))
+        ctx = {
+            "request": request,
+            "page_title": "Casillas de correo",
+            "current_user": user,
+            "linked": linked,
+            "defaults": _defaults_from_env()
+        }
+        try:
+            return app.state.templates.TemplateResponse("mail.html", ctx)
+        except TemplateNotFound:
+            html = f"""<!doctype html><meta charset='utf-8'>
+            <div style="font-family:system-ui;padding:24px">
+              <h1>Mail</h1>
+              <p>Cuenta guardada: <b>{(linked or {}).get('address','-')}</b></p>
+              <p><a href="/mail/connect">Vincular / cambiar</a> · <a href="/mail/scanner">Ir al scanner</a></p>
+            </div>"""
+            return HTMLResponse(html)
+
+    @mail_router.get("/scanner", response_class=HTMLResponse)
+    def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
+        linked = _load_linked().get(str(user["sub"]))
+        ctx = {
+            "request": request, "page_title": "Mail Scanner",
+            "current_user": user, "linked": linked, "defaults": _defaults_from_env()
+        }
+        try:
+            return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Mail Scanner</h1>")
+
+    @mail_router.get("/scan", response_model=ScanResult)
+    @mail_router.post("/scan", response_model=ScanResult)
+    def mail_scan(user=Depends(get_current_user_cookie)):
+        return _scan_impl()
+
+    # ---------- Vincular casilla (per-user) ----------
+    @mail_router.get("/connect", response_class=HTMLResponse)
+    def mail_connect_get(request: Request, user=Depends(get_current_user_cookie)):
+        mine = _load_linked().get(str(user["sub"]), {})
+        try:
+            return app.state.templates.TemplateResponse("mail_connect.html", {
+                "request": request, "linked": mine, "page_title": "Vincular casilla"
+            })
+        except TemplateNotFound:
+            html = f"""<!doctype html><meta charset='utf-8'>
+            <div style="font-family:system-ui;padding:24px;max-width:520px">
+              <h2>Vincular casilla</h2>
+              <form method="post" action="/mail/connect" style="display:grid;gap:8px">
+                <label>Correo:
+                  <input name="address" type="email" value="{(mine.get('address') or '') if mine else ''}" required>
+                </label>
+                <button style="padding:10px;border-radius:8px;background:#0ea5e9;color:#fff;border:0">Guardar</button>
+              </form>
+              <form method="post" action="/mail/connect" style="margin-top:8px">
+                <input type="hidden" name="action" value="unlink">
+                <button style="padding:8px 10px;border-radius:8px;background:#fff;border:1px solid #e2e8f0">Quitar vínculo</button>
+              </form>
+              <p><a href="/mail/">Volver</a></p>
+            </div>"""
+            return HTMLResponse(html)
+
+    @mail_router.post("/connect")
+    async def mail_connect_post(
         request: Request,
         user=Depends(get_current_user_cookie),
-        host: str = Form(None),
-        port: int = Form(None),
-        use_ssl: str = Form(None),
-        username: str = Form(None),
-        folder: str = Form(None),
-        mark_seen: str = Form(None),
+        address: str = Form(None),
+        action: str = Form(None),
     ):
-        cur = __mail_load_settings()
-
-        # Si viene JSON, mapearlo a los mismos campos (soporta ambos)
         ctype = (request.headers.get("content-type") or "").lower()
         if "application/json" in ctype:
             try:
                 body = await request.json()
             except Exception:
                 body = {}
-            host      = body.get("host", host)
-            port      = body.get("port", port)
-            use_ssl   = body.get("use_ssl", use_ssl)
-            username  = body.get("username", username)
-            folder    = body.get("folder", folder)
-            mark_seen = body.get("mark_seen", mark_seen)
+            address = body.get("address", address)
+            action = body.get("action", action)
 
-        if host is not None: cur["host"] = str(host).strip()
-        if port is not None: cur["port"] = int(port)
-        if use_ssl is not None: cur["use_ssl"] = (str(use_ssl).lower() in {"1","true","yes","on"})
-        if username is not None: cur["username"] = str(username).strip()
-        if folder is not None: cur["folder"] = (str(folder) or "INBOX").strip() or "INBOX"
-        if mark_seen is not None: cur["mark_seen"] = (str(mark_seen).lower() in {"1","true","yes","on"})
+        linked_all = _load_linked()
+        uid = str(user["sub"])
 
-        __mail_save_settings(cur)
+        if (action or "").lower() in {"unlink", "remove", "delete"}:
+            if uid in linked_all:
+                del linked_all[uid]
+        else:
+            if not address:
+                raise HTTPException(status_code=400, detail="Falta address")
+            linked_all[uid] = {"address": str(address).strip()}
 
-        wants_json = "application/json" in (request.headers.get("accept") or "")
-        if wants_json:
-            return {"ok": True, "saved": True, "settings": __mail_defaults_from_env()}
+        _save_linked(linked_all)
+
+        accept = (request.headers.get("accept") or "").lower()
+        if "application/json" in accept:
+            return {"ok": True, "linked": linked_all.get(uid)}
+
         return RedirectResponse(url="/mail/", status_code=303)
 
-    app.include_router(mail_settings_router)
-
-# === [ADD] Vinculación de casilla: /mail/connect (GET/POST) ===
-# Reutilizamos DATA_DIR ya definido más arriba y creamos un archivo de vínculo simple.
-LINK_FILE = DATA_DIR / "mail_link.json"
-
-def __mail_load_linked() -> dict:
-    if LINK_FILE.exists():
-        try:
-            return json.loads(LINK_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-def __mail_save_linked(data: dict):
-    LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-# Si existe el router de /mail/settings lo reutilizamos; si no, creamos uno nuevo.
-try:
-    mail_settings_router  # noqa: F401
-except NameError:
-    from fastapi import APIRouter
-    mail_settings_router = APIRouter(prefix="/mail", tags=["mail"])
-
-@mail_settings_router.get("/connect", response_class=HTMLResponse)
-def mail_connect_get(request: Request, user=Depends(get_current_user_cookie)):
-    """
-    Página mínima de vinculación (fallback). Si tenés template dedicado, se renderiza.
-    De lo contrario, muestra un form simple.
-    """
-    linked = __mail_load_linked()
-    ctx = {"request": request, "linked": linked, "page_title": "Vincular casilla"}
-    try:
-        # Si tenés un template "mail_connect.html", lo usa.
-        return app.state.templates.TemplateResponse("mail_connect.html", ctx)
-    except TemplateNotFound:
-        # Fallback HTML mínimo
-        html = f"""<!doctype html><meta charset='utf-8'>
-        <div style="font-family:system-ui;padding:24px;max-width:520px">
-          <h2>Vincular casilla</h2>
-          <form method="post" action="/mail/connect" style="display:grid;gap:8px">
-            <label>Correo a mostrar (solo se guarda para referencia visual):
-              <input name="address" type="email" placeholder="usuario@dominio" value="{(linked.get('address') or '') if linked else ''}" required>
-            </label>
-            <button style="padding:10px;border-radius:8px;background:#0ea5e9;color:#fff;border:0">Guardar</button>
-          </form>
-          <p style="color:#64748b;margin-top:10px">Esto no cambia las variables IMAP; solo guarda el correo “vinculado” que ves en la UI.</p>
-          <p><a href="/mail/">Volver</a></p>
-        </div>"""
-        return HTMLResponse(html)
-
-@mail_settings_router.post("/connect")
-async def mail_connect_post(
-    request: Request,
-    user=Depends(get_current_user_cookie),
-    address: str = Form(None),
-    action: str = Form(None),
-):
-    """
-    Guarda/elimina la casilla “vinculada” para mostrar en la UI.
-    No toca credenciales IMAP ni variables de entorno.
-    """
-    cur = __mail_load_linked()
-    # También aceptamos JSON por si la UI lo manda así
-    ctype = (request.headers.get("content-type") or "").lower()
-    if "application/json" in ctype:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        address = body.get("address", address)
-        action = body.get("action", action)
-
-    if (action or "").lower() in {"unlink", "remove", "delete"}:
-        cur = {}
-    else:
-        if not address:
-            raise HTTPException(status_code=400, detail="Falta address")
-        cur["address"] = str(address).strip()
-
-    __mail_save_linked(cur)
-
-    # Si la UI espera JSON
-    accept = (request.headers.get("accept") or "").lower()
-    if "application/json" in accept:
-        return {"ok": True, "linked": cur}
-
-    # Por defecto volvemos a /mail/
-    return RedirectResponse(url="/mail/", status_code=303)
-
-# Montamos (por si aún no se montó)
-app.include_router(mail_settings_router)
-# === [/ADD] ===
+    app.include_router(mail_router)
 
 # ---- Fallback /mail/alerts/unread_count
 from fastapi.routing import APIRoute as _APIRoute_1
@@ -750,6 +855,7 @@ def dashboard(request: Request, db= Depends(get_db)):
         "org_id": getattr(user, "org_id", None),
     }
     try:
+        # >>> PASAMOS EL IDIOMA AL TEMPLATE <<<
         lang = (request.cookies.get("lang") or "es").lower()[:2]
         resp = templates.TemplateResponse(
             "dashboard.html",
