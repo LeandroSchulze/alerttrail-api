@@ -84,7 +84,7 @@
       const reasons = (it.analysis && Array.isArray(it.analysis.reasons)) ? it.analysis.reasons : [];
       const score = (typeof it.score === 'number') ? it.score : (it.analysis && typeof it.analysis.score === 'number' ? it.analysis.score : 0);
       const susp = (it.suspicious === true || level === 'medium' || level === 'high');
-      const who = (it.from_email || it.from || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const who = (it.from || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const subj = (it.subject || '—').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const snip = (it.snippet || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const badges = reasons.slice(0,4).map(r=>`<span class="chip">${(r||'').replace(/</g,'&lt;')}</span>`).join(' ');
@@ -98,7 +98,7 @@
             <div class="muted" style="font-size:12px">${(it.date||'').toString()}</div>
           </td>
           <td>
-            <div class="${susp ? 'susp' : 'muted'}">score: <span class="score">${Number(score).toFixed(2)}</span></div>
+            <div class="${susp ? 'susp' : 'muted'}">score: <span class="score">${score.toFixed(2)}</span></div>
             <div style="margin-top:6px">${badges || '<span class="muted">—</span>'}</div>
           </td>
           <td style="max-width:360px">${snip}</td>
