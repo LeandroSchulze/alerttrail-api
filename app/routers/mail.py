@@ -4,14 +4,11 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from email.header import decode_header
 
-# =========================
-# Config & templates helper
-# =========================
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -19,7 +16,7 @@ router = APIRouter(prefix="/mail", tags=["mail"])
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-LINK_FILE = DATA_DIR / "mail_link.json"        # guarda la casilla vinculada por usuario
+LINK_FILE = DATA_DIR / "mail_link.json"
 
 def _env_bool(v: Optional[str], default=False) -> bool:
     if v is None:
@@ -47,9 +44,6 @@ def _load_linked() -> Dict[str, Any]:
 def _save_linked(data: dict) -> None:
     LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# =========================
-# Modelos del scanner
-# =========================
 class MailItem(BaseModel):
     uid: str
     from_email: Optional[str] = None
@@ -72,9 +66,6 @@ class ScanResult(BaseModel):
     message: Optional[str] = None
     items: List[MailItem] = []
 
-# =========================
-# Helpers IMAP / scoring
-# =========================
 def _decode_hdr(v):
     if not v:
         return ""
@@ -111,9 +102,8 @@ def _fetch_items(imap, folder, limit=50):
     for uid in reversed(uids):
         try:
             typ, data = imap.uid(
-                "fetch",
-                uid,
-                b"(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.512>)",
+                "fetch", uid,
+                b"(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.512>)"
             )
             if typ != "OK" or not data:
                 continue
@@ -184,29 +174,17 @@ def _scan_impl() -> ScanResult:
     except Exception as e:
         return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
 
-# =========================
-# Dependencia auth (cookie)
-# =========================
-# Usamos la misma función que el main espera; FastAPI la resolverá en tiempo de ejecución.
+# === auth por cookie (mismo que usa main.py) ===
 from app.security import get_current_user_cookie
 
-# =========================
-# Rutas
-# =========================
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_current_user_cookie)):
     linked = _load_linked().get(str(user["sub"]))
-    ctx = {
-        "request": request,
-        "page_title": "Casillas de correo",
-        "current_user": user,
-        "defaults": _defaults_from_env(),
-        "linked": linked,
-    }
+    ctx = {"request": request, "page_title": "Casillas de correo",
+           "current_user": user, "defaults": _defaults_from_env(), "linked": linked}
     try:
         return templates.TemplateResponse("mail.html", ctx)
     except Exception:
-        # fallback mínimo si falta el template
         html = f"""<!doctype html><meta charset='utf-8'>
         <div style="font-family:system-ui;padding:24px">
           <h1>Mail</h1>
@@ -219,37 +197,50 @@ def mail_index(request: Request, user=Depends(get_current_user_cookie)):
         </div>"""
         return HTMLResponse(html)
 
-# === NUEVO: coincide con lo que envía mail.html ===
+# ---------- FIX 422: acepta form, json o query ----------
+@router.get("/settings", include_in_schema=False)
+def mail_settings_get():
+    # Evita 422 cuando se accede por GET manualmente.
+    return RedirectResponse(url="/mail/", status_code=303)
+
 @router.post("/settings")
-def mail_settings(address: str = Form(...), user=Depends(get_current_user_cookie)):
-    address = (address or "").strip().lower()
-    if not address or "@" not in address:
+async def mail_settings(request: Request, user=Depends(get_current_user_cookie)):
+    addr = None
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" in ctype:
+        try:
+            data = await request.json()
+            addr = (data or {}).get("address")
+        except Exception:
+            addr = None
+    else:
+        try:
+            form = await request.form()
+            addr = form.get("address")
+        except Exception:
+            addr = None
+        # fallback por si alguien manda ?address=
+        addr = addr or request.query_params.get("address")
+
+    addr = (addr or "").strip().lower()
+    if not addr or "@" not in addr:
         raise HTTPException(status_code=400, detail="Dirección inválida")
+
     data = _load_linked()
-    data[str(user["sub"])] = {"address": address}
+    data[str(user["sub"])] = {"address": addr}
     _save_linked(data)
     return RedirectResponse(url="/mail/", status_code=303)
 
-# === Alias que algunos templates envían ===
 @router.post("/connect")
-def mail_connect(address: str = Form(...), user=Depends(get_current_user_cookie)):
-    address = (address or "").strip().lower()
-    if not address or "@" not in address:
-        raise HTTPException(status_code=400, detail="Dirección inválida")
-    data = _load_linked()
-    data[str(user["sub"])] = {"address": address}
-    _save_linked(data)
-    return RedirectResponse(url="/mail/", status_code=303)
+async def mail_connect(request: Request, user=Depends(get_current_user_cookie)):
+    # Alias que hace lo mismo que /settings
+    return await mail_settings(request, user)
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-    ctx = {
-        "request": request,
-        "page_title": "Mail Scanner",
-        "current_user": user,
-        "defaults": _defaults_from_env(),
-        "linked": _load_linked().get(str(user["sub"])),
-    }
+    ctx = {"request": request, "page_title": "Mail Scanner",
+           "current_user": user, "defaults": _defaults_from_env(),
+           "linked": _load_linked().get(str(user["sub"]))}
     try:
         return templates.TemplateResponse("mail_scanner.html", ctx)
     except Exception:
@@ -260,20 +251,12 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
 def mail_scan(user=Depends(get_current_user_cookie)):
     return _scan_impl()
 
-# =========================
-# Scheduler hook que llama main.py
-# =========================
+# ---------- scheduler que invoca main.py ----------
 def start_mail_scheduler(app):
-    """
-    Arranca un 'scheduler' muy simple y opcional que hace un ping al IMAP
-    cada X minutos si SCHEDULER_ENABLED=1. Evita dependencias al main.
-    """
     try:
         if not _env_bool(os.getenv("SCHEDULER_ENABLED", "0"), False):
             return
-
         import threading, time
-
         interval = int(os.getenv("SCHEDULER_INTERVAL_SEC", "600") or 600)
 
         def _job():
@@ -286,7 +269,6 @@ def start_mail_scheduler(app):
                     print("[mail][sched] error:", repr(e))
                 time.sleep(interval)
 
-        th = threading.Thread(target=_job, daemon=True)
-        th.start()
+        threading.Thread(target=_job, daemon=True).start()
     except Exception as e:
         print("[mail][sched] start error:", repr(e))
