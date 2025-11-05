@@ -359,7 +359,6 @@ if not any(isinstance(r, _APIRoute_mail_alias) and r.path == "/mail" for r in ap
 
 # ============================================================
 # Fallback simple para /billing (evita 404 si no hay router)
-# (MOVIDO a nivel top para evitar quedar dentro del bloque de /mail)
 # ============================================================
 from fastapi import Request as _ReqX, Depends as _DepX
 from fastapi.responses import HTMLResponse as _HTML
@@ -385,7 +384,7 @@ def _route_exists(path: str) -> bool:
     return any(isinstance(r, APIRoute) and r.path == path for r in app.routes)
 
 if not _route_exists("/mail/"):
-    print("[routers] WARN: /mail/ no registrado — activando fallback robusto con listado de mails")
+    print("[routers] WARN: /mail/ no registrado — activando fallback con settings/connect/scan")
 
     from fastapi import APIRouter
     import imaplib, socket, email
@@ -398,13 +397,13 @@ if not _route_exists("/mail/"):
     DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LINK_FILE = DATA_DIR / "mail_link.json"
+    SETTINGS_FILE = DATA_DIR / "mail_settings.json"
 
     def _env_bool(v: str, default=False) -> bool:
         if v is None: return default
         return str(v).strip().lower() in {"1","true","yes","y","on"}
 
-    # --- persistencia de casilla vinculada por usuario ---
-    def _load_linked() -> dict:
+    def _load_linked():
         if LINK_FILE.exists():
             try:
                 return json.loads(LINK_FILE.read_text(encoding="utf-8"))
@@ -448,7 +447,7 @@ if not _route_exists("/mail/"):
         message: Optional[str] = None
         items: List[MailItem] = []
 
-    # ---------- helpers ----------
+    # ---------- UTIL ----------
     def _decode_hdr(v):
         if not v:
             return ""
@@ -555,35 +554,47 @@ if not _route_exists("/mail/"):
         except Exception as e:
             return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
 
-    # ---------- Vistas ----------
     @mail_router.get("/", response_class=HTMLResponse)
     def mail_index(request: Request, user=Depends(get_current_user_cookie)):
         linked = _load_linked().get(str(user["sub"]))
-        ctx = {
-            "request": request,
-            "page_title": "Casillas de correo",
-            "current_user": user,
-            "linked": linked,
-            "defaults": _defaults_from_env()
-        }
+        ctx = {"request": request, "page_title": "Casillas de correo", "current_user": user,
+               "defaults": _defaults_from_env(), "linked": linked}
         try:
             return app.state.templates.TemplateResponse("mail.html", ctx)
         except TemplateNotFound:
-            html = f"""<!doctype html><meta charset='utf-8'>
+            html = """<!doctype html><meta charset='utf-8'>
             <div style="font-family:system-ui;padding:24px">
               <h1>Mail</h1>
-              <p>Cuenta guardada: <b>{(linked or {}).get('address','-')}</b></p>
-              <p><a href="/mail/connect">Vincular / cambiar</a> · <a href="/mail/scanner">Ir al scanner</a></p>
-            </div>"""
+              <p>Cuenta guardada: <b>{}</b></p>
+              <p><a href="/mail/scanner">Ir al scanner</a></p>
+            </div>""".format((linked or {}).get("address","-"))
             return HTMLResponse(html)
+
+    # === IMPORTANTE: estos dos endpoints aseguran compatibilidad con el mail.html actual ===
+    @mail_router.post("/settings")
+    def mail_settings(address: str = Form(...), user=Depends(get_current_user_cookie)):
+        address = (address or "").strip().lower()
+        if not address or "@" not in address:
+            raise HTTPException(status_code=400, detail="Dirección inválida")
+        data = _load_linked()
+        data[str(user["sub"])] = {"address": address}
+        _save_linked(data)
+        return RedirectResponse(url="/mail/", status_code=303)
+
+    @mail_router.post("/connect")
+    def mail_connect(address: str = Form(...), user=Depends(get_current_user_cookie)):
+        address = (address or "").strip().lower()
+        if not address or "@" not in address:
+            raise HTTPException(status_code=400, detail="Dirección inválida")
+        data = _load_linked()
+        data[str(user["sub"])] = {"address": address}
+        _save_linked(data)
+        return RedirectResponse(url="/mail/", status_code=303)
 
     @mail_router.get("/scanner", response_class=HTMLResponse)
     def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-        linked = _load_linked().get(str(user["sub"]))
-        ctx = {
-            "request": request, "page_title": "Mail Scanner",
-            "current_user": user, "linked": linked, "defaults": _defaults_from_env()
-        }
+        ctx = {"request": request, "page_title": "Mail Scanner", "current_user": user, "defaults": _defaults_from_env(),
+               "linked": _load_linked().get(str(user["sub"]))}
         try:
             return app.state.templates.TemplateResponse("mail_scanner.html", ctx)
         except TemplateNotFound:
@@ -593,67 +604,6 @@ if not _route_exists("/mail/"):
     @mail_router.post("/scan", response_model=ScanResult)
     def mail_scan(user=Depends(get_current_user_cookie)):
         return _scan_impl()
-
-    # ---------- Vincular casilla (per-user) ----------
-    @mail_router.get("/connect", response_class=HTMLResponse)
-    def mail_connect_get(request: Request, user=Depends(get_current_user_cookie)):
-        mine = _load_linked().get(str(user["sub"]), {})
-        try:
-            return app.state.templates.TemplateResponse("mail_connect.html", {
-                "request": request, "linked": mine, "page_title": "Vincular casilla"
-            })
-        except TemplateNotFound:
-            html = f"""<!doctype html><meta charset='utf-8'>
-            <div style="font-family:system-ui;padding:24px;max-width:520px">
-              <h2>Vincular casilla</h2>
-              <form method="post" action="/mail/connect" style="display:grid;gap:8px">
-                <label>Correo:
-                  <input name="address" type="email" value="{(mine.get('address') or '') if mine else ''}" required>
-                </label>
-                <button style="padding:10px;border-radius:8px;background:#0ea5e9;color:#fff;border:0">Guardar</button>
-              </form>
-              <form method="post" action="/mail/connect" style="margin-top:8px">
-                <input type="hidden" name="action" value="unlink">
-                <button style="padding:8px 10px;border-radius:8px;background:#fff;border:1px solid #e2e8f0">Quitar vínculo</button>
-              </form>
-              <p><a href="/mail/">Volver</a></p>
-            </div>"""
-            return HTMLResponse(html)
-
-    @mail_router.post("/connect")
-    async def mail_connect_post(
-        request: Request,
-        user=Depends(get_current_user_cookie),
-        address: str = Form(None),
-        action: str = Form(None),
-    ):
-        ctype = (request.headers.get("content-type") or "").lower()
-        if "application/json" in ctype:
-            try:
-                body = await request.json()
-            except Exception:
-                body = {}
-            address = body.get("address", address)
-            action = body.get("action", action)
-
-        linked_all = _load_linked()
-        uid = str(user["sub"])
-
-        if (action or "").lower() in {"unlink", "remove", "delete"}:
-            if uid in linked_all:
-                del linked_all[uid]
-        else:
-            if not address:
-                raise HTTPException(status_code=400, detail="Falta address")
-            linked_all[uid] = {"address": str(address).strip()}
-
-        _save_linked(linked_all)
-
-        accept = (request.headers.get("accept") or "").lower()
-        if "application/json" in accept:
-            return {"ok": True, "linked": linked_all.get(uid)}
-
-        return RedirectResponse(url="/mail/", status_code=303)
 
     app.include_router(mail_router)
 
@@ -855,7 +805,6 @@ def dashboard(request: Request, db= Depends(get_db)):
         "org_id": getattr(user, "org_id", None),
     }
     try:
-        # >>> PASAMOS EL IDIOMA AL TEMPLATE <<<
         lang = (request.cookies.get("lang") or "es").lower()[:2]
         resp = templates.TemplateResponse(
             "dashboard.html",
