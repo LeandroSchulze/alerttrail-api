@@ -4,6 +4,12 @@
   <meta charset="utf-8">
   <title>Mail Scanner — AlertTrail</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
+
+  <!-- Toasts / Alerts -->
+  <link rel="stylesheet" href="/static/toast.css">
+  <script src="/static/toast.js" defer></script>
+  <script src="/static/alerts_client.js" defer></script>
+
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a}
     .card{border:1px solid #e2e8f0;border-radius:16px;padding:16px;max-width:980px}
@@ -62,7 +68,7 @@
     </details>
   </div>
 
-  <!-- Cargar JS externo (cumple CSP: script-src 'self') -->
-  <script src="/static/mail_scanner.js?v=1" defer></script>
+  <!-- Lógica del scanner (si la tenés externa) -->
+  <script src="/static/mail_scanner.js" defer></script>
 </body>
 </html>
