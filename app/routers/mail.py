@@ -253,12 +253,27 @@ def mail_scan(user=Depends(get_current_user_cookie)):
 
 # ---------- scheduler que invoca main.py ----------
 def start_mail_scheduler(app):
+    """
+    Inicia un loop en background para escanear cada N segundos.
+    Respeta:
+      - SCHEDULER_ENABLED (default: 1/true)
+      - MAIL_SCAN_INTERVAL_SECONDS (prioritario) o SCHED_INTERVAL_SEC (fallback)
+      - Evita iniciar múltiples veces usando app.state._mail_sched_running
+    """
     try:
-        if not _env_bool(os.getenv("SCHEDULER_ENABLED", "0"), False):
+        ENABLED = _env_bool(os.getenv("SCHEDULER_ENABLED", "1"), True)
+        if not ENABLED:
             return
-        import threading, time
-        interval = int(os.getenv("SCHEDULER_INTERVAL_SEC", "600") or 600)
 
+        # 1) Prioridad a MAIL_SCAN_INTERVAL_SECONDS, luego SCHED_INTERVAL_SEC. Default 300 (5 min)
+        INTERVAL = int(os.getenv("MAIL_SCAN_INTERVAL_SECONDS") or os.getenv("SCHED_INTERVAL_SEC") or "300")
+
+        # Evitar hilos duplicados en recargas
+        if getattr(app.state, "_mail_sched_running", False):
+            print(f"[mail][sched] ya estaba iniciado, intervalo={INTERVAL}s")
+            return
+
+        import threading, time
         def _job():
             uid = os.getenv("DYNO") or os.getenv("RENDER_INSTANCE_ID") or "local"
             while True:
@@ -267,8 +282,11 @@ def start_mail_scheduler(app):
                     print(f"[mail][sched] uid={uid} unread={res.unread} total={res.total} folder={res.folder}")
                 except Exception as e:
                     print("[mail][sched] error:", repr(e))
-                time.sleep(interval)
+                time.sleep(INTERVAL)
 
-        threading.Thread(target=_job, daemon=True).start()
+        t = threading.Thread(target=_job, daemon=True)
+        t.start()
+        app.state._mail_sched_running = True
+        print(f"[mail][sched] iniciado cada {INTERVAL}s")
     except Exception as e:
         print("[mail][sched] start error:", repr(e))
