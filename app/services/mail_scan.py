@@ -1,5 +1,5 @@
 # app/services/mail_scan.py
-import imaplib, email, re, os
+import imaplib, email, re, unicodedata
 from email.header import decode_header, make_header
 from typing import List, Tuple, Dict, Any, Optional
 
@@ -19,12 +19,32 @@ PHISH_PATTERNS = [
     r"factura vencida", r"bloqueado por seguridad"
 ]
 
+# --- NUEVO: patrones simples de QR-phishing
+QR_PATTERNS = [
+    r"\bcódigo\s*qr\b", r"\bqr\s*code\b", r"\bscan(ea|ea[rn])?\b.*\b(código|code)\b",
+    r"\bescane(a|á)\b", r"paga(r)?\b.*\bqr\b", r"autenticaci[oó]n\b.*\bqr\b"
+]
+
 URL_RE = re.compile(r"https?://[^\s\"'>)]+", re.I)
 OTP_RE = re.compile(r"\b(\d{6})\b")
 
 # dominios y TLDs sospechosos
 SUSP_TLDS = (".zip", ".mov")
 
+# NUEVO: punycode / IDN
+PUNYCODE_RE = re.compile(r"//[^/\s]*xn--", re.I)
+
+def _has_qr_hint(text: str, html: str) -> bool:
+    blob = f"{text or ''} {html or ''}".lower()
+    if any(re.search(p, blob, re.I) for p in QR_PATTERNS):
+        return True
+    # heurística básica por filename/alt en <img>
+    if re.search(r"<img[^>]+(alt|src)=['\"][^'\"]*(qr|codigo|c[oó]digo)[^'\"]*['\"]", html or "", re.I):
+        return True
+    return False
+
+def _has_punycode(urls: List[str]) -> bool:
+    return any(PUNYCODE_RE.search(u) for u in urls)
 
 # ---------------- Utilidades ----------------
 def _decode_header(val: Any) -> str:
@@ -33,20 +53,9 @@ def _decode_header(val: Any) -> str:
     except Exception:
         return str(val or "")
 
-
 def _get_filename(part) -> str:
     filename = part.get_filename()
     return _decode_header(filename)
-
-
-def _strip_html(html: str) -> str:
-    # quita tags simples para generar un snippet legible
-    txt = re.sub(r"<(script|style)[\s\S]*?</\1>", "", html, flags=re.I)
-    txt = re.sub(r"<br\s*/?>", "\n", txt, flags=re.I)
-    txt = re.sub(r"</p\s*>", "\n", txt, flags=re.I)
-    txt = re.sub(r"<[^>]+>", " ", txt)
-    return re.sub(r"\s+", " ", txt).strip()
-
 
 def _collect_parts(msg) -> Tuple[str, str, List[Dict[str, Any]]]:
     """
@@ -100,10 +109,11 @@ def _score_email(subject: str, sender: str, text: str, html: str,
       danger_level: low / medium / high
       reasons: lista de motivos
       iocs: {urls, otp_codes}
-      score: 0..1 (heurístico)
+      hints: {qr_phishing?: bool, punycode?: bool}   # NUEVO (no oblig.)
     """
     reasons: List[str] = []
     iocs: Dict[str, Any] = {"urls": [], "otp_codes": []}
+    hints: Dict[str, Any] = {}
     danger = 0
 
     # URLs
@@ -112,6 +122,12 @@ def _score_email(subject: str, sender: str, text: str, html: str,
     iocs["urls"] = urls
     if any(u.lower().endswith(SUSP_TLDS) for u in urls):
         reasons.append("URLs con TLDs sospechosos (.zip/.mov)")
+        danger += 2
+
+    # NUEVO: punycode / IDN
+    if _has_punycode(urls):
+        reasons.append("Dominio punycode (IDN) detectado")
+        hints["punycode"] = True
         danger += 2
 
     # Palabras típicas de phishing
@@ -142,18 +158,21 @@ def _score_email(subject: str, sender: str, text: str, html: str,
             reasons.append(f"Adjunto comprimido: {fname}")
             danger += 1
 
+    # NUEVO: QR-phishing (heurístico)
+    if _has_qr_hint(text, html):
+        reasons.append("Posible intento de QR-phishing")
+        hints["qr_phishing"] = True
+        danger += 2
+
     # Clasificación de riesgo
-    if danger >= 4:
+    if danger >= 5:
         level = "high"
     elif danger >= 2:
         level = "medium"
     else:
         level = "low"
 
-    # score 0..1 proporcional al "danger"
-    score = min(1.0, danger / 6.0)
-
-    return {"danger_level": level, "reasons": reasons, "iocs": iocs, "score": score}
+    return {"danger_level": level, "reasons": reasons, "iocs": iocs, "hints": hints}
 
 
 # ---------------- IMAP helpers ----------------
@@ -180,7 +199,7 @@ def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl
                mailbox: str = "INBOX", max_msgs: int = 20) -> List[Dict[str, Any]]:
     """
     Escanea la casilla IMAP y devuelve una lista de dicts:
-      {uid, subject, from, date, attachments[], analysis{danger_level, reasons, iocs, score}, snippet, suspicious}
+      {uid, subject, from, date, attachments[], analysis{danger_level, reasons, iocs, hints?}}
     """
     results: List[Dict[str, Any]] = []
     with IMAPClient(host, port, use_ssl) as M:
@@ -206,12 +225,7 @@ def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl
             date = msg.get("Date") or ""
 
             text, html, atts = _collect_parts(msg)
-            snippet_source = text or _strip_html(html)
-            snippet = (snippet_source or "").strip().replace("\r", " ").replace("\n", " ")
-            snippet = snippet[:260]
-
             analysis = _score_email(subj, sender, text, html, atts)
-            suspicious = analysis.get("danger_level") in {"medium", "high"}
 
             results.append({
                 "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
@@ -219,49 +233,62 @@ def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl
                 "from": sender,
                 "date": date,
                 "attachments": atts,
-                "snippet": snippet,
-                "suspicious": suspicious,
-                "score": analysis.get("score", 0.0),
                 "analysis": analysis
             })
 
     return results
 
 
-# --- Utilidad opcional para el endpoint /mail/scan basado en ENV (no rompe nada existente)
-def scan_env(max_msgs: int = 20) -> Dict[str, Any]:
+# -------- Helper externo usado por /mail/scan (router “completo”) --------
+def get_scan_summary(host: str, port: int, use_ssl: bool, username: str, password: str,
+                     folder: str, mark_seen: bool, max_msgs: int = 50) -> Dict[str, Any]:
     """
-    Usa las variables de entorno MAIL_* y devuelve el payload completo
-    esperado por /mail/scan (ok, totals e items).
+    Conecta por IMAP y devuelve un resumen + items analizados (con iocs y hints).
     """
-    host = os.getenv("MAIL_HOST", "imap.gmail.com")
-    port = int(os.getenv("MAIL_PORT", "993") or 993)
-    use_ssl = str(os.getenv("MAIL_USE_SSL", "true")).strip().lower() in {"1","true","yes","on"}
-    username = os.getenv("MAIL_USERNAME", "")
-    password = os.getenv("MAIL_PASSWORD", "")
-    folder = os.getenv("MAIL_FOLDER", "INBOX") or "INBOX"
-
-    if not username or not password:
-        return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
-                "marked_seen": False, "message": "Faltan MAIL_USERNAME o MAIL_PASSWORD", "items": []}
-
+    imap = None
     try:
-        with IMAPClient(host, port, use_ssl) as M:
-            M.login(username, password)
-            M.select(folder)
+        imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
+        typ, _ = imap.login(username, password)
+        if typ != "OK":
+            return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0, "marked_seen": False,
+                    "message": "Login IMAP falló", "items": []}
 
-            typ, data_all = M.search(None, "ALL")
-            total = len((data_all[0] or b"").split()) if typ == "OK" else 0
+        typ, _ = imap.select(folder, readonly=not mark_seen)
+        if typ != "OK":
+            return {"ok": False, "login": True, "folder": folder, "unread": 0, "total": 0, "marked_seen": False,
+                    "message": f"No se pudo abrir {folder}", "items": []}
 
-            typ, data_unseen = M.search(None, "UNSEEN")
-            unread = len((data_unseen[0] or b"").split()) if typ == "OK" else 0
+        typ, data = imap.search(None, "ALL")
+        total = len((data[0] or b"").split()) if typ == "OK" else 0
+        typ, data = imap.search(None, "UNSEEN")
+        unseen_ids = (data[0] or b"").split() if typ == "OK" else []
+        unread = len(unseen_ids)
 
+        # items con análisis completo
         items = scan_inbox(host, username, password, port, use_ssl, folder, max_msgs=max_msgs)
-        return {"ok": True, "login": True, "folder": folder, "unread": unread, "total": total,
-                "marked_seen": False, "message": None, "items": items}
-    except imaplib.IMAP4.error as e:
+
+        try:
+            imap.close(); imap.logout()
+        except Exception:
+            pass
+
+        # resumen simple por niveles de severidad
+        counts = {"low": 0, "medium": 0, "high": 0}
+        dangerous = 0
+        for it in items:
+            lvl = (it.get("analysis", {}) or {}).get("danger_level", "low")
+            counts[lvl] = counts.get(lvl, 0) + 1
+            if lvl in ("medium", "high"):
+                dangerous += 1
+
+        return {
+            "ok": True, "login": True, "folder": folder, "unread": unread, "total": total,
+            "marked_seen": bool(mark_seen), "message": None, "items": items,
+            "counts": counts, "dangerous": dangerous
+        }
+    except (imaplib.IMAP4.error) as e:
         return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
-                "marked_seen": False, "message": f"IMAP error: {e}", "items": []}
+                "marked_seen": False, "message": str(e), "items": []}
     except Exception as e:
         return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
                 "marked_seen": False, "message": f"Error: {e}", "items": []}
