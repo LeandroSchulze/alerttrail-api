@@ -1,10 +1,10 @@
 # app/routers/mail.py
-import os, json, socket, imaplib, email, re
+import os, json, socket, imaplib, email, re, time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from email.header import decode_header
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/mail", tags=["mail"])
 DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LINK_FILE = DATA_DIR / "mail_link.json"
+LAST_SUMMARY_FILE = DATA_DIR / "mail_last_summary.json"  # NUEVO: cache para el dashboard
 
 def _env_bool(v: Optional[str], default=False) -> bool:
     if v is None:
@@ -56,7 +57,7 @@ class MailItem(BaseModel):
     score: float = 0.0
     reason: Optional[str] = None
     link: Optional[str] = None
-    # NUEVO opcional (el front lo ignora si no está)
+    # opcionales (el front los ignora si no están)
     urls: Optional[List[str]] = None
     link_report: Optional[Dict[str, Any]] = None
 
@@ -288,19 +289,17 @@ def mail_scan(user=Depends(get_current_user_cookie)):
     if _env_bool(os.getenv("LINK_DETONATION_ENABLED", "0"), False) and _HAS_DETONATION and data.get("ok"):
         all_urls: List[str] = []
         for it in data.get("items", []):
-            # service completo: urls en analysis.iocs.urls
             urls = []
             if isinstance(it, dict) and "analysis" in it:
                 urls = (it.get("analysis", {}) or {}).get("iocs", {}).get("urls", []) or []
             elif isinstance(it, dict):
-                # fallback: extraigo si está la lista ya adjunta
                 urls = it.get("urls") or _SVC_URL_RE.findall(f"{it.get('subject','')} {it.get('snippet','')}")
             all_urls.extend(urls or [])
 
         report = _detonate(all_urls, limit=20) if all_urls else {"ok": True, "results": {}}
         data["detonation"] = report
 
-        # pegamos resumen simple por item
+        # resumen por item
         if report.get("results"):
             rmap = report["results"]
             for it in data.get("items", []):
@@ -314,10 +313,54 @@ def mail_scan(user=Depends(get_current_user_cookie)):
                     if u in rmap:
                         details.append(rmap[u])
                 if details:
-                    # no cambiamos estructura previa; agregamos opcional
                     it["link_report"] = {
                         "dangerous": any((d.get("susp_tld") or d.get("punycode")) for d in details),
                         "details": details[:5],
                     }
 
+    # 3) cacheamos para el dashboard (ligero)
+    try:
+        out = dict(ts=int(time.time()), **data)
+        LAST_SUMMARY_FILE.write_text(json.dumps(out, ensure_ascii=False))
+    except Exception as _e:
+        print("[mail] no pude cachear resumen:", repr(_e))
+
     return data
+
+# ====== Resumen para Dashboard ======
+@router.get("/summary")
+def mail_summary():
+    """
+    Devuelve el último resumen cacheado por /mail/scan o por el scheduler (si lo invoca).
+    Si aún no existe, responde ok=False.
+    """
+    if LAST_SUMMARY_FILE.exists():
+        try:
+            payload = json.loads(LAST_SUMMARY_FILE.read_text(encoding="utf-8"))
+            return payload
+        except Exception as e:
+            return JSONResponse({"ok": False, "message": f"cache corrupta: {e}"}, status_code=500)
+    return {"ok": False, "message": "Sin datos aún. Ejecutá un escaneo o esperá al scheduler."}
+
+# ---------- scheduler que invoca main.py ----------
+def start_mail_scheduler(app):
+    try:
+        if not _env_bool(os.getenv("SCHEDULER_ENABLED", "0"), False):
+            return
+        import threading, time as _time
+        interval = int(os.getenv("SCHEDULER_INTERVAL_SEC", "600") or 600)
+
+        def _job():
+            uid = os.getenv("DYNO") or os.getenv("RENDER_INSTANCE_ID") or "local"
+            while True:
+                try:
+                    # reusar la misma lógica que el endpoint
+                    _ = mail_scan()  # guarda cache en LAST_SUMMARY_FILE
+                    print(f"[mail][sched] uid={uid} tick OK")
+                except Exception as e:
+                    print("[mail][sched] error:", repr(e))
+                _time.sleep(interval)
+
+        threading.Thread(target=_job, daemon=True).start()
+    except Exception as e:
+        print("[mail][sched] start error:", repr(e))
