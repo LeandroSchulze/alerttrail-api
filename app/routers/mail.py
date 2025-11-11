@@ -1,9 +1,9 @@
 # app/routers/mail.py
-import os, json, socket, imaplib, email
+import os, json, socket, imaplib, email, re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -44,6 +44,7 @@ def _load_linked() -> Dict[str, Any]:
 def _save_linked(data: dict) -> None:
     LINK_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+# ====== Modelos mínimos usados por el fallback ======
 class MailItem(BaseModel):
     uid: str
     from_email: Optional[str] = None
@@ -55,6 +56,9 @@ class MailItem(BaseModel):
     score: float = 0.0
     reason: Optional[str] = None
     link: Optional[str] = None
+    # NUEVO opcional (el front lo ignora si no está)
+    urls: Optional[List[str]] = None
+    link_report: Optional[Dict[str, Any]] = None
 
 class ScanResult(BaseModel):
     ok: bool
@@ -65,6 +69,70 @@ class ScanResult(BaseModel):
     marked_seen: bool
     message: Optional[str] = None
     items: List[MailItem] = []
+
+# === auth por cookie (mismo que usa main.py) ===
+from app.security import get_current_user_cookie
+
+# ====== Vistas HTML ======
+@router.get("/", response_class=HTMLResponse)
+def mail_index(request: Request, user=Depends(get_current_user_cookie)):
+    linked = _load_linked().get(str(user["sub"]))
+    ctx = {"request": request, "page_title": "Casillas de correo",
+           "current_user": user, "defaults": _defaults_from_env(), "linked": linked}
+    return templates.TemplateResponse("mail.html", ctx)
+
+@router.get("/scanner", response_class=HTMLResponse)
+def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
+    ctx = {"request": request, "page_title": "Mail Scanner",
+           "current_user": user, "defaults": _defaults_from_env(),
+           "linked": _load_linked().get(str(user["sub"]))}
+    return templates.TemplateResponse("mail_scanner.html", ctx)
+
+# ====== Vinculación simple de casilla ======
+@router.get("/settings", include_in_schema=False)
+def mail_settings_get():
+    return RedirectResponse(url="/mail/", status_code=303)
+
+@router.post("/settings")
+async def mail_settings(request: Request, user=Depends(get_current_user_cookie)):
+    addr = None
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" in ctype:
+        try:
+            data = await request.json()
+            addr = (data or {}).get("address")
+        except Exception:
+            addr = None
+    else:
+        try:
+            form = await request.form()
+            addr = form.get("address")
+        except Exception:
+            addr = None
+        addr = addr or request.query_params.get("address")
+
+    addr = (addr or "").strip().lower()
+    if not addr or "@" not in addr:
+        raise HTTPException(status_code=400, detail="Dirección inválida")
+
+    data = _load_linked()
+    data[str(user["sub"])] = {"address": addr}
+    _save_linked(data)
+    return RedirectResponse(url="/mail/", status_code=303)
+
+@router.post("/connect")
+async def mail_connect(request: Request, user=Depends(get_current_user_cookie)):
+    return await mail_settings(request, user)
+
+# ====== Scanner ======
+# Intentamos usar el servicio “completo” (con analysis+iocs+hints). Si no está, caemos al fallback local.
+try:
+    from app.services.mail_scan import get_scan_summary as _svc_scan_summary, URL_RE as _SVC_URL_RE
+    _HAS_SERVICE = True
+except Exception:
+    _svc_scan_summary = None
+    _HAS_SERVICE = False
+    _SVC_URL_RE = re.compile(r"https?://[^\s\"'>)]+", re.I)
 
 def _decode_hdr(v):
     if not v:
@@ -86,15 +154,26 @@ def _decode_hdr(v):
             out.append(txt)
     return "".join(out).strip()
 
-def _score_suspicious(subj: str, snip: str):
+# Heurística QR (para fallback)
+_QR_PATTERNS = [
+    r"\bcódigo\s*qr\b", r"\bqr\s*code\b", r"\bscan(ea|ea[rn])?\b.*\b(código|code)\b",
+    r"\bescane(a|á)\b"
+]
+def _qr_hint(text: str) -> bool:
+    return any(re.search(p, text or "", re.I) for p in _QR_PATTERNS)
+
+def _score_suspicious_fallback(subj: str, snip: str):
     text = f"{subj} {snip}".lower()
     kws = ["verify", "verificar", "password", "contraseña", "urgent", "urgente",
            "invoice", "factura", "payment", "pago", "bank", "banco", "reset"]
     hits = [k for k in kws if k in text]
-    score = min(1.0, len(hits) * 0.2)
-    return score, ", ".join(hits)
+    if _qr_hint(text):
+        hits.append("qr")
+    score = min(1.0, (len(hits) * 0.2))
+    reason = ", ".join(sorted(set(hits))) if hits else None
+    return score, reason
 
-def _fetch_items(imap, folder, limit=50):
+def _fetch_items_fallback(imap, folder, limit=50):
     typ, data = imap.uid("search", None, "ALL")
     uids = (data[0] or b"").split() if typ == "OK" else []
     uids = uids[-limit:]
@@ -122,7 +201,9 @@ def _fetch_items(imap, folder, limit=50):
             subject = _decode_hdr(msg.get("Subject"))
             date = _decode_hdr(msg.get("Date"))
             snippet = (snippet_raw or b"").decode("utf-8", "ignore")[:250]
-            score, reason = _score_suspicious(subject, snippet)
+
+            score, reason = _score_suspicious_fallback(subject, snippet)
+            urls = _SVC_URL_RE.findall(f"{subject} {snippet}")
             items.append(MailItem(
                 uid=uid.decode(),
                 from_email=from_email,
@@ -133,12 +214,13 @@ def _fetch_items(imap, folder, limit=50):
                 score=score,
                 reason=reason,
                 link=f"/mail/scanner?id={uid.decode()}",
+                urls=urls or None,
             ))
         except Exception:
             continue
     return items
 
-def _scan_impl() -> ScanResult:
+def _scan_impl_fallback() -> Dict[str, Any]:
     host = os.getenv("MAIL_HOST", "imap.gmail.com")
     port = int(os.getenv("MAIL_PORT", "993") or 993)
     use_ssl = _env_bool(os.getenv("MAIL_USE_SSL", "true"), True)
@@ -154,139 +236,88 @@ def _scan_impl() -> ScanResult:
         imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
         typ, _ = imap.login(username, password)
         if typ != "OK":
-            return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message="Login IMAP falló", items=[])
+            return dict(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False,
+                        message="Login IMAP falló", items=[])
         typ, _ = imap.select(folder, readonly=not mark_seen)
         if typ != "OK":
-            return ScanResult(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False, message=f"No se pudo abrir {folder}", items=[])
+            return dict(ok=False, login=True, folder=folder, unread=0, total=0, marked_seen=False,
+                        message=f"No se pudo abrir {folder}", items=[])
         typ, data = imap.search(None, "ALL")
         total = len((data[0] or b"").split()) if typ == "OK" else 0
         typ, data = imap.search(None, "UNSEEN")
-        unseen_ids = (data[0] or b"").split() if typ == "OK" else []
-        unread = len(unseen_ids)
-        items = _fetch_items(imap, folder)
+        unread = len((data[0] or b"").split()) if typ == "OK" else 0
+
+        items = _fetch_items_fallback(imap, folder)
+
         try:
             imap.close(); imap.logout()
         except Exception:
             pass
-        return ScanResult(ok=True, login=True, folder=folder, unread=unread, total=total, marked_seen=False, message=None, items=items)
+
+        return dict(ok=True, login=True, folder=folder, unread=unread, total=total,
+                    marked_seen=bool(mark_seen), message=None,
+                    items=[it.dict() for it in items])
     except (imaplib.IMAP4.error, socket.timeout) as e:
-        return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=str(e), items=[])
+        return dict(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=str(e), items=[])
     except Exception as e:
-        return ScanResult(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
+        return dict(ok=False, login=False, folder=folder, unread=0, total=0, marked_seen=False, message=f"Error: {e}", items=[])
 
-# === auth por cookie (mismo que usa main.py) ===
-from app.security import get_current_user_cookie
+# ====== Detonation opcional (no rompe si no está) ======
+try:
+    from app.services.link_detonation import detonate_urls as _detonate
+    _HAS_DETONATION = True
+except Exception:
+    _detonate = None
+    _HAS_DETONATION = False
 
-@router.get("/", response_class=HTMLResponse)
-def mail_index(request: Request, user=Depends(get_current_user_cookie)):
-    linked = _load_linked().get(str(user["sub"]))
-    ctx = {"request": request, "page_title": "Casillas de correo",
-           "current_user": user, "defaults": _defaults_from_env(), "linked": linked}
-    try:
-        return templates.TemplateResponse("mail.html", ctx)
-    except Exception:
-        html = f"""<!doctype html><meta charset='utf-8'>
-        <div style="font-family:system-ui;padding:24px">
-          <h1>Mail</h1>
-          <p>Cuenta guardada: <b>{(linked or {}).get("address","-")}</b></p>
-          <form method="post" action="/mail/settings" style="display:flex;gap:8px;margin-top:12px">
-            <input type="email" name="address" placeholder="tu@correo.com" required>
-            <button>Guardar</button>
-          </form>
-          <p style="margin-top:12px"><a href="/mail/scanner">Ir al scanner</a></p>
-        </div>"""
-        return HTMLResponse(html)
-
-# ---------- FIX 422: acepta form, json o query ----------
-@router.get("/settings", include_in_schema=False)
-def mail_settings_get():
-    # Evita 422 cuando se accede por GET manualmente.
-    return RedirectResponse(url="/mail/", status_code=303)
-
-@router.post("/settings")
-async def mail_settings(request: Request, user=Depends(get_current_user_cookie)):
-    addr = None
-    ctype = (request.headers.get("content-type") or "").lower()
-    if "application/json" in ctype:
-        try:
-            data = await request.json()
-            addr = (data or {}).get("address")
-        except Exception:
-            addr = None
-    else:
-        try:
-            form = await request.form()
-            addr = form.get("address")
-        except Exception:
-            addr = None
-        # fallback por si alguien manda ?address=
-        addr = addr or request.query_params.get("address")
-
-    addr = (addr or "").strip().lower()
-    if not addr or "@" not in addr:
-        raise HTTPException(status_code=400, detail="Dirección inválida")
-
-    data = _load_linked()
-    data[str(user["sub"])] = {"address": addr}
-    _save_linked(data)
-    return RedirectResponse(url="/mail/", status_code=303)
-
-@router.post("/connect")
-async def mail_connect(request: Request, user=Depends(get_current_user_cookie)):
-    # Alias que hace lo mismo que /settings
-    return await mail_settings(request, user)
-
-@router.get("/scanner", response_class=HTMLResponse)
-def mail_scanner(request: Request, user=Depends(get_current_user_cookie)):
-    ctx = {"request": request, "page_title": "Mail Scanner",
-           "current_user": user, "defaults": _defaults_from_env(),
-           "linked": _load_linked().get(str(user["sub"]))}
-    try:
-        return templates.TemplateResponse("mail_scanner.html", ctx)
-    except Exception:
-        return HTMLResponse("<h1>Mail Scanner</h1>")
-
-@router.get("/scan", response_model=ScanResult)
-@router.post("/scan", response_model=ScanResult)
+@router.get("/scan")
+@router.post("/scan")
 def mail_scan(user=Depends(get_current_user_cookie)):
-    return _scan_impl()
+    # 1) escaneo
+    if _HAS_SERVICE and _svc_scan_summary:
+        defaults = _defaults_from_env()
+        data = _svc_scan_summary(
+            host=defaults["host"], port=defaults["port"], use_ssl=defaults["use_ssl"],
+            username=os.getenv("MAIL_USERNAME", ""), password=os.getenv("MAIL_PASSWORD", ""),
+            folder=defaults["folder"], mark_seen=defaults["mark_seen"], max_msgs=50
+        )
+    else:
+        data = _scan_impl_fallback()
 
-# ---------- scheduler que invoca main.py ----------
-def start_mail_scheduler(app):
-    """
-    Inicia un loop en background para escanear cada N segundos.
-    Respeta:
-      - SCHEDULER_ENABLED (default: 1/true)
-      - MAIL_SCAN_INTERVAL_SECONDS (prioritario) o SCHED_INTERVAL_SEC (fallback)
-      - Evita iniciar múltiples veces usando app.state._mail_sched_running
-    """
-    try:
-        ENABLED = _env_bool(os.getenv("SCHEDULER_ENABLED", "1"), True)
-        if not ENABLED:
-            return
+    # 2) detonation opcional (no bloqueante)
+    if _env_bool(os.getenv("LINK_DETONATION_ENABLED", "0"), False) and _HAS_DETONATION and data.get("ok"):
+        all_urls: List[str] = []
+        for it in data.get("items", []):
+            # service completo: urls en analysis.iocs.urls
+            urls = []
+            if isinstance(it, dict) and "analysis" in it:
+                urls = (it.get("analysis", {}) or {}).get("iocs", {}).get("urls", []) or []
+            elif isinstance(it, dict):
+                # fallback: extraigo si está la lista ya adjunta
+                urls = it.get("urls") or _SVC_URL_RE.findall(f"{it.get('subject','')} {it.get('snippet','')}")
+            all_urls.extend(urls or [])
 
-        # 1) Prioridad a MAIL_SCAN_INTERVAL_SECONDS, luego SCHED_INTERVAL_SEC. Default 300 (5 min)
-        INTERVAL = int(os.getenv("MAIL_SCAN_INTERVAL_SECONDS") or os.getenv("SCHED_INTERVAL_SEC") or "300")
+        report = _detonate(all_urls, limit=20) if all_urls else {"ok": True, "results": {}}
+        data["detonation"] = report
 
-        # Evitar hilos duplicados en recargas
-        if getattr(app.state, "_mail_sched_running", False):
-            print(f"[mail][sched] ya estaba iniciado, intervalo={INTERVAL}s")
-            return
+        # pegamos resumen simple por item
+        if report.get("results"):
+            rmap = report["results"]
+            for it in data.get("items", []):
+                urls = []
+                if isinstance(it, dict) and "analysis" in it:
+                    urls = (it.get("analysis", {}) or {}).get("iocs", {}).get("urls", []) or []
+                elif isinstance(it, dict):
+                    urls = it.get("urls") or []
+                details = []
+                for u in urls:
+                    if u in rmap:
+                        details.append(rmap[u])
+                if details:
+                    # no cambiamos estructura previa; agregamos opcional
+                    it["link_report"] = {
+                        "dangerous": any((d.get("susp_tld") or d.get("punycode")) for d in details),
+                        "details": details[:5],
+                    }
 
-        import threading, time
-        def _job():
-            uid = os.getenv("DYNO") or os.getenv("RENDER_INSTANCE_ID") or "local"
-            while True:
-                try:
-                    res = _scan_impl()
-                    print(f"[mail][sched] uid={uid} unread={res.unread} total={res.total} folder={res.folder}")
-                except Exception as e:
-                    print("[mail][sched] error:", repr(e))
-                time.sleep(INTERVAL)
-
-        t = threading.Thread(target=_job, daemon=True)
-        t.start()
-        app.state._mail_sched_running = True
-        print(f"[mail][sched] iniciado cada {INTERVAL}s")
-    except Exception as e:
-        print("[mail][sched] start error:", repr(e))
+    return data
