@@ -308,6 +308,7 @@ ROUTER_MODULES = [
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push", "promo",
     "diag",
+    "tools",  # <-- AÑADIDO: Router con QR Scan + Receipt Analyzer
 ]
 for name in ROUTER_MODULES:
     try:
@@ -744,7 +745,7 @@ if not _route_exists("/auth/login/web"):
         except Exception:
             pass
         r = RedirectResponse(url="/dashboard", status_code=303)
-        token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+        token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.id})
         issue_access_cookie(r, token)
         return r
 
