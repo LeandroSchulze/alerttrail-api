@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Analizador de Recibos — AlertTrail</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a}
+    .card{border:1px solid #e2e8f0;border-radius:16px;padding:16px;max-width:960px}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;cursor:pointer}
+    .btn.primary{background:#0ea5e9;border-color:#0ea5e9;color:#fff}
+    .muted{color:#64748b}
+    pre{background:#0f172a0d;padding:12px;border-radius:10px;overflow:auto}
+    .chip{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #c7d2fe;background:#eef2ff;color:#1e3a8a;font-size:12px;font-weight:700}
+    .chip.red{border-color:#fecaca;background:#fee2e2;color:#7f1d1d}
+    .chip.yellow{border-color:#fde68a;background:#fef3c7;color:#7c2d12}
+  </style>
+</head>
+<body>
+  <h1 style="margin-top:0">Analizador de Recibos & Facturas <span class="chip yellow">BETA</span></h1>
+  <p class="muted">Subí un PDF (mejor) o una imagen. Extraeremos montos/fechas con reglas simples y te daremos un puntaje de riesgo.</p>
+
+  <div class="card">
+    <form id="f" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input type="file" name="file" id="file" accept="application/pdf,image/*" required>
+      <button class="btn primary" type="submit">Analizar</button>
+      <a class="btn" href="/dashboard">Volver</a>
+    </form>
+
+    <div id="out" style="margin-top:12px"></div>
+    <div id="raw" style="margin-top:12px"></div>
+  </div>
+
+<script>
+  function levelChip(level){
+    if(level==='high') return '<span class="chip red">HIGH</span>';
+    if(level==='medium') return '<span class="chip yellow">MEDIUM</span>';
+    return '<span class="chip">LOW</span>';
+  }
+  const form = document.getElementById('f');
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(form);
+    const res = await fetch('/tools/receipt-analyzer/api', {method:'POST', body:fd});
+    const data = await res.json();
+
+    const amounts = (data.detections?.amounts||[]).map(a=>`${a.currency} ${a.value_raw}`).join(", ") || '—';
+    const dates   = (data.detections?.dates||[]).join(", ") || '—';
+    const lvl     = data.analysis?.danger_level || 'low';
+    const reasons = (data.analysis?.reasons||[]).join(", ") || '—';
+
+    document.getElementById('out').innerHTML = `
+      <div><b>Archivo:</b> ${data.filename}</div>
+      <div style="margin-top:6px">Riesgo: ${levelChip(lvl)}</div>
+      <ul class="muted">
+        <li><b>Montos:</b> ${amounts}</li>
+        <li><b>Fechas:</b> ${dates}</li>
+        <li><b>Motivos:</b> ${reasons}</li>
+      </ul>
+    `;
+    document.getElementById('raw').innerHTML = '<details><summary>Ver JSON</summary><pre>'+JSON.stringify(data,null,2)+'</pre></details>';
+  });
+</script>
+</body>
+</html>
