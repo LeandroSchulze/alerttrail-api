@@ -342,6 +342,15 @@ try:
 except Exception as e:
     print(f"[routers] No pude cargar payments_mp: {e}")
 
+# NUEVO: herramientas (QR Scan, Receipt Analyzer)
+try:
+    from app.routers import tools
+    app.include_router(tools.router)
+    print("[routers] tools montado OK")
+except Exception as e:
+    print(f"[routers] No pude cargar tools: {e}")
+
+
 # Montaje explícito de otros routers opcionales
 for _extra in ("subscription", "webhooks"):
     try:
