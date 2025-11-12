@@ -5,155 +5,172 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Dashboard — AlertTrail</title>
 
-  <!-- tu CSS principal (ya existente) -->
+  <!-- Estilos base de la app -->
   <link rel="stylesheet" href="/static/style.css">
 
-  <!-- popups de alertas (ya los veníamos usando) -->
+  <!-- Toast + popups de alertas -->
   <link rel="stylesheet" href="/static/toast.css">
   <script src="/static/toast.js" defer></script>
   <script src="/static/alerts_client.js" defer></script>
 
   <style>
-    /* mínimos por si tu CSS no tiene estas utilidades */
-    :root{--border:#e2e8f0;--muted:#64748b}
-    .container{max-width:1100px;margin:16px auto;padding:0 16px}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .btn{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer;text-decoration:none;color:inherit}
-    .btn.primary{background:#0ea5e9;border-color:#0ea5e9;color:#fff}
-    .card{background:#fff;border:1px solid var(--border);border-radius:16px;padding:16px}
-    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
-    .col-6{grid-column:span 6}
-    .col-12{grid-column:span 12}
-    @media (max-width:900px){.col-6{grid-column:span 12}}
-    /* tarjetas de herramientas */
-    .tool-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
-    .tool{grid-column:span 6;border:1px solid var(--border);border-radius:14px;padding:14px;text-decoration:none;color:inherit;background:#fff}
-    .tool:hover{box-shadow:0 2px 12px rgba(0,0,0,.06)}
-    .muted{color:var(--muted)}
+    /* Pequeños helpers por si el style.css no los tiene */
+    .page { max-width: 1100px; margin: 24px auto; padding: 0 16px; font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif; color:#0f172a; }
+    .heading { font-weight: 800; font-size: 20px; margin: 0 0 8px; }
+    .muted { color:#64748b; }
+    .grid { display:grid; gap:16px; }
+    .grid-2 { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .grid-3 { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:16px; }
+    .btn { display:inline-block; padding:8px 12px; border-radius:10px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; text-decoration:none; cursor:pointer; }
+    .btn.primary { background:#0ea5e9; color:#fff; border-color:#0ea5e9; }
+    .btn.block { display:inline-flex; align-items:center; gap:8px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .section-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+    .chip { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; border:1px solid #c7d2fe; color:#1e3a8a; font-size:12px; font-weight:700; }
+    @media (max-width: 880px){ .grid-2, .grid-3 { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-<div class="container">
+<div class="page">
 
   <!-- Encabezado -->
-  <div class="card" style="margin-bottom:16px">
-    <h2 style="margin:0 0 6px">Bienvenido, {{ (user.name or user.email) if user else 'Usuario' }}</h2>
-    <div class="muted">Tu email: {{ user.email if user else '' }}</div>
+  <div class="card" style="display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <div class="heading">Bienvenido, {{ (user.name or current_user.email) if user else (current_user.email or 'Usuario') }}</div>
+      <div class="muted">Tu email: {{ current_user.email }}</div>
+    </div>
+    <div class="row">
+      <a class="btn" href="/i18n/set?lang=es">ES</a>
+      <a class="btn" href="/i18n/set?lang=en">EN</a>
+      <a class="btn" href="/logout">Cerrar sesión</a>
+    </div>
   </div>
 
-  <div class="grid">
-
-    <!-- Estado de cuenta -->
-    <section class="card col-6">
-      <h3 style="margin-top:0">Estado de tu cuenta</h3>
-      <div>Plan actual: <b>{{ (user.plan or 'FREE') if user else 'FREE' }}</b></div>
-      <div>Rol: <b>{% if is_admin %}Administrador{% else %}Usuario{% endif %}</b></div>
-      <div class="row" style="margin-top:10px">
-        <a class="btn primary" href="/billing">Cambiar plan</a>
-        <a class="btn" href="/alerts">Activar notificaciones</a>
-        <a class="btn" href="/org/admin">Admin de organización</a>
+  <!-- Estado de cuenta + Acceso rápido -->
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="card">
+      <div class="section-title">
+        <div class="heading">Estado de tu cuenta</div>
       </div>
-    </section>
+      <div class="row" style="margin:6px 0">
+        <span class="muted">Plan actual:</span>
+        <strong>{{ (user.plan or 'FREE') if user else 'FREE' }}</strong>
+      </div>
+      <div class="row" style="margin:6px 0">
+        <span class="muted">Rol:</span>
+        <strong>{{ 'Administrador' if is_admin else 'Usuario' }}</strong>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <a class="btn" href="/billing/subscriptions">Cambiar plan</a>
+        <a class="btn" href="/push/enable">Activar notificaciones</a>
+        <a class="btn" href="/orgs/admin">Admin de organización</a>
+      </div>
+    </div>
 
-    <!-- Acceso rápido -->
-    <section class="card col-6">
-      <h3 style="margin-top:0">Acceso rápido</h3>
+    <div class="card">
+      <div class="section-title">
+        <div class="heading">Acceso rápido</div>
+      </div>
       <div class="row">
         <a class="btn" href="/analysis">Análisis</a>
         <a class="btn" href="/mail/">Emails</a>
-        <a class="btn" href="/org/admin">Admin de organización</a>
+        <a class="btn" href="/orgs/admin">Admin de organización</a>
         <a class="btn" href="/stats">Estadísticas</a>
         <a class="btn" href="/billing/subscriptions">Suscripciones</a>
       </div>
-    </section>
+    </div>
+  </div>
 
-    <!-- Funciones PRO / EMPRESAS -->
-    <section class="card col-12">
-      <h3 style="margin-top:0">Funciones PRO / EMPRESAS</h3>
-      <div class="row">
-        <a class="btn" href="/alerts">Ver alertas</a>
-        <a class="btn" href="/rules">Reglas personalizadas</a>
-        <a class="btn" href="/reports">Reportes</a>
-      </div>
-    </section>
+  <!-- Funciones PRO / EMPRESAS -->
+  <div class="card" style="margin-top:16px">
+    <div class="section-title">
+      <div class="heading">Funciones PRO / EMPRESAS</div>
+    </div>
+    <div class="row">
+      <a class="btn" href="/alerts">Ver alertas</a>
+      <a class="btn" href="/rules">Reglas personalizadas</a>
+      <a class="btn" href="/reports">Reportes</a>
+    </div>
+  </div>
 
-    <!-- 🆕 Herramientas nuevas (QR Scan + Analizador de Tickets) -->
-    <section class="card col-12" id="tools">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <h3 style="margin:0">Herramientas nuevas</h3>
-        <a href="/tools" class="btn">Ver todas</a>
-      </div>
+  <!-- ✅ NUEVO: Herramientas nuevas -->
+  <div class="card" style="margin-top:16px">
+    <div class="section-title">
+      <div class="heading">Herramientas nuevas</div>
+      <a class="btn" href="/tools">Ver todas</a>
+    </div>
 
-      <div class="tool-grid" style="margin-top:12px">
-        <a class="tool" href="/tools/qr-scan">
-          <h4 style="margin:0 0 6px">QR Scan Seguro</h4>
-          <p class="muted" style="margin:0">
-            Escaneá códigos QR con la cámara o subiendo una imagen. Si la URL es riesgosa, te avisamos antes de abrirla.
-          </p>
-          <div class="row" style="margin-top:10px">
-            <span class="btn">Abrir</span>
-          </div>
-        </a>
-
-        <a class="tool" href="/tools/receipt-analyzer">
-          <h4 style="margin:0 0 6px">Analizador de Tickets</h4>
-          <p class="muted" style="margin:0">
-            Pegá el texto del ticket para extraer Total, IVA y Fecha, y detectar señales de fraude.
-          </p>
-          <div class="row" style="margin-top:10px">
-            <span class="btn">Abrir</span>
-          </div>
-        </a>
-      </div>
-    </section>
-
-    <!-- Planes (lo existente) -->
-    <section class="card col-12">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <h3 style="margin:0">Planes</h3>
-        <a class="btn" href="/billing">¿Qué incluye cada plan?</a>
-      </div>
-
-      <div class="grid" style="margin-top:12px">
-        <div class="col-6">
-          <div class="card">
-            <h4 style="margin:0 0 6px">PRO — US$ 10 / mes</h4>
-            <ul style="margin:8px 0 12px 18px">
-              <li>Uso individual o equipo chico</li>
-              <li>Funciones completas del producto</li>
-              <li>Soporte estándar</li>
-            </ul>
-            <a class="btn primary" href="/billing">Elegir PRO</a>
-          </div>
+    <div class="grid grid-2">
+      <!-- QR Scan Seguro -->
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="heading" style="font-size:16px">QR Scan Seguro</div>
+          <span class="chip">Nuevo</span>
         </div>
-        <div class="col-6">
-          <div class="card">
-            <h4 style="margin:0 0 6px">EMPRESAS — US$ 99 / mes</h4>
-            <ul style="margin:8px 0 12px 18px">
-              <li>25 cuentas incluidas</li>
-              <li>Asientos adicionales: US$ 3/mes por usuario</li>
-              <li>Soporte prioritario</li>
-            </ul>
-            <a class="btn primary" href="/billing">Elegir EMPRESAS</a>
-          </div>
-        </div>
+        <p class="muted" style="margin:6px 0 10px">
+          Escaneá códigos QR con la cámara o subí una imagen. Si la URL es riesgosa,
+          te avisamos antes de abrirla.
+        </p>
+        <!-- IMPORTANTE: link real, sin disabled -->
+        <a class="btn" href="/tools/qr-scan">Abrir</a>
       </div>
-    </section>
 
-    <!-- Últimos pagos (placeholder existente) -->
-    <section class="card col-12">
-      <h3 style="margin-top:0">Últimos pagos</h3>
+      <!-- Analizador de Tickets -->
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="heading" style="font-size:16px">Analizador de Tickets</div>
+          <span class="chip">Nuevo</span>
+        </div>
+        <p class="muted" style="margin:6px 0 10px">
+          Pegá el texto del ticket para extraer Total, IVA y Fecha, y detectar señales de fraude.
+        </p>
+        <!-- IMPORTANTE: link real, sin disabled -->
+        <a class="btn" href="/tools/receipt-analyzer">Abrir</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Planes -->
+  <div class="card" style="margin-top:16px">
+    <div class="section-title">
+      <div class="heading">Planes</div>
+      <a class="btn" href="/billing">¿Qué incluye cada plan?</a>
+    </div>
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="heading" style="font-size:16px">PRO — US$ 10 / mes</div>
+        <ul class="muted" style="margin:8px 0 12px 18px">
+          <li>Uso individual o equipo chico</li>
+          <li>Funciones completas del producto</li>
+          <li>Soporte estándar</li>
+        </ul>
+        <a class="btn primary" href="/billing/subscriptions">Elegir PRO</a>
+      </div>
+      <div class="card">
+        <div class="heading" style="font-size:16px">EMPRESAS — US$ 99 / mes</div>
+        <ul class="muted" style="margin:8px 0 12px 18px">
+          <li>25 cuentas incluidas</li>
+          <li>Asientos adicionales: US$ 3/mes por usuario</li>
+          <li>Soporte prioritario</li>
+        </ul>
+        <a class="btn primary" href="/billing/subscriptions">Elegir EMPRESAS</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Últimos pagos -->
+  <div class="card" style="margin-top:16px">
+    <div class="section-title">
+      <div class="heading">Últimos pagos</div>
       <a class="btn" href="/payments/history">Ver todo el historial</a>
-    </section>
+    </div>
+    <div class="muted">—</div>
+  </div>
 
+  <div class="muted" style="text-align:center;margin:24px 0 12px">
+    Términos y Condiciones · Política de Privacidad · Soporte: info@alerttrail.com
   </div>
 </div>
-
-<script>
-  // ejemplo simple de popup cuando haya nuevas alertas (si /alerts_client.js emite eventos)
-  window.addEventListener('alerttrail:new-alert', function (ev) {
-    if (window.toast) toast.info('Nueva alerta detectada');
-  });
-</script>
 </body>
 </html>
