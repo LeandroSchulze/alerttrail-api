@@ -103,7 +103,8 @@ REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
-app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
+app.mount("/reports", StaticFiles(directory=REPORTS_DIR, html=True), name="reports")
+
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
@@ -658,6 +659,38 @@ def _favicon_alias():
         return FileResponse(path, media_type="image/x-icon")
     return Response(status_code=204)
 
+# ---- Fallback UI para /alerts y /rules si no hay router dedicado ----
+from fastapi.routing import APIRoute as _APIRoute_ui
+
+def _route_exists_ui(path: str) -> bool:
+    return any(isinstance(r, _APIRoute_ui) and r.path == path for r in app.routes)
+
+# /alerts (UI)
+if not _route_exists_ui("/alerts"):
+    @app.get("/alerts", response_class=HTMLResponse)
+    def _alerts_ui(request: Request, user=Depends(get_current_user_cookie)):
+        try:
+            return templates.TemplateResponse("alerts.html", {
+                "request": request,
+                "page_title": "Alertas",
+                "current_user": user
+            })
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Alertas</h1><p>Acá iría el listado de alertas.</p>")
+
+# /rules (UI)
+if not _route_exists_ui("/rules"):
+    @app.get("/rules", response_class=HTMLResponse)
+    def _rules_ui(request: Request, user=Depends(get_current_user_cookie)):
+        try:
+            return templates.TemplateResponse("rules.html", {
+                "request": request,
+                "page_title": "Reglas personalizadas",
+                "current_user": user
+            })
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Reglas</h1><p>Configura tus reglas personalizadas acá.</p>")
+
 # ---- Home/Login/Dashboard ----
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(get_current_user_optional)):
@@ -870,6 +903,22 @@ def _log_routes():
     print("\n=== ROUTES ==="); [print(p) for p in paths]; print("==============\n")
     if not any(p.startswith("/billing") for p in paths):
         print("[WARN] No hay rutas registradas bajo /billing — verifica app/routers/billing.py y su import.")
+
+@app.get("/api/reports/list")
+def api_reports_list():
+    # Lista archivos del directorio REPORTS_DIR para mostrarlos en la UI
+    files = []
+    try:
+        for p in sorted(Path(REPORTS_DIR).glob("*")):
+            if p.is_file():
+                files.append({
+                    "name": p.name,
+                    "size": p.stat().st_size,
+                    "mtime": int(p.stat().st_mtime)
+                })
+    except Exception as e:
+        return {"ok": False, "error": str(e), "files": []}
+    return {"ok": True, "files": files}
 
 # ============================================================
 # Fallback robusto para /billing/subscriptions
