@@ -2,12 +2,20 @@
 from __future__ import annotations
 import os, json, hmac, hashlib, requests
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+# DB / modelos
 from app.database import get_db
 from app.models import PaymentHistory
 
-router = APIRouter(prefix="/webhooks", tags=["payments-mp"])
+# Intentamos importar el webhook oficial. Si no existe, usamos el legacy de abajo.
+try:
+    from app.routers.payments import webhook as payments_webhook
+    _HAS_MAIN_WEBHOOK = True
+except Exception:
+    payments_webhook = None  # type: ignore
+    _HAS_MAIN_WEBHOOK = False
 
 REQ_TIMEOUT = int(os.getenv("MP_REQ_TIMEOUT_SEC", "25"))
 
@@ -24,8 +32,10 @@ def _hmac_valid(secret: str, body: bytes, signature: str | None) -> bool:
     except Exception:
         return False
 
-@router.post("/mp", name="payments_mp_webhook")
-async def mp_webhook(request: Request, db: Session = Depends(get_db), x_signature: str | None = Header(default=None)):
+# =========================
+#  LEGACY HANDLER (fallback)
+# =========================
+async def _legacy_mp_webhook(request: Request, db: Session, x_signature: str | None):
     raw = await request.body()
 
     # Verificación opcional por firma HMAC (si configurás MP_WEBHOOK_SECRET)
@@ -36,6 +46,8 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db), x_signatur
 
     payload = json.loads(raw or b"{}")
     data = payload.get("data") or {}
+
+    # MP puede enviar {data:{id}} o {data:{payment}}
     mp_payment_id = str(data.get("id") or data.get("payment") or "").strip()
     if not mp_payment_id:
         raise HTTPException(status_code=400, detail="Missing payment id")
@@ -56,7 +68,7 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db), x_signatur
     currency = (info.get("currency_id") or "USD").upper()
     external_reference = info.get("external_reference") or ""
 
-    # Idempotencia: si ya existe, no duplicar. Actualiza si cambió el estado.
+    # Idempotencia
     existing = db.query(PaymentHistory).filter(PaymentHistory.payment_id == mp_payment_id).first()
     if existing:
         if existing.status != status:
@@ -93,10 +105,42 @@ async def mp_webhook(request: Request, db: Session = Depends(get_db), x_signatur
     if status in ("approved", "authorized") and user_id:
         try:
             from app.security.billing_guard import activate_user_pro
-            # Suma 1 mes desde hoy (o desde la fecha de expiración actual si es futura — depende de tu helper)
             activate_user_pro(db, user_id=user_id, months=1)
         except Exception:
-            # Si no existe el helper, lo puede manejar normalize_user_plan luego
+            # Si no existe el helper, lo resolverá normalize_user_plan luego
             pass
 
     return {"ok": True, "id": mp_payment_id, "status": status}
+
+# =========================
+#  ROUTERS (aliases + legacy)
+# =========================
+
+# Alias moderno
+router = APIRouter(prefix="/payments_mp", tags=["payments-mp"])
+
+@router.post("/webhook", include_in_schema=False)
+async def webhook_alias(request: Request, db: Session = Depends(get_db), x_signature: str | None = Header(default=None)):
+    """
+    Alias hacia el webhook oficial (/payments/webhook).
+    Si no existe, usa el handler legacy (compatibilidad completa).
+    """
+    if _HAS_MAIN_WEBHOOK and payments_webhook:
+        return await payments_webhook(request)
+    return await _legacy_mp_webhook(request, db, x_signature)
+
+# Alias clásico
+alt_router = APIRouter(prefix="/webhooks", tags=["payments-mp"])
+
+@alt_router.post("/mercadopago", include_in_schema=False)
+async def webhook_alt(request: Request, db: Session = Depends(get_db), x_signature: str | None = Header(default=None)):
+    if _HAS_MAIN_WEBHOOK and payments_webhook:
+        return await payments_webhook(request)
+    return await _legacy_mp_webhook(request, db, x_signature)
+
+# Mantener compatibilidad con el endpoint que ya usaban /webhooks/mp
+@alt_router.post("/mp", name="payments_mp_webhook")
+async def webhook_mp(request: Request, db: Session = Depends(get_db), x_signature: str | None = Header(default=None)):
+    if _HAS_MAIN_WEBHOOK and payments_webhook:
+        return await payments_webhook(request)
+    return await _legacy_mp_webhook(request, db, x_signature)
