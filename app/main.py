@@ -103,6 +103,7 @@ REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/static",  StaticFiles(directory=STATIC_DIR),  name="static")
+# Montado estático para descargas (no requiere index.html)
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR, html=True), name="reports")
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -309,7 +310,7 @@ ROUTER_MODULES = [
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push", "promo",
     "diag",
-    "tools",  # <-- AÑADIDO: Router con QR Scan + Receipt Analyzer
+    "tools",  # Router con QR Scan + Receipt Analyzer (se incluye UNA sola vez)
 ]
 for name in ROUTER_MODULES:
     try:
@@ -342,15 +343,6 @@ try:
     print("[routers] payments_mp montado OK")
 except Exception as e:
     print(f"[routers] No pude cargar payments_mp: {e}")
-
-# NUEVO: herramientas (QR Scan, Receipt Analyzer)
-try:
-    from app.routers import tools
-    app.include_router(tools.router)
-    print("[routers] tools montado OK")
-except Exception as e:
-    print(f"[routers] No pude cargar tools: {e}")
-
 
 # Montaje explícito de otros routers opcionales
 for _extra in ("subscription", "webhooks"):
@@ -408,7 +400,6 @@ if not _route_exists("/mail/"):
     DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LINK_FILE = DATA_DIR / "mail_link.json"
-    SETTINGS_FILE = DATA_DIR / "mail_settings.json"
 
     def _env_bool(v: str, default=False) -> bool:
         if v is None: return default
@@ -435,7 +426,6 @@ if not _route_exists("/mail/"):
             mark_seen=_env_bool(os.getenv("MAIL_MARK_SEEN", "false"), False),
         )
 
-    # ---------- MODELOS ----------
     class MailItem(BaseModel):
         uid: str
         from_email: Optional[str] = None
@@ -458,7 +448,6 @@ if not _route_exists("/mail/"):
         message: Optional[str] = None
         items: List[MailItem] = []
 
-    # ---------- UTIL ----------
     def _decode_hdr(v):
         if not v:
             return ""
@@ -528,6 +517,9 @@ if not _route_exists("/mail/"):
                 continue
         return items
 
+    import socket, imaplib, email  # ensure in scope
+    from email.header import decode_header
+
     def _scan_impl():
         host = os.getenv("MAIL_HOST", "imap.gmail.com")
         port = int(os.getenv("MAIL_PORT", "993") or 993)
@@ -540,7 +532,6 @@ if not _route_exists("/mail/"):
         if not username or not password:
             raise HTTPException(status_code=400, detail="Faltan MAIL_USERNAME o MAIL_PASSWORD")
 
-        imap = None
         try:
             imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
             typ, _ = imap.login(username, password)
@@ -581,7 +572,6 @@ if not _route_exists("/mail/"):
             </div>""".format((linked or {}).get("address","-"))
             return HTMLResponse(html)
 
-    # === IMPORTANTE: estos dos endpoints aseguran compatibilidad con el mail.html actual ===
     @mail_router.post("/settings")
     def mail_settings(address: str = Form(...), user=Depends(get_current_user_cookie)):
         address = (address or "").strip().lower()
@@ -638,6 +628,45 @@ if not any(isinstance(r, _APIRoute_2) and r.path == "/alerts/{id}/ack" for r in 
     def _alerts_ack_fallback(id: str):
         return {"ok": True, "ack": True, "id": id}
 
+# ---- Fallback UI para /alerts y /rules si no hay router dedicado ----
+from fastapi.routing import APIRoute as _APIRoute_ui
+
+def _route_exists_ui(path: str) -> bool:
+    return any(isinstance(r, _APIRoute_ui) and r.path == path for r in app.routes)
+
+# /alerts (UI)
+if not _route_exists_ui("/alerts"):
+    @app.get("/alerts", response_class=HTMLResponse)
+    def _alerts_ui(request: Request, user=Depends(get_current_user_cookie)):
+        try:
+            return templates.TemplateResponse("alerts.html", {
+                "request": request,
+                "page_title": "Alertas",
+                "current_user": user
+            })
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Alertas</h1><p>Acá iría el listado de alertas.</p>")
+
+# ✅ /alerts/list (API) — placeholder compatible con alerts.html
+if not _route_exists_ui("/alerts/list"):
+    @app.get("/alerts/list")
+    def _alerts_list(q: str = "", sev: str = "", status: str = "", days: str = "7",
+                     user=Depends(get_current_user_cookie)):
+        return {"ok": True, "items": [], "total": 0}
+
+# /rules (UI)
+if not _route_exists_ui("/rules"):
+    @app.get("/rules", response_class=HTMLResponse)
+    def _rules_ui(request: Request, user=Depends(get_current_user_cookie)):
+        try:
+            return templates.TemplateResponse("rules.html", {
+                "request": request,
+                "page_title": "Reglas personalizadas",
+                "current_user": user
+            })
+        except TemplateNotFound:
+            return HTMLResponse("<h1>Reglas</h1><p>Configura tus reglas personalizadas acá.</p>")
+
 @app.get("/admin/subscriptions", include_in_schema=False)
 def _alias_admin_subscriptions():
     return RedirectResponse(url="/billing", status_code=302)
@@ -659,37 +688,46 @@ def _favicon_alias():
         return FileResponse(path, media_type="image/x-icon")
     return Response(status_code=204)
 
-# ---- Fallback UI para /alerts y /rules si no hay router dedicado ----
-from fastapi.routing import APIRoute as _APIRoute_ui
-
-def _route_exists_ui(path: str) -> bool:
-    return any(isinstance(r, _APIRoute_ui) and r.path == path for r in app.routes)
-
-# /alerts (UI)
-if not _route_exists_ui("/alerts"):
-    @app.get("/alerts", response_class=HTMLResponse)
-    def _alerts_ui(request: Request, user=Depends(get_current_user_cookie)):
+# ---------- UI dinámica para reportes ----------
+if not _route_exists_ui("/reports_browser"):
+    @app.get("/reports_browser", response_class=HTMLResponse)
+    def reports_browser(request: Request, user=Depends(get_current_user_cookie)):
+        rows = []
         try:
-            return templates.TemplateResponse("alerts.html", {
-                "request": request,
-                "page_title": "Alertas",
-                "current_user": user
-            })
-        except TemplateNotFound:
-            return HTMLResponse("<h1>Alertas</h1><p>Acá iría el listado de alertas.</p>")
+            for p in sorted(Path(REPORTS_DIR).glob("*")):
+                if p.is_file():
+                    size = p.stat().st_size
+                    mtime = p.stat().st_mtime
+                    rows.append(
+                        f"<tr>"
+                        f"<td><a href='/reports/{p.name}' download>{p.name}</a></td>"
+                        f"<td>{size} bytes</td>"
+                        f"<td>{__import__('datetime').datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')}</td>"
+                        f"</tr>"
+                    )
+        except Exception as e:
+            rows = [f"<tr><td colspan='3' class='muted'>Error listando reportes: {e}</td></tr>"]
 
-# /rules (UI)
-if not _route_exists_ui("/rules"):
-    @app.get("/rules", response_class=HTMLResponse)
-    def _rules_ui(request: Request, user=Depends(get_current_user_cookie)):
-        try:
-            return templates.TemplateResponse("rules.html", {
-                "request": request,
-                "page_title": "Reglas personalizadas",
-                "current_user": user
-            })
-        except TemplateNotFound:
-            return HTMLResponse("<h1>Reglas</h1><p>Configura tus reglas personalizadas acá.</p>")
+        if not rows:
+            rows = ["<tr><td colspan='3' class='muted'>No hay archivos todavía.</td></tr>"]
+
+        html = f"""<!doctype html>
+<meta charset="utf-8">
+<title>Reportes — AlertTrail</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body{{font-family:system-ui;padding:24px;color:#0f172a}}
+  table{{border-collapse:collapse;width:100%;max-width:900px}}
+  th,td{{border-bottom:1px solid #e2e8f0;padding:8px;text-align:left}}
+  .muted{{color:#64748b}}
+</style>
+<h1>Reportes</h1>
+<p class="muted">Descargá tus archivos generados.</p>
+<table>
+  <thead><tr><th>Archivo</th><th>Tamaño</th><th>Fecha</th></tr></thead>
+  <tbody>{''.join(rows)}</tbody>
+</table>"""
+        return HTMLResponse(html)
 
 # ---- Home/Login/Dashboard ----
 @app.get("/", response_class=HTMLResponse)
@@ -787,7 +825,7 @@ if not _route_exists("/auth/login/web"):
         except Exception:
             pass
         r = RedirectResponse(url="/dashboard", status_code=303)
-        token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.id})
+        token = create_access_token({"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
         issue_access_cookie(r, token)
         return r
 
@@ -906,7 +944,6 @@ def _log_routes():
 
 @app.get("/api/reports/list")
 def api_reports_list():
-    # Lista archivos del directorio REPORTS_DIR para mostrarlos en la UI
     files = []
     try:
         for p in sorted(Path(REPORTS_DIR).glob("*")):
