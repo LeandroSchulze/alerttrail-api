@@ -1,6 +1,100 @@
-@router.get("", response_class=HTMLResponse, response_model=None)
-def admin_payments_page(request: Request, admin = Depends(require_admin)):
-    return request.app.state.templates.TemplateResponse(
-        "admin_payments.html",
-        {"request": request, "page_title": "Pagos | Admin"},
-    )
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ page_title or "Pagos | Admin" }}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div>Pagos — Admin</div>
+  <nav>
+    <a href="/dashboard">Volver al dashboard</a>
+  </nav>
+</header>
+
+<main class="container">
+  <section class="tile">
+    <h2>Resumen de pagos (últimos 30 días)</h2>
+    <div id="totals">
+      Cargando métricas...
+    </div>
+  </section>
+
+  <section class="tile">
+    <h2>Ingresos</h2>
+    <div id="revenue">
+      Cargando datos de ingresos...
+    </div>
+  </section>
+
+  <section class="tile">
+    <h2>Pagos recientes</h2>
+    <p>Por ahora podés consultar el detalle vía la API JSON:
+      <code>/admin/payments/list</code>
+    </p>
+  </section>
+</main>
+
+<script>
+async function loadMetrics() {
+  try {
+    const r = await fetch("/admin/payments/metrics", { credentials: "include" });
+    if (!r.ok) {
+      document.getElementById("totals").innerText = "Error al cargar métricas";
+      document.getElementById("revenue").innerText = "Error al cargar ingresos";
+      return;
+    }
+    const data = await r.json();
+    if (!data.ok) {
+      document.getElementById("totals").innerText = "Sin datos";
+      document.getElementById("revenue").innerText = "Sin datos";
+      return;
+    }
+
+    const t = data.totals || {};
+    const rev = data.revenue || {};
+    const last30 = rev.last_30d || [];
+    const today = rev.today || [];
+
+    document.getElementById("totals").innerHTML = `
+      <ul>
+        <li>Total usuarios: <b>${t.total_users ?? 0}</b></li>
+        <li>PRO activos: <b>${t.pro_active ?? 0}</b></li>
+        <li>PRO que vencen en 7 días: <b>${t.pro_expiring_7d ?? 0}</b></li>
+      </ul>
+    `;
+
+    let last30Html = "";
+    if (last30.length) {
+      last30Html = "<h3>Últimos 30 días</h3><ul>" +
+        last30.map(x => `<li>${x.currency} ${ (x.amount_cents/100).toFixed(2) } (${x.count} pagos)</li>`).join("") +
+        "</ul>";
+    } else {
+      last30Html = "<p>Sin pagos en los últimos 30 días.</p>";
+    }
+
+    let todayHtml = "";
+    if (today.length) {
+      todayHtml = "<h3>Hoy</h3><ul>" +
+        today.map(x => `<li>${x.currency} ${ (x.amount_cents/100).toFixed(2) }</li>`).join("") +
+        "</ul>";
+    }
+
+    const arpu = rev.arpu_30d_usd;
+    const arpuHtml = arpu != null
+      ? `<p>ARPU 30d (USD): <b>${arpu.toFixed(2)}</b></p>`
+      : "";
+
+    document.getElementById("revenue").innerHTML = last30Html + todayHtml + arpuHtml;
+  } catch (e) {
+    document.getElementById("totals").innerText = "Error al cargar métricas";
+    document.getElementById("revenue").innerText = "Error al cargar ingresos";
+  }
+}
+
+loadMetrics();
+</script>
+</body>
+</html>
