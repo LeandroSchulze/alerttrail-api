@@ -1,0 +1,6 @@
+@router.get("", response_class=HTMLResponse, response_model=None)
+def admin_payments_page(request: Request, admin = Depends(require_admin)):
+    return request.app.state.templates.TemplateResponse(
+        "admin_payments.html",
+        {"request": request, "page_title": "Pagos | Admin"},
+    )
