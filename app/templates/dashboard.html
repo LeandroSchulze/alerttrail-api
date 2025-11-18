@@ -1,175 +1,436 @@
 <!doctype html>
 <html lang="{{ (lang or 'es') }}">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Dashboard — AlertTrail</title>
+    <meta charset="utf-8">
+    <title>Dashboard — AlertTrail</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <!-- Estilos base de la app -->
-  <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css">
 
-  <!-- Toast + popups de alertas -->
-  <link rel="stylesheet" href="/static/toast.css">
-  <script src="/static/toast.js" defer></script>
-  <script src="/static/alerts_client.js" defer></script>
+    <style>
+        :root {
+            --at-accent: #2563eb; /* azul claro estilo Tailwind */
+            --at-accent-soft: #eff6ff;
+        }
 
-  <style>
-    /* Pequeños helpers por si el style.css no los tiene */
-    .page { max-width: 1100px; margin: 24px auto; padding: 0 16px; font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif; color:#0f172a; }
-    .heading { font-weight: 800; font-size: 20px; margin: 0 0 8px; }
-    .muted { color:#64748b; }
-    .grid { display:grid; gap:16px; }
-    .grid-2 { grid-template-columns: repeat(2,minmax(0,1fr)); }
-    .grid-3 { grid-template-columns: repeat(3,minmax(0,1fr)); }
-    .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:16px; }
-    .btn { display:inline-block; padding:8px 12px; border-radius:10px; border:1px solid #e2e8f0; background:#fff; color:#0f172a; text-decoration:none; cursor:pointer; }
-    .btn.primary { background:#0ea5e9; color:#fff; border-color:#0ea5e9; }
-    .btn.block { display:inline-flex; align-items:center; gap:8px; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    .section-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-    .chip { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; border:1px solid #c7d2fe; color:#1e3a8a; font-size:12px; font-weight:700; }
-    @media (max-width: 880px){ .grid-2, .grid-3 { grid-template-columns: 1fr; } }
-  </style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f1f5f9;
+            color: #0f172a;
+        }
+
+        .page {
+            max-width: 1120px;
+            margin: 24px auto 40px;
+            padding: 0 16px;
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .card {
+            background: #ffffff;
+            border-radius: 18px;
+            padding: 16px 18px;
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .section {
+            margin-top: 18px;
+        }
+
+        .section-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--at-accent); /* títulos en azul */
+            letter-spacing: 0.02em;
+        }
+
+        .muted {
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+
+        .top-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 12px;
+            font-size: 0.8rem;
+            border-radius: 999px;
+            border: 1px solid #cbd5f5;
+            background: white;
+            color: #0f172a;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: var(--at-accent);
+            border-color: var(--at-accent);
+            color: #ffffff;
+            font-weight: 500;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border-color: transparent;
+            color: #64748b;
+        }
+
+        .btn-outline {
+            background: white;
+            border-color: #e2e8f0;
+        }
+
+        .btn-small {
+            padding: 4px 10px;
+            font-size: 0.78rem;
+        }
+
+        .lang-toggle {
+            display: inline-flex;
+            padding: 2px;
+            border-radius: 999px;
+            background: #e5edff;
+        }
+
+        .lang-toggle a {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            border-radius: 999px;
+            text-decoration: none;
+            color: #1e293b;
+        }
+
+        .lang-toggle a.active {
+            background: #ffffff;
+            color: var(--at-accent);
+            font-weight: 600;
+            box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.1);
+        }
+
+        .welcome-title {
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-bottom: 2px;
+            color: #0f172a;
+        }
+
+        .tag-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            background: var(--at-accent-soft);
+            color: var(--at-accent);
+        }
+
+        .quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .tool-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 6px;
+        }
+
+        .tool-card {
+            border-radius: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            padding: 10px 12px;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 120px;
+        }
+
+        .tool-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+
+        .tool-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--at-accent); /* títulos de herramientas en azul */
+        }
+
+        .tool-body {
+            font-size: 0.8rem;
+            color: #475569;
+            margin-bottom: 8px;
+        }
+
+        .tool-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge-new {
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            background: var(--at-accent-soft);
+            color: var(--at-accent);
+            font-weight: 600;
+        }
+
+        .pill-secondary {
+            font-size: 0.7rem;
+            color: #64748b;
+        }
+
+        .plans-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
+            margin-top: 6px;
+        }
+
+        .plan-name {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        .price {
+            font-weight: 700;
+            color: var(--at-accent);
+        }
+
+        .plan-list {
+            margin: 4px 0 8px;
+            padding-left: 16px;
+            font-size: 0.8rem;
+            color: #475569;
+        }
+
+        .footer-row {
+            margin-top: 18px;
+        }
+
+        .security-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #ecfeff;
+            color: #0f172a;
+            font-size: 0.78rem;
+        }
+
+        .security-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #22c55e;
+        }
+
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: minmax(0, 1fr);
+            }
+            .header-row {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
 </head>
 <body>
 <div class="page">
-
-  <!-- Encabezado -->
-  <div class="card" style="display:flex;align-items:center;justify-content:space-between;">
-    <div>
-      <div class="heading">Bienvenido, {{ (user.name or current_user.email) if user else (current_user.email or 'Usuario') }}</div>
-      <div class="muted">Tu email: {{ current_user.email }}</div>
-    </div>
-    <div class="row">
-      <a class="btn" href="/i18n/set?lang=es">ES</a>
-      <a class="btn" href="/i18n/set?lang=en">EN</a>
-      <a class="btn" href="/logout">Cerrar sesión</a>
-    </div>
-  </div>
-
-  <!-- Estado de cuenta + Acceso rápido -->
-  <div class="grid grid-2" style="margin-top:16px">
-    <div class="card">
-      <div class="section-title">
-        <div class="heading">Estado de tu cuenta</div>
-      </div>
-      <div class="row" style="margin:6px 0">
-        <span class="muted">Plan actual:</span>
-        <strong>{{ (user.plan or 'FREE') if user else 'FREE' }}</strong>
-      </div>
-      <div class="row" style="margin:6px 0">
-        <span class="muted">Rol:</span>
-        <strong>{{ 'Administrador' if is_admin else 'Usuario' }}</strong>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <a class="btn" href="/billing/subscriptions">Cambiar plan</a>
-        <a class="btn" href="/push/enable">Activar notificaciones</a>
-        <a class="btn" href="/orgs/admin">Admin de organización</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="section-title">
-        <div class="heading">Acceso rápido</div>
-      </div>
-      <div class="row">
-        <a class="btn" href="/analysis">Análisis</a>
-        <a class="btn" href="/mail/">Emails</a>
-        <a class="btn" href="/orgs/admin">Admin de organización</a>
-        <a class="btn" href="/stats">Estadísticas</a>
-        <a class="btn" href="/billing/subscriptions">Suscripciones</a>
-      </div>
-    </div>
-  </div>
-
-  <!-- Funciones PRO / EMPRESAS -->
-  <div class="card" style="margin-top:16px">
-    <div class="section-title">
-      <div class="heading">Funciones PRO / EMPRESAS</div>
-    </div>
-    <div class="row">
-      <a class="btn" href="/alerts">Ver alertas</a>
-      <a class="btn" href="/rules">Reglas personalizadas</a>
-      <!-- cambia a una vista dinámica que lista archivos -->
-      <a class="btn" href="/reports_browser">Reportes</a>
-    </div>
-  </div>
-
-  <!-- ✅ NUEVO: Herramientas nuevas -->
-  <div class="card" style="margin-top:16px">
-    <div class="section-title">
-      <div class="heading">Herramientas nuevas</div>
-      <a class="btn" href="/tools">Ver todas</a>
-    </div>
-
-    <div class="grid grid-2">
-      <!-- QR Scan Seguro -->
-      <div class="card">
-        <div class="row" style="justify-content:space-between;align-items:center">
-          <div class="heading" style="font-size:16px">QR Scan Seguro</div>
-          <span class="chip">Nuevo</span>
+    <!-- HEADER SUPERIOR -->
+    <div class="header-row">
+        <div>
+            <div class="welcome-title">
+                {% if user and user.name %}Bienvenido, {{ user.name }}{% else %}Bienvenido a AlertTrail{% endif %}
+            </div>
+            <div class="muted">
+                {% if user and user.email %}
+                    Tu email: {{ user.email }}
+                {% endif %}
+            </div>
         </div>
-        <p class="muted" style="margin:6px 0 10px">
-          Escaneá códigos QR con la cámara o subí una imagen. Si la URL es riesgosa,
-          te avisamos antes de abrirla.
-        </p>
-        <a class="btn" href="/tools/qr-scan">Abrir</a>
-      </div>
-
-      <!-- Analizador de Tickets -->
-      <div class="card">
-        <div class="row" style="justify-content:space-between;align-items:center">
-          <div class="heading" style="font-size:16px">Analizador de Tickets</div>
-          <span class="chip">Nuevo</span>
+        <div class="top-actions">
+            <div class="lang-toggle">
+                <a href="/i18n/set?lang=es&redirect=/dashboard"
+                   class="{% if (lang or 'es') == 'es' %}active{% endif %}">ES</a>
+                <a href="/i18n/set?lang=en&redirect=/dashboard"
+                   class="{% if (lang or 'es') == 'en' %}active{% endif %}">EN</a>
+            </div>
+            <a href="/logout" class="btn btn-outline btn-small">Cerrar sesión</a>
         </div>
-        <p class="muted" style="margin:6px 0 10px">
-          Pegá el texto del ticket para extraer Total, IVA y Fecha, y detectar señales de fraude.
-        </p>
-        <a class="btn" href="/tools/receipt-analyzer">Abrir</a>
-      </div>
     </div>
-  </div>
 
-  <!-- Planes -->
-  <div class="card" style="margin-top:16px">
-    <div class="section-title">
-      <div class="heading">Planes</div>
-      <a class="btn" href="/billing">¿Qué incluye cada plan?</a>
-    </div>
-    <div class="grid grid-2">
-      <div class="card">
-        <div class="heading" style="font-size:16px">PRO — US$ 10 / mes</div>
-        <ul class="muted" style="margin:8px 0 12px 18px">
-          <li>Uso individual o equipo chico</li>
-          <li>Funciones completas del producto</li>
-          <li>Soporte estándar</li>
-        </ul>
-        <a class="btn primary" href="/billing/subscriptions">Elegir PRO</a>
-      </div>
-      <div class="card">
-        <div class="heading" style="font-size:16px">EMPRESAS — US$ 99 / mes</div>
-        <ul class="muted" style="margin:8px 0 12px 18px">
-          <li>25 cuentas incluidas</li>
-          <li>Asientos adicionales: US$ 3/mes por usuario</li>
-          <li>Soporte prioritario</li>
-        </ul>
-        <a class="btn primary" href="/billing/subscriptions">Elegir EMPRESAS</a>
-      </div>
-    </div>
-  </div>
+    <!-- PRIMERA FILA: ESTADO + ACCESO RÁPIDO -->
+    <div class="grid-2">
+        <div class="card">
+            <div class="section-title">Estado de tu cuenta</div>
+            <div class="muted" style="margin-bottom: 8px;">
+                Plan actual:
+                <span class="tag-pill">{{ user.plan or 'FREE' }}</span>
+                &nbsp;&nbsp;Rol:
+                <strong>{{ current_user.role or 'Usuario' }}</strong>
+            </div>
 
-  <!-- Últimos pagos -->
-  <div class="card" style="margin-top:16px">
-    <div class="section-title">
-      <div class="heading">Últimos pagos</div>
-      <a class="btn" href="/payments/history">Ver todo el historial</a>
-    </div>
-    <div class="muted">—</div>
-  </div>
+            {% if security %}
+                <div style="margin-bottom: 10px;">
+                    <div class="security-pill">
+                        <span class="security-dot"></span>
+                        <span>Score de seguridad: <strong>{{ security.score }}</strong>/100 — {{ security.badge }}</span>
+                    </div>
+                    {% if security.factors %}
+                        <div class="muted" style="margin-top: 4px; font-size: 0.75rem;">
+                            {% for f in security.factors %}
+                                • {{ f }}{% if not loop.last %}&nbsp;&nbsp;{% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
 
-  <div class="muted" style="text-align:center;margin:24px 0 12px">
-    Términos y Condiciones · Política de Privacidad · Soporte: info@alerttrail.com
-  </div>
-</div>
-</body>
-</html>
+            <div class="quick-actions" style="margin-top: 10px;">
+                <a href="/billing/subscriptions" class="btn btn-outline btn-small">Cambiar plan</a>
+                <button type="button" class="btn btn-outline btn-small" disabled>Activar notificaciones</button>
+                {% if user.is_org_admin %}
+                    <a href="/org/admin" class="btn btn-outline btn-small">Admin de organización</a>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="section-title">Acceso rápido</div>
+            <div class="quick-actions">
+                <a href="/analysis" class="btn btn-small">Análisis</a>
+                <a href="/mail/" class="btn btn-small">Emails</a>
+                {% if user.is_org_admin %}
+                    <a href="/org/admin" class="btn btn-small">Admin de organización</a>
+                {% endif %}
+                <a href="/stats" class="btn btn-small">Estadísticas</a>
+                <a href="/billing/subscriptions" class="btn btn-small">Suscripciones</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- FUNCIONES PRO / EMPRESAS -->
+    <div class="card section">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="section-title">Funciones PRO / EMPRESAS</div>
+        </div>
+        <div class="quick-actions" style="margin-top: 6px;">
+            <a href="/alerts" class="btn btn-small">Ver alertas</a>
+            <a href="/rules" class="btn btn-small">Reglas personalizadas</a>
+            <a href="/reports" class="btn btn-small">Reportes</a>
+        </div>
+    </div>
+
+    <!-- HERRAMIENTAS NUEVAS: incluye Dark Web + Training -->
+    <div class="card section">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="section-title">Herramientas nuevas</div>
+            <a href="/tools" class="btn btn-ghost btn-small">Ver todas</a>
+        </div>
+
+        <div class="tool-grid">
+            <!-- QR Scan -->
+            <div class="tool-card">
+                <div class="tool-header">
+                    <div class="tool-title">QR Scan Seguro</div>
+                    <span class="badge-new">Nuevo</span>
+                </div>
+                <div class="tool-body">
+                    Escaneá códigos QR con la cámara o subí una imagen.
+                    Si la URL es riesgosa, te avisamos antes de abrirla.
+                </div>
+                <div class="tool-footer">
+                    <a href="/tools/qr" class="btn btn-primary btn-small">Abrir</a>
+                    <span class="pill-secondary">Protección inmediata</span>
+                </div>
+            </div>
+
+            <!-- Analizador de Tickets -->
+            <div class="tool-card">
+                <div class="tool-header">
+                    <div class="tool-title">Analizador de Tickets</div>
+                    <span class="badge-new">Nuevo</span>
+                </div>
+                <div class="tool-body">
+                    Pegá el texto del ticket o factura para extraer Total, IVA y Fecha,
+                    y detectar señales básicas de fraude.
+                </div>
+                <div class="tool-footer">
+                    <a href="/tools/receipt" class="btn btn-primary btn-small">Abrir</a>
+                    <span class="pill-secondary">Ideal para pequeñas empresas</span>
+                </div>
+            </div>
+
+            <!-- Dark Web Radar -->
+            <div class="tool-card">
+                <div class="tool-header">
+                    <div class="tool-title">Dark Web Radar</div>
+                    <span class="badge-new">Nuevo</span>
+                </div>
+                <div class="tool-body">
+                    Verificá si tu email aparece en filtraciones públicas
+                    o bases de datos expuestas en la dark web.
+                </div>
+                <div class="tool-footer">
+                    <a href="/darkweb" class="btn btn-primary btn-small">Abrir</a>
+                    <span class="pill-secondary">Incluido en plan PRO</span>
+                </div>
+            </div>
+
+            <!-- Entrenamiento Anti-Phishing -->
+            <div class="tool-card">
+                <div class="tool-header">
+                    <div class="tool-title">Entrenamiento anti-phishing</div>
+                    <span class="badge-new">Nuevo</span>
+                </div>
+                <div class="tool-body">
+                    Simulaciones cortas para entrenar a tu equipo:
+                    decide si un mensaje es real o una estafa y medí el progreso.
+                </div>
+                <div class="tool-footer">
+                    <a href="/training" class="btn btn-primary btn-small">Comenzar</a>
+                    <span class="pill-secondary">Pensado para equipos</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
