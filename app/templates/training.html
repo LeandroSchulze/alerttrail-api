@@ -1,0 +1,147 @@
+{# app/templates/training.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<main class="container">
+  <header class="topbar">
+    <div>Phishing Training</div>
+    <nav>
+      <a href="/dashboard">Volver al dashboard</a>
+    </nav>
+  </header>
+
+  <section class="tile">
+    <h1>Entrenamiento contra phishing</h1>
+    <p class="muted">
+      Cargá los correos de tu equipo y creá campañas simuladas para entrenarlos a detectar intentos de phishing.
+      En este MVP las campañas se marcan como enviadas de forma simulada (sin envío real de correos).
+    </p>
+  </section>
+
+  <section class="tile" style="margin-top:16px">
+    <h2>Empleados / destinatarios</h2>
+    <form method="post" action="/training/recipients/add" class="row" style="margin-top:8px">
+      <input type="email" name="email" placeholder="empleado@tu-dominio.com" required style="flex:1;max-width:260px">
+      <input type="text" name="name" placeholder="Nombre (opcional)" style="flex:1;max-width:200px;margin-left:6px">
+      <button class="btn primary" type="submit" style="margin-left:6px">Agregar</button>
+    </form>
+
+    {% if recipients %}
+    <table class="table" style="margin-top:12px">
+      <thead>
+        <tr>
+          <th>Correo</th>
+          <th>Nombre</th>
+          <th>Desde</th>
+          <th style="width:90px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recipients %}
+        <tr>
+          <td>{{ r.email }}</td>
+          <td>{{ r.name or "–" }}</td>
+          <td>
+            {% if r.created_at %}
+              {{ r.created_at | datetimeformat if r.created_at is number else r.created_at }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/training/recipients/delete"
+                  onsubmit="return confirm('¿Quitar este destinatario?');">
+              <input type="hidden" name="email" value="{{ r.email }}">
+              <button class="btn" type="submit">Quitar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="margin-top:10px">
+      Todavía no cargaste destinatarios. Agregá algunos correos de tu equipo para poder crear campañas.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="tile" style="margin-top:16px">
+    <h2>Campañas</h2>
+    <form method="post" action="/training/campaigns/create" class="row" style="margin-top:8px">
+      <input type="text" name="name" placeholder="Nombre de la campaña (opcional)" style="flex:1;max-width:260px">
+      <select name="template_id" required style="flex:1;max-width:220px;margin-left:6px">
+        {% for t in templates %}
+        <option value="{{ t.id }}">{{ t.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn primary" type="submit" style="margin-left:6px"
+              {% if not recipients %}disabled{% endif %}>
+        Crear campaña
+      </button>
+    </form>
+    {% if not recipients %}
+    <p class="muted" style="margin-top:6px;font-size:13px">
+      Necesitás al menos un destinatario para crear una campaña.
+    </p>
+    {% endif %}
+
+    {% if campaigns %}
+    <table class="table" style="margin-top:12px">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Plantilla</th>
+          <th>Destinatarios</th>
+          <th>Estado</th>
+          <th>Creada</th>
+          <th>Envío simulado</th>
+          <th style="width:120px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in campaigns %}
+        <tr>
+          <td>{{ c.name }}</td>
+          <td>{{ c.template_id }}</td>
+          <td>{{ (c.recipient_emails | length) if c.recipient_emails else 0 }}</td>
+          <td>
+            {% if c.status == "sent" %}
+              <span class="chip chip-success">Enviada (simulada)</span>
+            {% else %}
+              <span class="chip chip-warning">Creada</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.created_at %}
+              {{ c.created_at | datetimeformat if c.created_at is number else c.created_at }}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if c.sent_at %}
+              {{ c.sent_at | datetimeformat if c.sent_at is number else c.sent_at }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% if c.status != "sent" %}
+            <form method="post" action="/training/campaigns/mark-sent"
+                  onsubmit="return confirm('Marcar esta campaña como enviada (simulada)?');">
+              <input type="hidden" name="campaign_id" value="{{ c.id }}">
+              <button class="btn" type="submit">Marcar enviada</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="margin-top:10px">
+      Todavía no creaste campañas. Usá el formulario de arriba para crear una.
+    </p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
