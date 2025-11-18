@@ -1,8 +1,22 @@
 # app/routers/training.py
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models import User
+from app.security import get_current_user_cookie
 
 router = APIRouter(tags=["training"])
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 BASE_STYLE = """
 :root{
@@ -44,17 +58,65 @@ li{margin-bottom:4px;}
 .option input{margin-top:4px;}
 """
 
-HTML_PAGE = f"""<!doctype html>
+
+def _get_user_plan(request: Request, db: Session) -> str:
+    try:
+        payload = get_current_user_cookie(request)
+    except Exception:
+        return "FREE"
+
+    try:
+        user_id = payload.get("sub")
+        if not user_id:
+            return "FREE"
+        u = db.query(User).filter(User.id == user_id).first()
+        if not u:
+            return "FREE"
+        return (getattr(u, "plan", None) or "FREE").upper()
+    except Exception:
+        return "FREE"
+
+
+@router.get("/training", include_in_schema=False, response_class=HTMLResponse)
+@router.get("/training/", include_in_schema=False, response_class=HTMLResponse)
+def training_page(request: Request, db: Session = Depends(get_db)):
+    plan = _get_user_plan(request, db)
+    pro_like = {"PRO", "BIZ", "EMPRESA", "EMPRESAS", "ENTERPRISE"}
+    is_pro = plan in pro_like
+
+    if is_pro:
+        badge = "Incluido en tu plan PRO / EMPRESAS"
+        intro = (
+            "Módulo de entrenamiento incluido en tu cuenta para ayudar a tu equipo a "
+            "detectar emails y mensajes sospechosos."
+        )
+        state_text = (
+            "Tu organización PRO va a ir recibiendo primero las lecciones completas "
+            "y los reportes por usuario. Esta pantalla es la vista previa del módulo."
+        )
+        cta_label = "Ver tu suscripción"
+    else:
+        badge = "Módulo educativo • Ideal como extra PRO"
+        intro = (
+            "Módulo de entrenamiento para ayudar a tu equipo a detectar emails y "
+            "mensajes sospechosos."
+        )
+        state_text = (
+            "Por ahora es una demo visual. En planes PRO podemos habilitar el "
+            "seguimiento por usuario y reportes de quién necesita más entrenamiento."
+        )
+        cta_label = "Ofrecer como add-on PRO"
+
+    html = f"""<!doctype html>
 <meta charset="utf-8">
 <title>Phishing Training — AlertTrail</title>
 <style>{BASE_STYLE}</style>
 <body>
 <div class="container">
   <div class="card">
-    <div class="badge">Módulo educativo • Ideal como extra PRO</div>
+    <div class="badge">{badge}</div>
     <h1>Phishing Training</h1>
-    <p class="muted">Módulo de entrenamiento para ayudar a tu equipo a detectar
-    emails y mensajes sospechosos.</p>
+    <p class="muted">{intro}</p>
 
     <div class="grid">
       <div>
@@ -66,11 +128,10 @@ HTML_PAGE = f"""<!doctype html>
           <li>Preguntas de opción múltiple con feedback inmediato.</li>
           <li>Certificado interno cuando el usuario completa el módulo.</li>
         </ul>
-        <p class="muted">Por ahora es una demo visual. Más adelante lo podemos conectar
-        a tu base de datos y mostrar estadísticas por organización.</p>
+        <p class="muted">{state_text}</p>
 
         <div class="btn-row">
-          <a href="/billing/subscriptions" class="btn primary">Ofrecer como add-on PRO</a>
+          <a href="/billing/subscriptions" class="btn primary">{cta_label}</a>
           <a href="/dashboard" class="btn secondary">Volver al dashboard</a>
         </div>
       </div>
@@ -94,18 +155,14 @@ HTML_PAGE = f"""<!doctype html>
             <span>Responder al correo pidiendo más información.</span>
           </div>
         </div>
-        <p class="muted" style="margin-top:8px;">En la versión completa, estas respuestas
-        se guardarían por usuario y podrías ver un reporte de quién necesita más
-        entrenamiento.</p>
+        <p class="muted" style="margin-top:8px;">
+          En la versión completa, estas respuestas se guardarían por usuario y podrías
+          ver un reporte de quién necesita más entrenamiento.
+        </p>
       </div>
     </div>
   </div>
 </div>
 </body>
 """
-
-# Cubrimos /training y /training/
-@router.get("/training", include_in_schema=False, response_class=HTMLResponse)
-@router.get("/training/", include_in_schema=False, response_class=HTMLResponse)
-def training_page():
-    return HTMLResponse(HTML_PAGE)
+    return HTMLResponse(html)
