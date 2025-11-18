@@ -1,8 +1,22 @@
 # app/routers/darkweb.py
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models import User
+from app.security import get_current_user_cookie
 
 router = APIRouter(tags=["darkweb"])
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 BASE_STYLE = """
 :root{
@@ -42,16 +56,65 @@ li{margin-bottom:4px;}
 .muted{color:var(--muted);font-size:14px;}
 """
 
-HTML_PAGE = f"""<!doctype html>
+
+def _get_user_plan(request: Request, db: Session) -> str:
+    """
+    Devuelve el plan del usuario actual en MAYÚSCULAS.
+    Si no hay usuario o algo falla, devuelve 'FREE'.
+    """
+    try:
+        payload = get_current_user_cookie(request)
+    except Exception:
+        return "FREE"
+
+    try:
+        user_id = payload.get("sub")
+        if not user_id:
+            return "FREE"
+        u = db.query(User).filter(User.id == user_id).first()
+        if not u:
+            return "FREE"
+        return (getattr(u, "plan", None) or "FREE").upper()
+    except Exception:
+        return "FREE"
+
+
+@router.get("/darkweb", include_in_schema=False, response_class=HTMLResponse)
+@router.get("/darkweb/", include_in_schema=False, response_class=HTMLResponse)
+def darkweb_radar_page(request: Request, db: Session = Depends(get_db)):
+    plan = _get_user_plan(request, db)
+    pro_like = {"PRO", "BIZ", "EMPRESA", "EMPRESAS", "ENTERPRISE"}
+
+    is_pro = plan in pro_like
+
+    if is_pro:
+        badge = "Incluido en tu plan PRO / EMPRESAS"
+        subtitle = "Vista previa del monitor de filtraciones incluido en tu cuenta."
+        state_text = (
+            "Tu cuenta PRO ya está marcada para acceder a este módulo cuando lo "
+            "liberemos. Mientras tanto, podés usar esta pantalla para explicar a tu "
+            "equipo qué hace Dark Web Radar."
+        )
+        cta_label = "Ver tu suscripción"
+    else:
+        badge = "Módulo PRO • Vista previa"
+        subtitle = "Vista previa del monitor de filtraciones para tus emails y dominios."
+        state_text = (
+            "En esta versión solo ves la vista previa. Para activar el monitoreo real "
+            "de filtraciones, pasá a un plan PRO o EMPRESAS."
+        )
+        cta_label = "Ver planes PRO"
+
+    html = f"""<!doctype html>
 <meta charset="utf-8">
 <title>Dark Web Radar — AlertTrail</title>
 <style>{BASE_STYLE}</style>
 <body>
 <div class="container">
   <div class="card">
-    <div class="badge"><span class="dot"></span> Módulo PRO en beta cerrada</div>
+    <div class="badge"><span class="dot"></span> {badge}</div>
     <h1>Dark Web Radar</h1>
-    <p class="muted">Vista previa del monitor de filtraciones para tus emails y dominios.</p>
+    <p class="muted">{subtitle}</p>
 
     <div class="grid">
       <div>
@@ -63,11 +126,10 @@ HTML_PAGE = f"""<!doctype html>
           <li>Alertas cuando se detectan combinaciones email/contraseña filtradas.</li>
           <li>Resumen ejecutivo para que el equipo no técnico entienda el riesgo.</li>
         </ul>
-        <p class="muted">En esta versión solo mostramos la vista previa. El escaneo real
-        se reservará para cuentas PRO y EMPRESAS.</p>
+        <p class="muted">{state_text}</p>
 
         <div class="btn-row">
-          <a href="/billing/subscriptions" class="btn primary">Ver planes PRO</a>
+          <a href="/billing/subscriptions" class="btn primary">{cta_label}</a>
           <a href="/dashboard" class="btn secondary">Volver al dashboard</a>
         </div>
       </div>
@@ -87,17 +149,14 @@ HTML_PAGE = f"""<!doctype html>
           </ul>
         </div>
         <h2 style="margin-top:16px;">Estado actual</h2>
-        <p class="muted">No hay escaneo real en esta versión. Es una demo visual para
-        ayudarte a vender el módulo PRO a tus clientes.</p>
+        <p class="muted">
+          No hay escaneo real en esta versión, pero la integración ya está preparada
+          para activarse primero en cuentas PRO y EMPRESAS.
+        </p>
       </div>
     </div>
   </div>
 </div>
 </body>
 """
-
-# Cubrimos /darkweb y /darkweb/
-@router.get("/darkweb", include_in_schema=False, response_class=HTMLResponse)
-@router.get("/darkweb/", include_in_schema=False, response_class=HTMLResponse)
-def darkweb_radar_page():
-    return HTMLResponse(HTML_PAGE)
+    return HTMLResponse(html)
