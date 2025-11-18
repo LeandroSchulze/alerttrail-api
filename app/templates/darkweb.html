@@ -1,0 +1,132 @@
+{# app/templates/darkweb.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<main class="container">
+  <header class="topbar">
+    <div>Dark Web Radar</div>
+    <nav>
+      <a href="/dashboard">Volver al dashboard</a>
+    </nav>
+  </header>
+
+  <section class="tile">
+    <h1>Dark Web Radar</h1>
+    <p class="muted">
+      Monitoreá correos de tu organización para saber si aparecen en fugas o filtraciones (simuladas en este MVP).
+    </p>
+
+    <form method="post" action="/darkweb/add-email" class="row" style="margin-top:10px">
+      <input type="email" name="email" placeholder="correo@tu-dominio.com" required style="flex:1;max-width:320px">
+      <button class="btn primary" type="submit">Agregar correo</button>
+    </form>
+
+    {% if emails %}
+    <h2 style="margin-top:18px">Correos monitoreados</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Correo</th>
+          <th>Desde</th>
+          <th style="width:90px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in emails %}
+        <tr>
+          <td>{{ e.email }}</td>
+          <td>
+            {% if e.created_at %}
+              {{ e.created_at | datetimeformat if e.created_at is number else e.created_at }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/darkweb/remove-email" onsubmit="return confirm('¿Quitar este correo del monitoreo?');">
+              <input type="hidden" name="email" value="{{ e.email }}">
+              <button class="btn" type="submit">Quitar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="margin-top:12px">Todavía no estás monitoreando ningún correo.</p>
+    {% endif %}
+
+    <form method="post" action="/darkweb/scan" style="margin-top:16px">
+      <button class="btn primary" type="submit" {% if not emails %}disabled{% endif %}>
+        Escanear ahora (simulación)
+      </button>
+      {% if not emails %}
+      <span class="muted" style="margin-left:8px;font-size:13px">
+        Agregá al menos un correo para poder escanear.
+      </span>
+      {% endif %}
+    </form>
+  </section>
+
+  <section class="tile" style="margin-top:18px">
+    <h2>Posibles exposiciones detectadas</h2>
+    {% if exposures %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Correo</th>
+          <th>Brecha</th>
+          <th>Severidad</th>
+          <th>Resumen</th>
+          <th>Fecha</th>
+          <th>Estado</th>
+          <th style="width:110px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for x in exposures %}
+        <tr>
+          <td>{{ x.email }}</td>
+          <td>{{ x.breach }}</td>
+          <td>
+            {% if x.severity == 'high' %}
+              <span class="chip chip-danger">Alta</span>
+            {% elif x.severity == 'medium' %}
+              <span class="chip chip-warning">Media</span>
+            {% else %}
+              <span class="chip">Baja</span>
+            {% endif %}
+          </td>
+          <td>{{ x.summary }}</td>
+          <td>
+            {% if x.breach_date %}
+              {{ x.breach_date | datetimeformat if x.breach_date is number else x.breach_date }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% if x.status == 'seen' %}
+              <span class="chip">Revisada</span>
+            {% else %}
+              <span class="chip chip-info">Nueva</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if x.status != 'seen' %}
+            <form method="post" action="/darkweb/mark-seen">
+              <input type="hidden" name="exposure_id" value="{{ x.id }}">
+              <button class="btn" type="submit">Marcar vista</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Aún no se detectaron exposiciones (o todavía no corriste el escaneo).</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
