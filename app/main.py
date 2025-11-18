@@ -310,7 +310,9 @@ ROUTER_MODULES = [
     "admin", "admin_metrics", "analysis", "auth", "billing",
     "mail", "profile", "push", "promo",
     "diag",
-    "tools",  # Router con QR Scan + Receipt Analyzer (se incluye UNA sola vez)
+    "tools",     # Router con QR Scan + Receipt Analyzer
+    "darkweb",   # NUEVO: Dark Web Radar
+    "training",  # NUEVO: Phishing Training
 ]
 for name in ROUTER_MODULES:
     try:
@@ -480,6 +482,11 @@ if not _route_exists("/mail/"):
         typ, data = imap.uid("search", None, "ALL")
         uids = (data[0] or b"").split() if typ == "OK" else []
         uids = uids[-limit:]
+
+
+Continuando:
+
+```python
         items = []
         for uid in reversed(uids):
             try:
@@ -885,11 +892,46 @@ def dashboard(request: Request, db= Depends(get_db)):
         "is_org_admin": is_org_admin,
         "org_id": getattr(user, "org_id", None),
     }
+
+    # --- Security score opcional (no rompe nada si el template no lo usa) ---
+    try:
+        plan = (getattr(user, "plan", None) or "FREE").upper()
+    except Exception:
+        plan = "FREE"
+    security_score = 50
+    security_factors = []
+    if plan == "PRO":
+        security_score += 20
+        security_factors.append("Plan PRO activo")
+    elif plan in ("BIZ", "EMPRESA", "ENTERPRISE"):
+        security_score += 25
+        security_factors.append("Plan de empresa / BIZ")
+    if getattr(user, "email_verified", False):
+        security_score += 10
+        security_factors.append("Email verificado")
+    security_score = max(0, min(100, security_score))
+    if security_score >= 85:
+        security_badge = "Excelente"
+    elif security_score >= 70:
+        security_badge = "Buena"
+    elif security_score >= 50:
+        security_badge = "Media"
+    else:
+        security_badge = "Baja"
+    security = {"score": security_score, "badge": security_badge, "factors": security_factors}
+
     try:
         lang = (request.cookies.get("lang") or "es").lower()[:2]
         resp = templates.TemplateResponse(
             "dashboard.html",
-            {"request": request, "current_user": user, "user": user_ctx, "is_admin": is_admin, "lang": lang}
+            {
+                "request": request,
+                "current_user": user,
+                "user": user_ctx,
+                "is_admin": is_admin,
+                "lang": lang,
+                "security": security,  # NUEVO campo opcional
+            }
         )
         resp.headers["Cache-Control"] = "no-store"; return resp
     except TemplateNotFound:
