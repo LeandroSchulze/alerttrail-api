@@ -482,11 +482,6 @@ if not _route_exists("/mail/"):
         typ, data = imap.uid("search", None, "ALL")
         uids = (data[0] or b"").split() if typ == "OK" else []
         uids = uids[-limit:]
-
-
-Continuando:
-
-```python
         items = []
         for uid in reversed(uids):
             try:
