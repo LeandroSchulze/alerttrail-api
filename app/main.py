@@ -266,7 +266,7 @@ from app.security import get_current_user_cookie as _guard_get_user
 
 @app.middleware("http")
 async def pro_expiry_guard(request: Request, call_next):
-    PATHS_GUARD = ("/dashboard", "/auth/me", "/billing", "/alerts", "/rules", "/reports", "/mail")
+    PATHS_GUARD = ("/dashboard", "/auth/me", "/billing", "/alerts", "/rules", "/reports", "/mail", "/audit")
     fast_path = request.url.path
     if not any(fast_path.startswith(p) for p in PATHS_GUARD):
         return await call_next(request)
@@ -311,9 +311,9 @@ ROUTER_MODULES = [
     "mail", "profile", "push", "promo",
     "diag",
     "tools",     # Router con QR Scan + Receipt Analyzer
-    "darkweb",   # NUEVO: Dark Web Radar (lo dejamos para más adelante)
+    "darkweb",   # NUEVO: Dark Web Radar
     "training",  # NUEVO: Phishing Training
-    "mail_ai",   # NUEVO: Analizador IA de phishing para correos
+    "audit",     # NUEVO: Auditoría de Ciberseguridad
 ]
 for name in ROUTER_MODULES:
     try:
@@ -483,7 +483,6 @@ if not _route_exists("/mail/"):
         typ, data = imap.uid("search", None, "ALL")
         uids = (data[0] or b"").split() if typ == "OK" else []
         uids = uids[-limit:]
-
         items = []
         for uid in reversed(uids):
             try:
