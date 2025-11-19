@@ -1,436 +1,375 @@
 <!doctype html>
-<html lang="{{ (lang or 'es') }}">
+<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
 <head>
-    <meta charset="utf-8">
-    <title>Dashboard — AlertTrail</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8">
+  <title>Dashboard — AlertTrail</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: radial-gradient(circle at top, #0f172a 0, #020617 50%, #020617 100%);
+      font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+      color: #e5f3ff;
+    }
+    .page {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px 32px;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .page-title {
+      font-size: 1.6rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .page-subtitle {
+      margin-top: 4px;
+      font-size: 0.95rem;
+      color: #94a3b8;
+    }
+    .pill-plan {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      border: 1px solid rgba(148,163,184,.5);
+      background: rgba(15,23,42,.85);
+      font-size: 0.8rem;
+      color: #e2f3ff;
+    }
+    .pill-plan-label {
+      font-weight: 500;
+      color: #94a3b8;
+    }
+    .pill-plan-badge {
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #0ea5e9;
+      color: #0b1120;
+      font-weight: 600;
+    }
+    .pill-plan-free {
+      background: transparent;
+      border: 1px solid rgba(148,163,184,.9);
+      color: #e2e8f0;
+    }
 
-    <link rel="stylesheet" href="/static/style.css">
+    .grid-main {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr);
+      gap: 16px;
+      margin-top: 8px;
+    }
+    .grid-secondary {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr);
+      gap: 16px;
+      margin-top: 16px;
+    }
+    @media (max-width: 880px) {
+      .grid-main,
+      .grid-secondary {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .page-header {
+        flex-direction: column;
+      }
+    }
 
-    <style>
-        :root {
-            --at-accent: #2563eb; /* azul claro estilo Tailwind */
-            --at-accent-soft: #eff6ff;
-        }
+    .card {
+      background: rgba(15,23,42,.96);
+      border-radius: 18px;
+      border: 1px solid rgba(148,163,184,.5);
+      padding: 18px 18px 16px;
+      box-shadow: 0 18px 45px rgba(15,23,42,.7);
+    }
+    .card-soft {
+      background: rgba(15,23,42,.9);
+    }
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .heading {
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .muted {
+      font-size: 0.86rem;
+      color: #94a3b8;
+    }
 
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #f1f5f9;
-            color: #0f172a;
-        }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .chip {
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,.5);
+      padding: 3px 9px;
+      font-size: 0.78rem;
+      color: #cbd5f5;
+      background: rgba(15,23,42,.95);
+    }
 
-        .page {
-            max-width: 1120px;
-            margin: 24px auto 40px;
-            padding: 0 16px;
-        }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+      border: 1px solid rgba(148,163,184,.6);
+      background: rgba(15,23,42,1);
+      color: #e5e7eb;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background .15s ease, transform .05s ease, border-color .15s ease;
+    }
+    .btn:hover {
+      background: rgba(30,64,175,.75);
+      border-color: #38bdf8;
+      transform: translateY(-1px);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg,#0ea5e9,#22c55e);
+      border: none;
+      color: #0b1120;
+      font-weight: 600;
+    }
+    .btn-primary:hover {
+      filter: brightness(1.04);
+      transform: translateY(-1px);
+    }
+    .btn-ghost {
+      background: transparent;
+      border-style: dashed;
+      border-color: rgba(148,163,184,.6);
+    }
 
-        .header-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 16px;
-            align-items: center;
-            margin-bottom: 16px;
-        }
+    .list-compact {
+      margin: 4px 0 0;
+      padding-left: 18px;
+      color: #94a3b8;
+      font-size: 0.84rem;
+    }
+    .list-compact li + li {
+      margin-top: 2px;
+    }
 
-        .card {
-            background: #ffffff;
-            border-radius: 18px;
-            padding: 16px 18px;
-            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
-            border: 1px solid rgba(148, 163, 184, 0.25);
-        }
+    .small-label {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: #64748b;
+    }
+    .payments-empty {
+      font-size: 0.85rem;
+      color: #94a3b8;
+      margin-top: 6px;
+    }
 
-        .grid-2 {
-            display: grid;
-            grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-            gap: 16px;
-            margin-bottom: 16px;
-        }
-
-        .section {
-            margin-top: 18px;
-        }
-
-        .section-title {
-            font-size: 0.95rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--at-accent); /* títulos en azul */
-            letter-spacing: 0.02em;
-        }
-
-        .muted {
-            font-size: 0.85rem;
-            color: #64748b;
-        }
-
-        .top-actions {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 6px 12px;
-            font-size: 0.8rem;
-            border-radius: 999px;
-            border: 1px solid #cbd5f5;
-            background: white;
-            color: #0f172a;
-            cursor: pointer;
-            text-decoration: none;
-            white-space: nowrap;
-        }
-
-        .btn-primary {
-            background: var(--at-accent);
-            border-color: var(--at-accent);
-            color: #ffffff;
-            font-weight: 500;
-        }
-
-        .btn-ghost {
-            background: transparent;
-            border-color: transparent;
-            color: #64748b;
-        }
-
-        .btn-outline {
-            background: white;
-            border-color: #e2e8f0;
-        }
-
-        .btn-small {
-            padding: 4px 10px;
-            font-size: 0.78rem;
-        }
-
-        .lang-toggle {
-            display: inline-flex;
-            padding: 2px;
-            border-radius: 999px;
-            background: #e5edff;
-        }
-
-        .lang-toggle a {
-            padding: 4px 10px;
-            font-size: 0.75rem;
-            border-radius: 999px;
-            text-decoration: none;
-            color: #1e293b;
-        }
-
-        .lang-toggle a.active {
-            background: #ffffff;
-            color: var(--at-accent);
-            font-weight: 600;
-            box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.1);
-        }
-
-        .welcome-title {
-            font-size: 1.05rem;
-            font-weight: 600;
-            margin-bottom: 2px;
-            color: #0f172a;
-        }
-
-        .tag-pill {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            background: var(--at-accent-soft);
-            color: var(--at-accent);
-        }
-
-        .quick-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 6px;
-        }
-
-        .tool-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 12px;
-            margin-top: 6px;
-        }
-
-        .tool-card {
-            border-radius: 16px;
-            border: 1px solid rgba(148, 163, 184, 0.35);
-            padding: 10px 12px;
-            background: #ffffff;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            min-height: 120px;
-        }
-
-        .tool-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 6px;
-            margin-bottom: 4px;
-        }
-
-        .tool-title {
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: var(--at-accent); /* títulos de herramientas en azul */
-        }
-
-        .tool-body {
-            font-size: 0.8rem;
-            color: #475569;
-            margin-bottom: 8px;
-        }
-
-        .tool-footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .badge-new {
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 0.7rem;
-            background: var(--at-accent-soft);
-            color: var(--at-accent);
-            font-weight: 600;
-        }
-
-        .pill-secondary {
-            font-size: 0.7rem;
-            color: #64748b;
-        }
-
-        .plans-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 12px;
-            margin-top: 6px;
-        }
-
-        .plan-name {
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: #0f172a;
-        }
-
-        .price {
-            font-weight: 700;
-            color: var(--at-accent);
-        }
-
-        .plan-list {
-            margin: 4px 0 8px;
-            padding-left: 16px;
-            font-size: 0.8rem;
-            color: #475569;
-        }
-
-        .footer-row {
-            margin-top: 18px;
-        }
-
-        .security-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 999px;
-            background: #ecfeff;
-            color: #0f172a;
-            font-size: 0.78rem;
-        }
-
-        .security-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 999px;
-            background: #22c55e;
-        }
-
-        @media (max-width: 768px) {
-            .grid-2 {
-                grid-template-columns: minmax(0, 1fr);
-            }
-            .header-row {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-        }
-    </style>
+    .footer {
+      margin-top: 18px;
+      font-size: 0.78rem;
+      color: #64748b;
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
-<div class="page">
-    <!-- HEADER SUPERIOR -->
-    <div class="header-row">
-        <div>
-            <div class="welcome-title">
-                {% if user and user.name %}Bienvenido, {{ user.name }}{% else %}Bienvenido a AlertTrail{% endif %}
-            </div>
-            <div class="muted">
-                {% if user and user.email %}
-                    Tu email: {{ user.email }}
-                {% endif %}
-            </div>
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">
+          Hola, {{ user.name or current_user.name or current_user.email or "Usuario" }} 👋
         </div>
-        <div class="top-actions">
-            <div class="lang-toggle">
-                <a href="/i18n/set?lang=es&redirect=/dashboard"
-                   class="{% if (lang or 'es') == 'es' %}active{% endif %}">ES</a>
-                <a href="/i18n/set?lang=en&redirect=/dashboard"
-                   class="{% if (lang or 'es') == 'en' %}active{% endif %}">EN</a>
-            </div>
-            <a href="/logout" class="btn btn-outline btn-small">Cerrar sesión</a>
+        <div class="page-subtitle">
+          Tu cockpit de seguridad para correos, accesos y reportes.
         </div>
+      </div>
+      <div>
+        {% set plan = (user.plan or current_user.plan or "FREE")|upper %}
+        <div class="pill-plan">
+          <span class="pill-plan-label">Plan</span>
+          {% if plan in ["PRO", "BIZ", "EMPRESA", "EMPRESAS", "ENTERPRISE"] or user.is_pro or current_user.is_pro %}
+            <span class="pill-plan-badge">{{ plan }}</span>
+          {% else %}
+            <span class="pill-plan-badge pill-plan-free">{{ plan }}</span>
+          {% endif %}
+        </div>
+        <div class="page-subtitle" style="margin-top:6px;">
+          {{ current_user.email or user.email }}
+        </div>
+      </div>
     </div>
 
-    <!-- PRIMERA FILA: ESTADO + ACCESO RÁPIDO -->
-    <div class="grid-2">
-        <div class="card">
-            <div class="section-title">Estado de tu cuenta</div>
-            <div class="muted" style="margin-bottom: 8px;">
-                Plan actual:
-                <span class="tag-pill">{{ user.plan or 'FREE' }}</span>
-                &nbsp;&nbsp;Rol:
-                <strong>{{ current_user.role or 'Usuario' }}</strong>
-            </div>
-
-            {% if security %}
-                <div style="margin-bottom: 10px;">
-                    <div class="security-pill">
-                        <span class="security-dot"></span>
-                        <span>Score de seguridad: <strong>{{ security.score }}</strong>/100 — {{ security.badge }}</span>
-                    </div>
-                    {% if security.factors %}
-                        <div class="muted" style="margin-top: 4px; font-size: 0.75rem;">
-                            {% for f in security.factors %}
-                                • {{ f }}{% if not loop.last %}&nbsp;&nbsp;{% endif %}
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
-            {% endif %}
-
-            <div class="quick-actions" style="margin-top: 10px;">
-                <a href="/billing/subscriptions" class="btn btn-outline btn-small">Cambiar plan</a>
-                <button type="button" class="btn btn-outline btn-small" disabled>Activar notificaciones</button>
-                {% if user.is_org_admin %}
-                    <a href="/org/admin" class="btn btn-outline btn-small">Admin de organización</a>
-                {% endif %}
-            </div>
+    <!-- Bloque principal -->
+    <div class="grid-main">
+      <!-- Estado de cuenta + accesos rápidos -->
+      <div class="card">
+        <div class="section-title">
+          <div>
+            <div class="heading">Estado de tu cuenta</div>
+            <p class="muted">
+              Acceso rápido a los módulos principales de AlertTrail.
+            </p>
+          </div>
         </div>
 
-        <div class="card">
-            <div class="section-title">Acceso rápido</div>
-            <div class="quick-actions">
-                <a href="/analysis" class="btn btn-small">Análisis</a>
-                <a href="/mail/" class="btn btn-small">Emails</a>
-                {% if user.is_org_admin %}
-                    <a href="/org/admin" class="btn btn-small">Admin de organización</a>
-                {% endif %}
-                <a href="/stats" class="btn btn-small">Estadísticas</a>
-                <a href="/billing/subscriptions" class="btn btn-small">Suscripciones</a>
-            </div>
+        <div class="chips">
+          <span class="chip">Log scanner</span>
+          <span class="chip">Mail scanner</span>
+          <span class="chip">Reportes PDF</span>
         </div>
+
+        <div class="btn-row" style="margin-top:12px;">
+          <a class="btn-primary" href="/analysis">Ir al Log Scanner</a>
+          <a class="btn" href="/mail/">Scanner de correos</a>
+          <a class="btn" href="/reports_browser">Reportes guardados</a>
+        </div>
+
+        <ul class="list-compact">
+          <li>Subí archivos de logs y generá reportes en segundos.</li>
+          <li>Conectá una casilla IMAP para revisar correos sospechosos.</li>
+        </ul>
+      </div>
+
+      <!-- Funciones PRO / Empresas: incluye Auditoría -->
+      <div class="card card-soft">
+        <div class="section-title">
+          <div>
+            <div class="heading">Funciones PRO / Empresas</div>
+            <p class="muted">
+              Extras pensados para reducir el riesgo y sumar visibilidad.
+            </p>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <a class="btn" href="/alerts">Ver alertas</a>
+          <a class="btn" href="/rules">Reglas personalizadas</a>
+          <a class="btn" href="/reports_browser">Reportes</a>
+          <!-- NUEVO: Auditoría de ciberseguridad -->
+          <a class="btn btn-primary" href="/audit">Auditoría de ciberseguridad</a>
+        </div>
+
+        <ul class="list-compact">
+          <li>Auditoría manual asistida por IA (solo PRO / BIZ / Admin).</li>
+          <li>Te contactamos por mail con un checklist concreto de mejoras.</li>
+        </ul>
+      </div>
     </div>
 
-    <!-- FUNCIONES PRO / EMPRESAS -->
-    <div class="card section">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div class="section-title">Funciones PRO / EMPRESAS</div>
+    <!-- Herramientas rápidas / nuevas -->
+    <div class="grid-secondary">
+      <!-- Herramientas rápidas -->
+      <div class="card card-soft">
+        <div class="section-title">
+          <div>
+            <div class="heading">Herramientas rápidas</div>
+            <p class="muted">
+              Todo lo que usás todos los días, a un click.
+            </p>
+          </div>
         </div>
-        <div class="quick-actions" style="margin-top: 6px;">
-            <a href="/alerts" class="btn btn-small">Ver alertas</a>
-            <a href="/rules" class="btn btn-small">Reglas personalizadas</a>
-            <a href="/reports" class="btn btn-small">Reportes</a>
+
+        <div class="btn-row">
+          <a class="btn" href="/analysis">Analizar logs</a>
+          <a class="btn" href="/mail/">Revisar correos</a>
         </div>
+      </div>
+
+      <!-- Herramientas nuevas (QR + Tickets) -->
+      <div class="card card-soft">
+        <div class="section-title">
+          <div>
+            <div class="heading">Herramientas nuevas</div>
+            <p class="muted">
+              Experimentos de AlertTrail para simplificar tu día a día.
+            </p>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <a class="btn" href="/tools/qr-scan">QR Scan Seguro</a>
+          <a class="btn" href="/tools/receipt-analyzer">Analizador de Tickets</a>
+        </div>
+
+        <ul class="list-compact">
+          <li>Verificá links de códigos QR antes de abrirlos.</li>
+          <li>Extraé info básica de tickets / comprobantes.</li>
+        </ul>
+      </div>
     </div>
 
-    <!-- HERRAMIENTAS NUEVAS: incluye Dark Web + Training -->
-    <div class="card section">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div class="section-title">Herramientas nuevas</div>
-            <a href="/tools" class="btn btn-ghost btn-small">Ver todas</a>
+    <!-- Planes y pagos -->
+    <div class="grid-secondary">
+      <!-- Planes y facturación -->
+      <div class="card">
+        <div class="section-title">
+          <div>
+            <div class="heading">Planes y facturación</div>
+            <p class="muted">
+              Consulta tu suscripción y gestión de organización.
+            </p>
+          </div>
         </div>
 
-        <div class="tool-grid">
-            <!-- QR Scan -->
-            <div class="tool-card">
-                <div class="tool-header">
-                    <div class="tool-title">QR Scan Seguro</div>
-                    <span class="badge-new">Nuevo</span>
-                </div>
-                <div class="tool-body">
-                    Escaneá códigos QR con la cámara o subí una imagen.
-                    Si la URL es riesgosa, te avisamos antes de abrirla.
-                </div>
-                <div class="tool-footer">
-                    <a href="/tools/qr" class="btn btn-primary btn-small">Abrir</a>
-                    <span class="pill-secondary">Protección inmediata</span>
-                </div>
-            </div>
-
-            <!-- Analizador de Tickets -->
-            <div class="tool-card">
-                <div class="tool-header">
-                    <div class="tool-title">Analizador de Tickets</div>
-                    <span class="badge-new">Nuevo</span>
-                </div>
-                <div class="tool-body">
-                    Pegá el texto del ticket o factura para extraer Total, IVA y Fecha,
-                    y detectar señales básicas de fraude.
-                </div>
-                <div class="tool-footer">
-                    <a href="/tools/receipt" class="btn btn-primary btn-small">Abrir</a>
-                    <span class="pill-secondary">Ideal para pequeñas empresas</span>
-                </div>
-            </div>
-
-            <!-- Dark Web Radar -->
-            <div class="tool-card">
-                <div class="tool-header">
-                    <div class="tool-title">Dark Web Radar</div>
-                    <span class="badge-new">Nuevo</span>
-                </div>
-                <div class="tool-body">
-                    Verificá si tu email aparece en filtraciones públicas
-                    o bases de datos expuestas en la dark web.
-                </div>
-                <div class="tool-footer">
-                    <a href="/darkweb" class="btn btn-primary btn-small">Abrir</a>
-                    <span class="pill-secondary">Incluido en plan PRO</span>
-                </div>
-            </div>
-
-            <!-- Entrenamiento Anti-Phishing -->
-            <div class="tool-card">
-                <div class="tool-header">
-                    <div class="tool-title">Entrenamiento anti-phishing</div>
-                    <span class="badge-new">Nuevo</span>
-                </div>
-                <div class="tool-body">
-                    Simulaciones cortas para entrenar a tu equipo:
-                    decide si un mensaje es real o una estafa y medí el progreso.
-                </div>
-                <div class="tool-footer">
-                    <a href="/training" class="btn btn-primary btn-small">Comenzar</a>
-                    <span class="pill-secondary">Pensado para equipos</span>
-                </div>
-            </div>
+        <div class="btn-row">
+          <a class="btn-primary" href="/billing/subscriptions">Ver mi suscripción</a>
+          {% if user.is_org_admin or is_admin %}
+            <a class="btn" href="/orgs/admin">Panel de organización</a>
+          {% endif %}
         </div>
+
+        <ul class="list-compact">
+          <li>Cambia de plan, actualiza tarjeta y ve el próximo ciclo.</li>
+          <li>Invita miembros de tu equipo y gestioná accesos.</li>
+        </ul>
+      </div>
+
+      <!-- Últimos pagos -->
+      <div class="card card-soft">
+        <div class="section-title">
+          <div>
+            <div class="heading">Últimos pagos</div>
+            <p class="muted">
+              Historial de cobros y facturas asociadas a tu cuenta.
+            </p>
+          </div>
+        </div>
+
+        <a class="btn" href="/payments/history">Ver historial de pagos</a>
+        <p class="payments-empty">
+          Si todavía no tenés pagos registrados, esta sección va a estar vacía.
+        </p>
+      </div>
     </div>
 
+    <div class="footer">
+      AlertTrail · Protección de correos y accesos, sin complicarte la vida.
+    </div>
+  </div>
+</body>
+</html>
