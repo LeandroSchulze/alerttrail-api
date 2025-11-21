@@ -1,269 +1,217 @@
-# app/routers/audit.py
-
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from jinja2 import TemplateNotFound
-from pathlib import Path
-from typing import Optional
+from fastapi import APIRouter, Request, Form, Depends
+from fastapi.responses import HTMLResponse
 import os
-import json
-from datetime import datetime
-import smtplib
-from email.message import EmailMessage
+from typing import Any
 
 from app.security import get_current_user_cookie
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
-# Templates (mismo esquema que main.py)
-TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
-
-# Archivo local de respaldo por si el mail falla o no hay SMTP
-DATA_DIR = Path(os.getenv("DATA_DIR", "/var/data"))
-AUDIT_FILE = DATA_DIR / "audit_requests.json"
+AUDIT_EMAIL_TO = os.getenv("AUDIT_REQUEST_EMAIL", "info.alerttrail@gmail.com")
 
 
-def _ensure_data_dir() -> None:
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        print("[audit] WARN no pude crear DATA_DIR:", e)
-
-
-def _append_audit_record(record: dict) -> None:
-    _ensure_data_dir()
-    existing = []
-    if AUDIT_FILE.exists():
-        try:
-            existing = json.loads(AUDIT_FILE.read_text(encoding="utf-8"))
-            if not isinstance(existing, list):
-                existing = []
-        except Exception:
-            existing = []
-    existing.append(record)
-    try:
-        AUDIT_FILE.write_text(
-            json.dumps(existing, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except Exception as e:
-        print("[audit] WARN no pude escribir audit_requests.json:", e)
-
-
-def _is_pro_user(user) -> bool:
-    try:
-        plan = (getattr(user, "plan", None) or "").upper()
-    except Exception:
-        plan = "FREE"
-
-    # Plan PRO / BIZ / Empresa / Enterprise
-    if plan in {"PRO", "BIZ", "EMPRESA", "EMPRESAS", "ENTERPRISE"}:
-        return True
-
-    # Flag is_pro en la DB
-    if getattr(user, "is_pro", False):
-        return True
-
-    # Admin siempre puede pedir auditoría
-    if getattr(user, "is_admin", False) or getattr(user, "is_superuser", False):
-        return True
-
-    return False
-
-
-def _send_audit_email(subject: str, body: str, to_email: Optional[str] = None) -> bool:
-    """
-    Envía el mail usando SMTP_* si están configuradas.
-    Si falta algo de SMTP, no rompe nada: solo devuelve False.
-    """
-    host = os.getenv("SMTP_HOST")
-    port = int(os.getenv("SMTP_PORT", "587") or 587)
-    user = os.getenv("SMTP_USER")
-    password = os.getenv("SMTP_PASS")
-    use_tls = (os.getenv("SMTP_TLS", "1").lower() in ("1", "true", "yes", "on"))
-    to_addr = to_email or os.getenv("AUDIT_REQUEST_TO", "info.alerttrail@gmail.com")
-
-    if not host or not user or not password:
-        print("[audit] SMTP no configurado, guardo solo en archivo.")
-        return False
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = user
-    msg["To"] = to_addr
-    msg.set_content(body)
-
-    try:
-        with smtplib.SMTP(host, port, timeout=20) as s:
-            if use_tls:
-                s.starttls()
-            s.login(user, password)
-            s.send_message(msg)
-        print("[audit] Email de auditoría enviado OK a", to_addr)
-        return True
-    except Exception as e:
-        print("[audit] ERROR enviando email:", e)
-        return False
+def _get_user_email(user: Any) -> str:
+    if user is None:
+        return ""
+    if isinstance(user, dict):
+        return str(user.get("email") or "")
+    return str(getattr(user, "email", "") or "")
 
 
 @router.get("/", response_class=HTMLResponse)
-def audit_form(request: Request, user=Depends(get_current_user_cookie)):
-    """
-    Página principal de Auditoría de Ciberseguridad.
-    - Si NO es PRO: muestra un upsell para que se pase a PRO.
-    - Si es PRO (o admin): muestra el formulario.
-    """
-    is_pro = _is_pro_user(user)
-    plan = (getattr(user, "plan", None) or "FREE").upper()
-
-    ctx = {
-        "request": request,
-        "current_user": user,
-        "user": user,
-        "is_pro": is_pro,
-        "plan": plan,
-        "sent": request.query_params.get("ok") == "1",
-    }
-
-    try:
-        return templates.TemplateResponse("audit.html", ctx)
-    except TemplateNotFound:
-        # Fallback sencillo si falta el template
-        if not is_pro:
-            html = f"""<!doctype html><meta charset="utf-8">
-            <title>Auditoría de Ciberseguridad - AlertTrail</title>
-            <div style="font-family:system-ui;padding:24px;max-width:720px;margin:0 auto;color:#0f172a">
-              <h1>Auditoría de Ciberseguridad</h1>
-              <p style="color:#64748b">
-                La auditoría personalizada está disponible para cuentas <b>PRO</b> o superiores.
-              </p>
-              <p>Tu plan actual: <b>{plan}</b>.</p>
-              <a href="/billing/subscriptions"
-                 style="display:inline-block;margin-top:12px;padding:8px 12px;border-radius:999px;
-                        background:#0ea5e9;color:#fff;text-decoration:none">
-                 Ver planes y activar PRO
-              </a>
-            </div>"""
-            return HTMLResponse(html)
-
-        html = f"""<!doctype html><meta charset="utf-8">
-        <title>Auditoría de Ciberseguridad - AlertTrail</title>
-        <div style="font-family:system-ui;padding:24px;max-width:720px;margin:0 auto;color:#0f172a">
-          <h1>Auditoría de Ciberseguridad</h1>
-          <p style="color:#64748b">
-            Completá el formulario y te contactamos por mail con los próximos pasos.
+def audit_landing(request: Request, user=Depends(get_current_user_cookie)) -> HTMLResponse:
+    user_email = _get_user_email(user)
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auditoría de ciberseguridad — AlertTrail</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body {{ background: var(--bg); }}
+    .audit-page {{ max-width: 960px; margin: 32px auto; padding: 0 16px 40px; }}
+    .audit-grid {{ display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }}
+    .audit-section-title {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }}
+    .audit-section-title h1 {{ font-size: 26px; margin:0; }}
+    .pill-pro {{ display:inline-flex; align-items:center; padding:2px 10px; border-radius:999px;
+                 font-size:11px; font-weight:600; background:#dbeafe; color:#1d4ed8; }}
+    .audit-muted {{ color: var(--muted); font-size:14px; }}
+    .audit-card-title {{ font-size:18px; font-weight:600; margin-bottom:4px; }}
+    .audit-list {{ margin:8px 0 0 18px; padding:0; color:var(--muted); font-size:14px; }}
+    .audit-list li {{ margin-bottom:4px; }}
+    .audit-label {{ font-size:13px; font-weight:500; color:#0f172a; margin-bottom:4px; }}
+    .audit-input, .audit-textarea, .audit-select {{
+        width:100%; border-radius:10px; border:1px solid var(--border);
+        padding:8px 10px; font:inherit; color:var(--text); background:#fff;
+    }}
+    .audit-textarea {{ min-height:90px; resize:vertical; }}
+    .audit-input:focus, .audit-textarea:focus, .audit-select:focus {{
+        outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);
+    }}
+    .audit-row {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }}
+    .audit-help {{ font-size:12px; color:var(--muted); margin-top:4px; }}
+    @media (max-width: 880px) {{
+        .audit-grid {{ grid-template-columns: minmax(0,1fr); }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="audit-page">
+    <div class="card">
+      <div class="audit-section-title">
+        <h1>Auditoría de ciberseguridad</h1>
+        <span class="pill-pro">Servicio extra para cuentas PRO / Empresas</span>
+      </div>
+      <p class="audit-muted">
+        Te ayudamos a revisar tu entorno (correos, accesos, configuraciones básicas) y te entregamos
+        un checklist accionable con los próximos pasos para reducir riesgos.
+      </p>
+      <div class="audit-grid" style="margin-top:16px">
+        <div>
+          <div class="audit-card-title">¿Qué incluye esta auditoría?</div>
+          <ul class="audit-list">
+            <li>Revisión de cómo usás AlertTrail (logs, correo, alertas) y recomendaciones rápidas.</li>
+            <li>Chequeo básico de buenas prácticas: contraseñas, 2FA, accesos compartidos.</li>
+            <li>Ideas de mejoras para tus correos e infraestructura actual (en lenguaje no técnico).</li>
+            <li>1 sesión de revisión por videollamada o email (a acordar según tu disponibilidad).</li>
+          </ul>
+          <p class="audit-help" style="margin-top:10px">
+            La auditoría es manual, hecha por una persona real, asistida por IA y herramientas de AlertTrail.
           </p>
-          <form method="post" action="/audit/request" style="display:grid;gap:8px;margin-top:16px">
-            <label>Nombre completo
-              <input name="full_name" type="text" required
-                     value="{getattr(user, 'name', '') or getattr(user, 'email', '')}"
-                     style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5">
-            </label>
-            <label>Email de contacto
-              <input name="contact_email" type="email" required
-                     value="{getattr(user, 'email', '')}"
-                     style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5">
-            </label>
-            <label>Empresa / Proyecto
-              <input name="company" type="text"
-                     style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5">
-            </label>
-            <label>Sitio web (opcional)
-              <input name="website" type="text"
-                     style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5">
-            </label>
-            <label>Tamaño del equipo (aprox.)
-              <select name="team_size"
-                      style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5">
-                <option value="1-5">1-5</option>
-                <option value="6-20">6-20</option>
-                <option value="21-50">21-50</option>
-                <option value="51-200">51-200</option>
-                <option value="200+">200+</option>
+        </div>
+        <div>
+          <div class="audit-card-title">Solicitar una auditoría</div>
+          <p class="audit-muted">Completá este formulario y te vamos a responder por mail con la propuesta.</p>
+          <form method="post" action="/audit/request" style="display:grid;gap:10px;margin-top:8px">
+            <div>
+              <div class="audit-label">Tu nombre y organización</div>
+              <input class="audit-input" name="who" placeholder="Ej: Laura — Estudio Contable XYZ" required>
+            </div>
+            <div>
+              <div class="audit-label">Correo de contacto</div>
+              <input class="audit-input" type="email" name="contact_email" placeholder="tucorreo@dominio.com" value="{user_email}" required>
+              <div class="audit-help">Usamos este correo para enviarte la propuesta y coordinar la auditoría.</div>
+            </div>
+            <div>
+              <div class="audit-label">Qué te gustaría revisar</div>
+              <textarea class="audit-textarea" name="scope" placeholder="Ej: Correos sospechosos que recibe el equipo comercial, accesos a paneles de administración, logs del servidor, etc."></textarea>
+            </div>
+            <div>
+              <div class="audit-label">Tamaño aproximado del equipo</div>
+              <select class="audit-select" name="team_size">
+                <option value="1-5">1–5 personas</option>
+                <option value="6-20">6–20 personas</option>
+                <option value="21-50">21–50 personas</option>
+                <option value="51-200">51–200 personas</option>
+                <option value="200+">Más de 200</option>
               </select>
-            </label>
-            <label>¿En qué te gustaría que nos enfoquemos?
-              <textarea name="focus" rows="3"
-                        style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5"
-                        placeholder="Ej: correos sospechosos, accesos remotos, backups, etc."></textarea>
-            </label>
-            <label>Mensaje adicional (opcional)
-              <textarea name="message" rows="4"
-                        style="width:100%;padding:8px;border-radius:8px;border:1px solid #cbd5f5"></textarea>
-            </label>
-            <button type="submit"
-                    style="margin-top:8px;padding:10px 16px;border:none;border-radius:999px;
-                           background:#0ea5e9;color:#fff;font-weight:600;cursor:pointer">
-              Enviar solicitud
-            </button>
+            </div>
+            <div>
+              <div class="audit-label">Comentarios adicionales (opcional)</div>
+              <textarea class="audit-textarea" name="notes" placeholder="Links, dominios, sistemas internos, horarios preferidos, etc."></textarea>
+            </div>
+            <div class="audit-row">
+              <button class="btn" type="submit">Enviar solicitud</button>
+              <a href="/dashboard" class="btn secondary">Volver al dashboard</a>
+            </div>
+            <p class="audit-help">
+              Precio estimado: te vamos a pasar una propuesta especial para cuentas PRO, mucho más económica
+              que una auditoría tradicional del mercado.
+            </p>
           </form>
-        </div>"""
-        return HTMLResponse(html)
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 
-@router.post("/request")
+@router.post("/request", response_class=HTMLResponse)
 def audit_request(
     request: Request,
-    full_name: str = Form(...),
+    who: str = Form(...),
     contact_email: str = Form(...),
-    company: str = Form(""),
-    website: str = Form(""),
+    scope: str = Form(""),
     team_size: str = Form(""),
-    focus: str = Form(""),
-    message: str = Form(""),
+    notes: str = Form(""),
     user=Depends(get_current_user_cookie),
-):
-    """
-    Recibe la solicitud de auditoría y la manda por mail + la guarda en un archivo local.
-    """
-    if not _is_pro_user(user):
-        raise HTTPException(
-            status_code=403,
-            detail="La auditoría está disponible solo para cuentas PRO o superiores.",
-        )
-
-    record = {
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "user_id": getattr(user, "id", None),
-        "user_email": getattr(user, "email", None),
-        "user_name": getattr(user, "name", None),
-        "full_name": full_name,
-        "contact_email": contact_email,
-        "company": company,
-        "website": website,
-        "team_size": team_size,
-        "focus": focus,
-        "message": message,
-        "plan": (getattr(user, "plan", None) or "FREE"),
-    }
-
-    # Guardamos primero en archivo como backup
-    _append_audit_record(record)
-
-    # Intentamos enviar mail
+) -> HTMLResponse:
+    user_email = _get_user_email(user)
+    subject = "Nueva solicitud de auditoría — AlertTrail"
     body_lines = [
-        "Nueva solicitud de Auditoría de Ciberseguridad desde AlertTrail:",
+        f"Solicitante: {who}",
+        f"Correo de contacto: {contact_email}",
+        f"Tamaño del equipo: {team_size}",
         "",
-        f"Usuario: {record['user_name'] or record['user_email']}",
-        f"Plan: {record['plan']}",
-        f"Nombre completo: {full_name}",
-        f"Email de contacto: {contact_email}",
-        f"Empresa / Proyecto: {company or '-'}",
-        f"Sitio web: {website or '-'}",
-        f"Tamaño de equipo: {team_size or '-'}",
+        "Alcance deseado:",
+        scope or "(sin detalle)",
         "",
-        "Enfoque principal:",
-        focus or "-",
+        "Comentarios adicionales:",
+        notes or "(sin comentarios)",
         "",
-        "Mensaje adicional:",
-        message or "-",
-        "",
-        f"Timestamp: {record['ts']}",
+        f"Usuario autenticado en AlertTrail: {user_email or 'N/D'}",
     ]
-    body = "\n".join(body_lines)
-    _send_audit_email("Nueva solicitud de auditoría AlertTrail", body)
+    plain = "\n".join(body_lines)
+    html_body = "<br>".join(line.replace(" ", "&nbsp;") for line in body_lines)
 
-    # Volvemos a la pantalla principal con un pequeño OK
-    return RedirectResponse(url="/audit?ok=1", status_code=303)
+    send_ok = True
+    error_msg = ""
+    try:
+        from app.mailer import send_email
+        send_email(AUDIT_EMAIL_TO, subject, plain, html_body)
+    except Exception as e:
+        send_ok = False
+        error_msg = str(e)
+
+    status_text = "¡Solicitud enviada!" if send_ok else "Recibimos tu solicitud (con advertencia)"
+    extra_msg = (
+        "Te vamos a responder a ese correo con la propuesta y próximos pasos."
+        if send_ok
+        else "No pudimos enviar el correo automáticamente. Copiá el texto de abajo y mandalo a info.alerttrail@gmail.com."
+    )
+
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auditoría de ciberseguridad — AlertTrail</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body {{ background: var(--bg); }}
+    .audit-page {{ max-width: 720px; margin: 32px auto; padding: 0 16px 40px; }}
+    .audit-muted {{ color: var(--muted); font-size:14px; }}
+    pre {{
+      background:#0f172a0d;
+      border-radius:12px;
+      padding:12px 14px;
+      font-size:12px;
+      overflow-x:auto;
+      border:1px solid var(--border);
+      white-space:pre-wrap;
+    }}
+  </style>
+</head>
+<body>
+  <div class="audit-page">
+    <div class="card">
+      <h1 style="font-size:24px;margin:0 0 8px">{status_text}</h1>
+      <p class="audit-muted">
+        Gracias, <b>{who}</b>. Registramos tu interés en una auditoría de ciberseguridad.
+      </p>
+      <p class="audit-muted">
+        Vamos a escribirte a <b>{contact_email}</b>. {extra_msg}
+      </p>
+      {"<p class='audit-muted' style='margin-top:12px'><b>Detalle enviado:</b></p><pre>"+plain+"</pre>" if not send_ok else ""}
+      {"<p class='audit-muted' style='margin-top:12px;color:#b91c1c'>Error técnico: "+error_msg+"</p>" if not send_ok else ""}
+      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+        <a href="/dashboard" class="btn">Volver al dashboard</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
