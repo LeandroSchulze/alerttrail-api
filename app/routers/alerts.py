@@ -141,23 +141,35 @@ def create_alert(
 
 # 3) unread-count
 @router.get("/unread-count")
-def unread_count(request: Request, db= Depends(get_db)):
-    user = get_current_user_cookie(request, db)
+def unread_count(
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user_cookie),
+):
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
     uid = _uid(user)
+    if not uid:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
     count = db.query(Alert).filter(Alert.user_id == uid, Alert.is_read == False).count()
     return {"count": int(count)}
 
+
 # 4) Página HTML del Centro de Alertas
 @router.get("", response_class=HTMLResponse)
-def alerts_page(request: Request, db= Depends(get_db)):
+def alerts_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user_cookie),
+):
     # Sólo para asegurar columnas si cae aquí primero
     _ensure_mail_alerts_auth_columns(db)
-    user = get_current_user_cookie(request, db)
+
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
+
     return templates.TemplateResponse("alerts.html", {"request": request, "user": user})
+
 
 # 5) API de listado con filtros (para la tabla)
 @router.get("/list", response_class=JSONResponse)
@@ -168,32 +180,41 @@ def alerts_list(
     status: Optional[str] = Query(None, description="pending|ack"),
     days: Optional[int] = Query(7, description="últimos N días"),
     limit: int = Query(500, ge=1, le=1000),
-    db= Depends(get_db),
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user_cookie),
 ):
-    user = get_current_user_cookie(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="No autenticado")
     uid = _uid(user)
+    if not uid:
+        raise HTTPException(status_code=401, detail="No autenticado")
 
-    _ensure_mail_alerts_auth_columns(db)
+    # Si tenés Alert como modelo ORM global, usamos ese
+    if Alert is not None and not isinstance(Alert, type):
+        raise RuntimeError("Alert mal definido")
 
-    # Modelo inline compatible
-    Base = declarative_base()
-    class MailAlert(Base):
-        __tablename__ = "mail_alerts"
-        id = Column(Integer, primary_key=True)
-        user_id = Column(Integer, index=True, nullable=False)
-        subject = Column(Text, default="")
-        sender = Column(String, default="")
-        from_email = Column(String, default="")
-        snippet = Column(Text, default="")
-        score = Column(Integer, default=0)
-        link = Column(String, default="/mail/scanner")
-        is_read = Column(Boolean, default=False)
-        created_at = Column(DateTime, default=dt.datetime.utcnow)
-        spf_status = Column(String(16), default="")
-        dkim_status = Column(String(16), default="")
-        dmarc_status = Column(String(16), default="")
+    # Si Alert viene de app.models lo usamos directo;
+    # si no, definimos un modelo inline compatible
+    if Alert.__module__.startswith("app.models"):
+        MailAlert = Alert
+    else:
+        # Modelo inline compatible
+        Base = declarative_base()
+        class MailAlert(Base):
+            __tablename__ = "mail_alerts"
+            id = Column(Integer, primary_key=True)
+            user_id = Column(Integer, index=True, nullable=False)
+            subject = Column(Text, default="")
+            sender = Column(String, default="")
+            from_email = Column(String, default="")
+            snippet = Column(Text, default="")
+            score = Column(Integer, default=0)
+            link = Column(String, default="/mail/scanner")
+            is_read = Column(Boolean, default=False)
+            created_at = Column(DateTime, default=dt.datetime.utcnow)
+            spf_status = Column(String(16), default="")
+            dkim_status = Column(String(16), default="")
+            dmarc_status = Column(String(16), default="")
 
     query = db.query(MailAlert).filter(MailAlert.user_id == uid)
 
@@ -205,28 +226,16 @@ def alerts_list(
         want_read = (status == "ack")
         query = query.filter(MailAlert.is_read == want_read)
 
-    if sev in ("high", "medium", "low"):
-        if sev == "high":
-            query = query.filter(MailAlert.score >= 70)
-        elif sev == "medium":
-            query = query.filter(MailAlert.score >= 40, MailAlert.score < 70)
-        else:
-            query = query.filter(MailAlert.score < 40)
-
     if q:
         like = f"%{q}%"
         query = query.filter(
-            (MailAlert.subject.ilike(like)) |
-            (MailAlert.from_email.ilike(like)) |
-            (MailAlert.sender.ilike(like)) |
-            (MailAlert.snippet.ilike(like))
+            (MailAlert.subject.ilike(like))
+            | (MailAlert.snippet.ilike(like))
+            | (MailAlert.sender.ilike(like))
+            | (MailAlert.from_email.ilike(like))
         )
 
-    rows = (
-        query.order_by(MailAlert.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    rows = query.order_by(MailAlert.id.desc()).limit(limit).all()
 
     items = []
     for r in rows:
@@ -257,18 +266,17 @@ def alerts_list(
             "from_email": from_addr,
             "snippet": (r.snippet or getattr(r, "reason", "") or "")[:5000],
             "score": int(getattr(r, "score", 0) or 0),
-            "link": getattr(r, "link", "/mail/scanner") or "/mail/scanner",
-            "state": ("ack" if getattr(r, "is_read", False) else "pending"),
+            "link": r.link or "/mail/scanner",
+            "is_read": bool(r.is_read),
             "created_at": created_iso,
-            "auth": {
-                "overall": overall,
-                "spf": {"status": spf},
-                "dkim": {"status": dkim},
-                "dmarc": {"status": dmarc},
-            },
+            "auth_overall": overall,
+            "spf_status": spf,
+            "dkim_status": dkim,
+            "dmarc_status": dmarc,
         })
 
-    return {"items": items, "total": len(items)}
+    return {"ok": True, "items": items}
+
 
 # 6) PUSH HTTP (crea alerta + semáforo)
 ALERT_PUSH_TOKEN = (os.getenv("ALERT_PUSH_TOKEN") or "").strip()
