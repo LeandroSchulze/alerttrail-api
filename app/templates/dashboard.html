@@ -8,9 +8,12 @@
     body {
       margin: 0;
       padding: 0;
-      background: radial-gradient(circle at top, #0f172a 0, #020617 50%, #020617 100%);
+      background:
+        radial-gradient(circle at top, rgba(56,189,248,0.20) 0, transparent 55%),
+        radial-gradient(circle at bottom, rgba(59,130,246,0.18) 0, transparent 60%),
+        #e0f2fe;
       font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
-      color: #e5f3ff;
+      color: #0f172a;
     }
     .page {
       max-width: 1100px;
@@ -32,7 +35,7 @@
     .page-subtitle {
       margin-top: 4px;
       font-size: 0.95rem;
-      color: #94a3b8;
+      color: #64748b;
     }
     .pill-plan {
       display: inline-flex;
@@ -40,31 +43,31 @@
       gap: 6px;
       border-radius: 999px;
       padding: 4px 10px;
-      border: 1px solid rgba(148,163,184,.5);
-      background: rgba(15,23,42,.85);
+      border: 1px solid #bae6fd;
+      background: rgba(191,219,254,0.9);
       font-size: 0.8rem;
-      color: #e2f3ff;
+      color: #0f172a;
     }
     .pill-plan-label {
       font-weight: 500;
-      color: #94a3b8;
+      color: #0f172a;
     }
     .pill-plan-badge {
       border-radius: 999px;
       padding: 2px 8px;
-      background: #0ea5e9;
+      background: linear-gradient(135deg,#0ea5e9,#22c55e);
       color: #0b1120;
       font-weight: 600;
     }
     .pill-plan-free {
       background: transparent;
       border: 1px solid rgba(148,163,184,.9);
-      color: #e2e8f0;
+      color: #0f172a;
     }
 
     .grid-main {
       display: grid;
-      grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr);
+      grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.4fr);
       gap: 16px;
       margin-top: 8px;
     }
@@ -85,14 +88,14 @@
     }
 
     .card {
-      background: rgba(15,23,42,.96);
+      background: #ffffff;
       border-radius: 18px;
-      border: 1px solid rgba(148,163,184,.5);
+      border: 1px solid #dbeafe;
       padding: 18px 18px 16px;
-      box-shadow: 0 18px 45px rgba(15,23,42,.7);
+      box-shadow: 0 18px 40px rgba(15,23,42,0.08);
     }
     .card-soft {
-      background: rgba(15,23,42,.9);
+      background: #e0f2fe;
     }
     .section-title {
       display: flex;
@@ -281,25 +284,8 @@
       </div>
     </div>
 
-    <!-- Herramientas rápidas / nuevas -->
+    <!-- Herramientas nuevas -->
     <div class="grid-secondary">
-      <!-- Herramientas rápidas -->
-      <div class="card card-soft">
-        <div class="section-title">
-          <div>
-            <div class="heading">Herramientas rápidas</div>
-            <p class="muted">
-              Todo lo que usás todos los días, a un click.
-            </p>
-          </div>
-        </div>
-
-        <div class="btn-row">
-          <a class="btn" href="/analysis">Analizar logs</a>
-          <a class="btn" href="/mail/">Revisar correos</a>
-        </div>
-      </div>
-
       <!-- Herramientas nuevas (QR + Tickets) -->
       <div class="card card-soft">
         <div class="section-title">
