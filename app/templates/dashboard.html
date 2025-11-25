@@ -5,78 +5,110 @@
   <title>Dashboard — AlertTrail</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
+    :root {
+      --bg-main: #e0f2fe;
+      --bg-gradient-top: rgba(56,189,248,0.18);
+      --bg-gradient-bottom: rgba(59,130,246,0.18);
+      --card-bg: rgba(255,255,255,0.95);
+      --card-soft-bg: rgba(224,242,254,0.95);
+      --card-border: #dbeafe;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --pill-border: #bae6fd;
+      --pill-bg: rgba(191,219,254,0.9);
+      --primary-grad-from: #0ea5e9;
+      --primary-grad-to: #22c55e;
+      --primary-border: #0ea5e9;
+      --chip-bg: rgba(239,246,255,0.9);
+      --chip-border: #bfdbfe;
+      --chip-text: #1e293b;
+      --btn-dark-bg: #0f172a;
+      --btn-dark-text: #e5e7eb;
+    }
+
     body {
       margin: 0;
       padding: 0;
       background:
-        radial-gradient(circle at top, rgba(56,189,248,0.20) 0, transparent 55%),
-        radial-gradient(circle at bottom, rgba(59,130,246,0.18) 0, transparent 60%),
-        #e0f2fe;
+        radial-gradient(circle at top, var(--bg-gradient-top) 0, transparent 55%),
+        radial-gradient(circle at bottom, var(--bg-gradient-bottom) 0, transparent 60%),
+        var(--bg-main);
       font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
-      color: #0f172a;
+      color: var(--text-main);
     }
+
     .page {
       max-width: 1100px;
-      margin: 24px auto;
+      margin: 24px auto 32px;
       padding: 0 16px 32px;
     }
+
     .page-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       gap: 16px;
-      margin-bottom: 12px;
+      margin-bottom: 16px;
     }
+
     .page-title {
-      font-size: 1.6rem;
-      font-weight: 650;
-      letter-spacing: -0.02em;
+      font-size: 1.7rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
     }
+
     .page-subtitle {
       margin-top: 4px;
       font-size: 0.95rem;
-      color: #64748b;
+      color: var(--text-muted);
     }
+
     .pill-plan {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       border-radius: 999px;
-      padding: 4px 10px;
-      border: 1px solid #bae6fd;
-      background: rgba(191,219,254,0.9);
+      padding: 5px 12px;
+      border: 1px solid var(--pill-border);
+      background: var(--pill-bg);
       font-size: 0.8rem;
-      color: #0f172a;
+      color: var(--text-main);
+      box-shadow: 0 8px 16px rgba(15,23,42,0.08);
     }
+
     .pill-plan-label {
       font-weight: 500;
-      color: #0f172a;
+      color: var(--text-main);
     }
+
     .pill-plan-badge {
       border-radius: 999px;
       padding: 2px 8px;
-      background: linear-gradient(135deg,#0ea5e9,#22c55e);
+      background: linear-gradient(135deg,var(--primary-grad-from),var(--primary-grad-to));
       color: #0b1120;
       font-weight: 600;
     }
+
     .pill-plan-free {
       background: transparent;
-      border: 1px solid rgba(148,163,184,.9);
-      color: #0f172a;
+      border: 1px solid rgba(148,163,184,.8);
+      color: var(--text-main);
     }
 
     .grid-main {
       display: grid;
       grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.4fr);
-      gap: 16px;
+      gap: 18px;
       margin-top: 8px;
     }
+
     .grid-secondary {
       display: grid;
       grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr);
-      gap: 16px;
-      margin-top: 16px;
+      gap: 18px;
+      margin-top: 18px;
     }
+
     @media (max-width: 880px) {
       .grid-main,
       .grid-secondary {
@@ -88,94 +120,112 @@
     }
 
     .card {
-      background: #ffffff;
-      border-radius: 18px;
-      border: 1px solid #dbeafe;
-      padding: 18px 18px 16px;
-      box-shadow: 0 18px 40px rgba(15,23,42,0.08);
+      background: var(--card-bg);
+      border-radius: 22px;
+      border: 1px solid var(--card-border);
+      padding: 20px 20px 18px;
+      box-shadow: 0 24px 48px rgba(15,23,42,0.10);
+      backdrop-filter: blur(10px);
     }
+
     .card-soft {
-      background: #e0f2fe;
+      background: var(--card-soft-bg);
     }
+
     .section-title {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 10px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
+
     .heading {
-      font-size: 1.05rem;
+      font-size: 1.06rem;
       font-weight: 600;
       letter-spacing: -0.01em;
     }
+
     .muted {
       font-size: 0.86rem;
       color: #94a3b8;
+      margin: 2px 0 0;
     }
 
     .chips {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
-      margin-top: 6px;
+      margin-top: 8px;
     }
+
     .chip {
       border-radius: 999px;
-      border: 1px solid rgba(148,163,184,.5);
-      padding: 3px 9px;
+      border: 1px solid var(--chip-border);
+      padding: 4px 10px;
       font-size: 0.78rem;
-      color: #cbd5f5;
-      background: rgba(15,23,42,.95);
+      color: var(--chip-text);
+      background: var(--chip-bg);
+      font-weight: 500;
     }
 
     .btn-row {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-top: 10px;
+      margin-top: 12px;
     }
+
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       border-radius: 999px;
-      padding: 6px 12px;
+      padding: 7px 14px;
       font-size: 0.85rem;
-      border: 1px solid rgba(148,163,184,.6);
-      background: rgba(15,23,42,1);
-      color: #e5e7eb;
+      border: 1px solid rgba(148,163,184,.7);
+      background: #ffffff;
+      color: var(--text-main);
       text-decoration: none;
       cursor: pointer;
-      transition: background .15s ease, transform .05s ease, border-color .15s ease;
+      transition: background .15s ease, transform .05s ease, border-color .15s ease, box-shadow .15s ease;
+      box-shadow: 0 6px 14px rgba(15,23,42,0.08);
     }
+
     .btn:hover {
-      background: rgba(30,64,175,.75);
-      border-color: #38bdf8;
+      background: #eff6ff;
+      border-color: var(--primary-border);
       transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(15,23,42,0.12);
     }
+
     .btn-primary {
-      background: linear-gradient(135deg,#0ea5e9,#22c55e);
+      background: linear-gradient(135deg,var(--primary-grad-from),var(--primary-grad-to));
       border: none;
       color: #0b1120;
       font-weight: 600;
     }
+
     .btn-primary:hover {
-      filter: brightness(1.04);
+      filter: brightness(1.05);
       transform: translateY(-1px);
+      box-shadow: 0 12px 24px rgba(45,212,191,0.35);
     }
+
     .btn-ghost {
       background: transparent;
       border-style: dashed;
-      border-color: rgba(148,163,184,.6);
+      border-color: rgba(148,163,184,.7);
+      box-shadow: none;
     }
 
     .list-compact {
-      margin: 4px 0 0;
+      margin: 6px 0 0;
       padding-left: 18px;
       color: #94a3b8;
       font-size: 0.84rem;
     }
+
     .list-compact li + li {
       margin-top: 2px;
     }
@@ -186,14 +236,15 @@
       letter-spacing: .1em;
       color: #64748b;
     }
+
     .payments-empty {
       font-size: 0.85rem;
       color: #94a3b8;
-      margin-top: 6px;
+      margin-top: 8px;
     }
 
     .footer {
-      margin-top: 18px;
+      margin-top: 22px;
       font-size: 0.78rem;
       color: #64748b;
       text-align: center;
@@ -246,8 +297,8 @@
           <span class="chip">Reportes PDF</span>
         </div>
 
-        <div class="btn-row" style="margin-top:12px;">
-          <a class="btn-primary" href="/analysis">Ir al Log Scanner</a>
+        <div class="btn-row">
+          <a class="btn btn-primary" href="/analysis">Ir al Log Scanner</a>
           <a class="btn" href="/mail/">Scanner de correos</a>
           <a class="btn" href="/reports_browser">Reportes guardados</a>
         </div>
@@ -323,7 +374,7 @@
         </div>
 
         <div class="btn-row">
-          <a class="btn-primary" href="/billing/subscriptions">Ver mi suscripción</a>
+          <a class="btn btn-primary" href="/billing/subscriptions">Ver mi suscripción</a>
           {% if user.is_org_admin or is_admin %}
             <a class="btn" href="/orgs/admin">Panel de organización</a>
           {% endif %}
