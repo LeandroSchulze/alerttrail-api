@@ -12,86 +12,138 @@ from app.models import User
 from app.security import get_current_user_cookie
 
 
+def _now_utc_naive() -> datetime:
+    """UTC naive (sin tzinfo) para comparar con campos DateTime naive de la DB."""
+    return datetime.utcnow()
+
+
+def _now_utc_aware() -> datetime:
+    """UTC aware para respuestas/errores."""
+    return datetime.now(timezone.utc)
+
+
 def _to_aware(dt: Union[datetime, str, None]) -> Optional[datetime]:
     """Normaliza una fecha a datetime aware en UTC.
-    Acepta datetime naive/aware o strings ISO (con o sin 'Z')."""
+
+    Acepta:
+      - datetime naive  -> la considera UTC
+      - datetime aware -> la normaliza a UTC
+      - str ISO 8601   -> intenta parsear
+      - None           -> None
+    """
     if dt is None:
         return None
     if isinstance(dt, datetime):
         if dt.tzinfo is None:
+            # Lo tratamos como UTC naive
             return dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     if isinstance(dt, str):
-        value = dt.strip()
-        if not value:
-            return None
         try:
-            # Soportar timestamps estilo 2025-01-01T00:00:00Z
-            if value.endswith("Z"):
-                value = value[:-1] + "+00:00"
-            dt_parsed = datetime.fromisoformat(value)
-            if dt_parsed.tzinfo is None:
-                dt_parsed = dt_parsed.replace(tzinfo=timezone.utc)
-            else:
-                dt_parsed = dt_parsed.astimezone(timezone.utc)
-            return dt_parsed
+            parsed = datetime.fromisoformat(dt)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
         except Exception:
             return None
     return None
 
 
-def _now_utc_aware() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _now_naive_utc() -> datetime:
-    # El modelo User usa datetime.utcnow() en varios helpers,
-    # así que mantenemos el mismo estilo (naive en UTC).
-    return datetime.utcnow()
-
-
 def normalize_user_plan(db: Session, user: User) -> User:
-    """Normaliza campos de trial / PRO para un usuario.
+    """Normaliza campos de PRO / trial de un usuario.
 
-    - Migra campos legacy (trial_days / plan_expires) hacia trial_expires_at.
-    - Marca had_trial cuando el trial ya terminó.
-    - Deja pro_expires_at listo para ser usado por activate_user_pro.
-    - Es segura de llamar muchas veces y no lanza excepciones fatales.
+    Objetivos:
+      - Unificar el uso de:
+          user.plan
+          user.pro_expires_at
+          user.pro_source ("subscription" | "trial" | None)
+          user.trial_started_at
+          user.trial_expires_at
+          user.had_trial (bool)
+      - Si el trial terminó y no hay PRO pago activo -> baja a FREE.
+      - Mantener compatibilidad con campos legacy (plan_expires).
+
+    Es segura de llamar muchas veces; solo hace commit si hay cambios.
     """
     changed = False
-    now = _now_naive_utc()
+    now_naive = _now_utc_naive()
 
-    # --- Trial ---
-    trial_started = getattr(user, "trial_started_at", None)
-    trial_expires = getattr(user, "trial_expires_at", None)
+    # --------- Campos base ----------
+    plan_raw = (getattr(user, "plan", None) or "FREE").upper()
+    pro_expires_at: Optional[datetime] = getattr(user, "pro_expires_at", None)
+    pro_source: Optional[str] = getattr(user, "pro_source", None)
+    trial_started_at: Optional[datetime] = getattr(user, "trial_started_at", None)
+    trial_expires_at: Optional[datetime] = getattr(user, "trial_expires_at", None)
+    had_trial: bool = bool(getattr(user, "had_trial", False))
 
-    # Campos "legacy" que pueden existir en algunas DB / versiones
-    legacy_trial_days = getattr(user, "trial_days", None)
-    legacy_plan_expires = getattr(user, "plan_expires", None)
+    # Campos legacy
+    legacy_plan_expires: Optional[datetime] = getattr(user, "plan_expires", None)
 
-    # Si no tenemos trial_expires_at pero sí datos legacy, los usamos
-    if not trial_expires:
-        if trial_started and isinstance(legacy_trial_days, int):
-            trial_expires = trial_started + timedelta(days=legacy_trial_days)
-            user.trial_expires_at = trial_expires
-            changed = True
-        elif isinstance(legacy_plan_expires, datetime):
-            # En versiones viejas se usaba plan_expires para el trial
-            user.trial_expires_at = legacy_plan_expires
-            trial_expires = legacy_plan_expires
-            changed = True
+    # --------- Migra datos legacy (plan_expires) ----------
+    if not pro_expires_at and legacy_plan_expires and plan_raw in {"PRO", "BIZ", "EMPRESA", "EMPRESAS"}:
+        pro_expires_at = legacy_plan_expires
+        user.pro_expires_at = legacy_plan_expires
+        if not pro_source:
+            user.pro_source = "subscription"
+            pro_source = "subscription"
+        changed = True
 
-    # Si el trial ya terminó y no está marcado
-    if trial_expires and trial_expires <= now and not getattr(user, "had_trial", False):
+    # --------- Trial expirado ----------
+    if trial_expires_at and trial_expires_at <= now_naive and not had_trial:
         user.had_trial = True
+        had_trial = True
         changed = True
 
-    # --- PRO desde suscripción ---
-    pro_expires = user.pro_expires_at
-    if pro_expires and isinstance(pro_expires, datetime) and pro_expires.tzinfo is not None:
-        # Guardamos naive en UTC para ser consistentes con el resto del modelo
-        user.pro_expires_at = pro_expires.astimezone(timezone.utc).replace(tzinfo=None)
-        changed = True
+    # --------- Determinar si tiene PRO pago activo ----------
+    has_paid_pro = False
+    if pro_expires_at and pro_expires_at > now_naive and (pro_source or "").lower() == "subscription":
+        has_paid_pro = True
+
+    # --------- Determinar si está en trial PRO activo ----------
+    has_trial_pro = False
+    if trial_expires_at and trial_expires_at > now_naive and (pro_source or "").lower() == "trial":
+        has_trial_pro = True
+
+    # --------- Ajustar plan según estado ----------
+    if has_paid_pro:
+        if plan_raw in {"FREE", "", "BASIC"}:
+            user.plan = "PRO"
+            changed = True
+    else:
+        if has_trial_pro:
+            if plan_raw in {"FREE", "", "BASIC"}:
+                user.plan = "PRO"
+                changed = True
+        else:
+            # No PRO pago ni trial activo
+            if plan_raw in {"PRO", "BIZ", "EMPRESA", "EMPRESAS"}:
+                user.plan = "FREE"
+                if hasattr(user, "is_pro"):
+                    user.is_pro = False
+                changed = True
+
+            if trial_expires_at and trial_expires_at <= now_naive and not had_trial:
+                user.had_trial = True
+                had_trial = True
+                changed = True
+
+    # --------- Sincronizar flag is_pro ----------
+    flag_is_pro = has_paid_pro or has_trial_pro
+    if hasattr(user, "is_pro"):
+        if bool(user.is_pro) != flag_is_pro:
+            user.is_pro = flag_is_pro
+            changed = True
+
+    # --------- Limpieza opcional de plan_expires ----------
+    if legacy_plan_expires and legacy_plan_expires <= now_naive and not has_paid_pro:
+        try:
+            from sqlalchemy import inspect as _sa_inspect
+            insp = _sa_inspect(user)
+            if "plan_expires" in insp.attrs:
+                user.plan_expires = None
+                changed = True
+        except Exception:
+            pass
 
     if changed:
         try:
@@ -114,78 +166,73 @@ def activate_user_pro(
 
     - Si ya tenía PRO con pro_expires_at en el futuro, suma `months` desde esa fecha.
     - Si estaba vencido o sin PRO, arranca `months` desde ahora.
-    - Marca `pro_source` y `had_trial` si corresponde.
+
+    Normalmente se llama desde el webhook de Mercado Pago.
     """
+    try:
+        from app.services.subscription import activate_pro, PLAN_PRO_DAYS_DEFAULT
+    except Exception:
+        activate_pro = None
+        PLAN_PRO_DAYS_DEFAULT = 30  # fallback
+
     user: Optional[User] = db.query(User).filter(User.id == user_id).first()
     if not user:
         return None
 
-    now = _now_naive_utc()
-    base = user.pro_expires_at or now
-    if base < now:
-        base = now
+    now = _now_utc_naive()
 
-    # Meses aproximados en días (30): suficiente para uso general.
-    extra_days = 30 * max(1, int(months))
-    new_expiry = base + timedelta(days=extra_days)
+    if activate_pro and source == "subscription":
+        days = months * int(PLAN_PRO_DAYS_DEFAULT or 30)
+        ok = activate_pro(db, user_id=user_id, payment_id=None, days=days)
+        if not ok:
+            return None
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+    else:
+        current_expiry = getattr(user, "pro_expires_at", None)
+        if current_expiry and current_expiry > now:
+            base = current_expiry
+        else:
+            base = now
+        new_expiry = base + timedelta(days=30 * max(1, months))
 
-    # Normalizamos el plan: si no es PRO/BIZ, lo pasamos a PRO
-    current_plan = (user.plan or "FREE").upper()
-    if current_plan not in ("PRO", "BIZ"):
-        current_plan = "PRO"
-    user.plan = current_plan
+        user.pro_expires_at = new_expiry
+        user.pro_source = source or "subscription"
+        user.plan = "PRO"
+        if hasattr(user, "is_pro"):
+            user.is_pro = True
+        if not getattr(user, "had_trial", False):
+            user.had_trial = True
 
-    user.pro_expires_at = new_expiry
-    if source:
-        user.pro_source = source
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    # Si estaba en trial y ya venció, lo damos por finalizado
-    if user.trial_expires_at and user.trial_expires_at <= now:
-        user.had_trial = True
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    user = normalize_user_plan(db, user)
     return user
 
 
 def require_pro_user(
-    payload = Depends(get_current_user_cookie),
     db: Session = Depends(get_db),
+    current=Depends(get_current_user_cookie),
 ) -> User:
-    """Dependencia para endpoints que requieren un usuario con PRO activo.
+    """Dependencia para rutas PRO (alerts, reglas, auditoría, etc)."""
+    user: Optional[User] = db.query(User).filter(User.id == current["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
 
-    Devuelve el objeto User si tiene acceso PRO (trial o suscripción vigente).
-    En caso contrario lanza HTTP 402 (Payment Required) con datos para UI.
-    """
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Usuario no autenticado")
+    user = normalize_user_plan(db, user)
 
-    user: Optional[User] = db.query(User).filter(User.id == user_id).first()
-    if not user or not getattr(user, "is_active", True):
-        raise HTTPException(status_code=401, detail="Usuario no válido")
-
-    # Normalizamos datos de plan/trial
-    normalize_user_plan(db, user)
-
-    # Determinar hasta cuándo tiene PRO (trial o suscripción)
-    pro_expiry: Optional[datetime] = None
-    if user.pro_expires_at:
-        pro_expiry = user.pro_expires_at
-    elif user.trial_expires_at:
-        pro_expiry = user.trial_expires_at
-
-    pro_expiry_aware = _to_aware(pro_expiry)
+    pro_expiry_aware = _to_aware(getattr(user, "pro_expires_at", None))
     now = _now_utc_aware()
 
     if not pro_expiry_aware or pro_expiry_aware <= now:
-        # Tip para el frontend: mostrar diálogo de upgrade
         raise HTTPException(
             status_code=402,
             detail={
                 "message": "Tu plan PRO no está activo.",
-                "upgrade_url": "/billing",
+                "upgrade_url": "/billing/subscriptions",
                 "has_pro_until": pro_expiry_aware.isoformat() if pro_expiry_aware else None,
             },
         )
