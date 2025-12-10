@@ -1,273 +1,679 @@
 <!doctype html>
-<html>
+<html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Cambiar plan</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <title>Planes y facturación — AlertTrail</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css">
   <style>
-    .topbar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #e5e7eb}
-    .container{max-width:1100px;margin:20px auto;padding:0 12px}
-    .card{border:1px solid #e5e7eb;border-radius:16px;padding:18px;background:#fff}
-    .grid{display:grid;gap:16px}
-    @media(min-width:980px){.grid{grid-template-columns:1fr 1fr 1fr}}
-    .tile{border:1px solid #e5e7eb;border-radius:16px;padding:18px;background:#fff}
-    .hint{color:#6b7280;font-size:.95rem;margin-top:6px}
-    .btn{appearance:none;border:0;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer;font-weight:600}
-    .btn:hover{filter:brightness(1.08)}
-    .btn-outline{appearance:none;border:1px solid #111827;border-radius:10px;padding:10px 14px;background:#fff;color:#111827;cursor:pointer;font-weight:600}
-    .btn-outline:hover{background:#111827;color:#fff}
-    input[name="coupon"]{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;margin-right:8px}
-    .msg{margin-top:10px;color:#6b7280}
-    .badge{display:inline-flex;align-items:center;border-radius:999px;padding:6px 10px;font-weight:600;font-size:.85rem}
-    .badge-free{background:#f3f4f6;color:#111827}
-    .badge-pro{background:#d1fae5;color:#065f46}
-    .muted{color:#6b7280}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #f3f4f6}
-    .right{text-align:right}
-    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    :root {
+      --bg: #0f172a;
+      --bg-soft: #020617;
+      --card-bg: rgba(15,23,42,0.98);
+      --card-soft: rgba(15,23,42,0.9);
+      --border-subtle: rgba(148,163,184,0.4);
+      --border-strong: rgba(56,189,248,0.9);
+      --text-main: #e5f3ff;
+      --text-muted: #94a3b8;
+      --accent: #0ea5e9;
+      --accent-soft: rgba(56,189,248,0.1);
+      --danger: #f97373;
+      --success: #4ade80;
+    }
+    body{
+      margin:0;
+      font-family:-apple-system,system-ui,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;
+      background: radial-gradient(circle at top, #0f172a 0, #020617 50%, #020617 100%);
+      color:var(--text-main);
+    }
+    .topbar{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:14px 18px;
+      border-bottom:1px solid rgba(15,23,42,0.9);
+      background:linear-gradient(to right,rgba(15,23,42,0.98),rgba(8,47,73,0.98));
+      position:sticky;
+      top:0;
+      z-index:20;
+    }
+    .topbar-title{
+      font-weight:600;
+      letter-spacing:-0.02em;
+    }
+    .topbar-nav a{
+      color:var(--text-muted);
+      text-decoration:none;
+      font-size:0.9rem;
+    }
+    .topbar-nav a:hover{
+      color:var(--accent);
+    }
+    .container{
+      max-width:1100px;
+      margin:20px auto 32px;
+      padding:0 16px;
+    }
+    .layout{
+      display:grid;
+      grid-template-columns: minmax(0,2.2fr) minmax(0,1.4fr);
+      gap:18px;
+    }
+    @media(max-width:920px){
+      .layout{grid-template-columns:minmax(0,1fr);}
+    }
+    .card{
+      background:var(--card-bg);
+      border-radius:18px;
+      border:1px solid var(--border-subtle);
+      padding:18px 18px 16px;
+      box-shadow:0 18px 45px rgba(15,23,42,0.7);
+    }
+    .card-soft{
+      background:var(--card-soft);
+    }
+    h1{
+      margin:0 0 6px;
+      font-size:1.5rem;
+      letter-spacing:-0.02em;
+    }
+    .muted{
+      color:var(--text-muted);
+      font-size:0.9rem;
+    }
+    .pill-plan{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      border-radius:999px;
+      padding:4px 11px;
+      border:1px solid var(--border-subtle);
+      background:rgba(15,23,42,0.9);
+      font-size:0.8rem;
+    }
+    .pill-badge{
+      border-radius:999px;
+      padding:2px 8px;
+      background:linear-gradient(135deg,#22c55e,#0ea5e9);
+      color:#0b1120;
+      font-weight:600;
+    }
+    .pill-badge-free{
+      background:transparent;
+      color:var(--text-main);
+      border:1px solid var(--border-subtle);
+    }
+    .section-title{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:10px;
+      margin-bottom:10px;
+    }
+    .section-heading{
+      font-size:1.05rem;
+      font-weight:600;
+      letter-spacing:-0.01em;
+    }
+    .plan-grid{
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:12px;
+      margin-top:10px;
+    }
+    @media(max-width:900px){
+      .plan-grid{grid-template-columns:minmax(0,1fr);}
+    }
+    .plan{
+      border-radius:16px;
+      border:1px solid rgba(148,163,184,0.45);
+      padding:14px 14px 13px;
+      background: radial-gradient(circle at top left,rgba(56,189,248,0.16),rgba(15,23,42,0.98));
+      position:relative;
+      overflow:hidden;
+    }
+    .plan.pro{
+      border-color:var(--border-strong);
+      box-shadow:0 0 0 1px rgba(56,189,248,0.7);
+    }
+    .plan-enterprise{
+      background: radial-gradient(circle at top right,rgba(45,212,191,0.16),rgba(15,23,42,0.98));
+    }
+    .plan-name{
+      font-weight:600;
+      letter-spacing:-0.01em;
+    }
+    .plan-price{
+      margin-top:4px;
+      font-size:1.2rem;
+      font-weight:600;
+    }
+    .plan-price span{
+      font-size:0.8rem;
+      color:var(--text-muted);
+      font-weight:400;
+    }
+    .plan-tagline{
+      margin-top:4px;
+      font-size:0.85rem;
+      color:var(--text-muted);
+    }
+    .plan-list{
+      margin:8px 0 10px;
+      padding-left:18px;
+      font-size:0.85rem;
+      color:var(--text-muted);
+    }
+    .plan-list li+li{margin-top:3px;}
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:6px;
+      border-radius:999px;
+      border:1px solid rgba(148,163,184,0.7);
+      background:rgba(15,23,42,1);
+      color:#e5e7eb;
+      padding:7px 14px;
+      font-size:0.86rem;
+      text-decoration:none;
+      cursor:pointer;
+      transition:background .15s ease,transform .05s ease,border-color .15s ease;
+    }
+    .btn:hover{
+      background:rgba(37,99,235,0.9);
+      border-color:#38bdf8;
+      transform:translateY(-1px);
+    }
+    .btn-primary{
+      border:none;
+      background:linear-gradient(135deg,#0ea5e9,#22c55e);
+      color:#0b1120;
+      font-weight:600;
+    }
+    .btn-primary:hover{
+      filter:brightness(1.05);
+      transform:translateY(-1px);
+    }
+    .btn-ghost{
+      background:transparent;
+      border-style:dashed;
+    }
+    .chips{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      margin-top:6px;
+    }
+    .chip{
+      border-radius:999px;
+      border:1px solid rgba(148,163,184,0.5);
+      font-size:0.78rem;
+      padding:3px 9px;
+      color:#bfdbfe;
+      background:rgba(15,23,42,0.95);
+    }
+    .status-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+      margin-top:6px;
+    }
+    .status-main{
+      font-size:0.94rem;
+    }
+    .status-secondary{
+      font-size:0.8rem;
+      color:var(--text-muted);
+    }
+    .status-badge{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      border-radius:999px;
+      padding:3px 9px;
+      font-size:0.78rem;
+      border:1px solid rgba(148,163,184,0.5);
+      background:rgba(15,23,42,0.85);
+    }
+    .status-dot{
+      width:8px;
+      height:8px;
+      border-radius:999px;
+      background:var(--success);
+    }
+    .history-table{
+      width:100%;
+      border-collapse:collapse;
+      margin-top:8px;
+      font-size:0.85rem;
+    }
+    .history-table th,
+    .history-table td{
+      padding:7px 6px;
+      border-bottom:1px solid rgba(30,64,175,0.35);
+      text-align:left;
+    }
+    .history-table th{
+      font-size:0.78rem;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      color:var(--text-muted);
+    }
+    .text-right{text-align:right;}
+    .text-center{text-align:center;}
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      border-radius:999px;
+      padding:2px 8px;
+      font-size:0.75rem;
+      background:rgba(15,23,42,0.9);
+      border:1px solid rgba(148,163,184,0.5);
+    }
+    .badge-success{
+      border-color:rgba(74,222,128,0.8);
+      color:#bbf7d0;
+    }
+    .badge-pending{
+      border-color:rgba(250,204,21,0.8);
+      color:#fef08a;
+    }
+    .badge-failed{
+      border-color:rgba(248,113,113,0.8);
+      color:#fecaca;
+    }
+    .small{
+      font-size:0.78rem;
+      color:var(--text-muted);
+    }
+    .alert-msg{
+      margin-top:6px;
+      font-size:0.82rem;
+    }
+    .alert-msg.error{color:var(--danger);}
+    .alert-msg.ok{color:var(--success);}
   </style>
 </head>
 <body>
-<header class="topbar">
-  <div>Mi plan</div>
-  <nav><a href="/dashboard">Volver</a></nav>
-</header>
+  <header class="topbar">
+    <div class="topbar-title">Planes y facturación</div>
+    <nav class="topbar-nav">
+      <a href="/dashboard">← Volver al dashboard</a>
+    </nav>
+  </header>
 
-<main class="container">
-  <!-- ESTADO -->
-  <div class="card">
-    <h1 style="margin:0 0 10px 0;">Estado actual</h1>
-    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
-      <div>
-        <div id="planBadge" class="badge badge-free">Cargando…</div>
-        <div id="expiryInfo" class="muted" style="margin-top:6px"></div>
+  <main class="container">
+    <div class="card" style="margin-bottom:14px;">
+      <div class="section-title">
+        <div>
+          <h1>Tu plan en AlertTrail</h1>
+          <p class="muted">
+            Gestioná tu prueba gratuita, plan PRO y facturación desde un solo lugar.
+          </p>
+        </div>
+        <div>
+          {% set raw_plan = (user.plan or 'FREE')|upper %}
+          <div class="pill-plan">
+            <span class="small">Plan actual</span>
+            {% if user.is_pro or raw_plan in ['PRO','BIZ','EMPRESA','EMPRESAS'] %}
+              <span id="plan-badge" class="pill-badge">PRO</span>
+            {% else %}
+              <span id="plan-badge" class="pill-badge pill-badge-free">{{ raw_plan }}</span>
+            {% endif %}
+          </div>
+          <div class="small" id="expiry-text" style="margin-top:4px;"></div>
+        </div>
       </div>
-      <div class="actions">
-        <button class="btn" id="btnMonthly">Activar PRO (Mensual)</button>
-        <button class="btn" id="btnYearly">Activar PRO (Anual)</button>
-        <button class="btn-outline" id="btnTrial">Probar 5 días (Trial)</button>
-        <button class="btn-outline" id="btnRefresh">Actualizar</button>
+      <div class="chips">
+        <span class="chip">Scanner de correos</span>
+        <span class="chip">Log scanner avanzado</span>
+        <span class="chip">Reportes PDF</span>
+        <span class="chip">Alertas automáticas</span>
       </div>
     </div>
-  </div>
 
-  <!-- PLANES -->
-  <div class="grid" style="margin-top:16px">
-    <!-- PLAN PRO -->
-    <div class="tile">
-      <h2 style="margin:0 0 8px 0;">PRO</h2>
-      <p><b>USD {{ '%0.2f'|format(price_month) }}/mes</b></p>
-      <p>Anual: <b>USD {{ price_year }}</b> ({{ disc_pct }}% OFF)</p>
+    <div class="layout">
+      <!-- Columna izquierda: planes -->
+      <section class="card">
+        <div class="section-title">
+          <div>
+            <div class="section-heading">Elegí el plan que mejor se adapta a vos</div>
+            <p class="muted">
+              Probá PRO por {{ trial_days }} días sin cargo y decidís después si querés seguir.
+            </p>
+          </div>
+        </div>
 
-      <!-- Opción legacy con cupón (si querés mantenerla) -->
-      <form method="post" action="/billing/upgrade_pro" style="margin-top:8px">
-        <input name="coupon" placeholder="Cupón (opcional)">
-        <button type="submit" class="btn-outline">Activar PRO (cupón)</button>
-      </form>
+        <div class="plan-grid">
+          <!-- FREE -->
+          <article class="plan">
+            <div class="plan-name">Free</div>
+            <div class="plan-price">$0 <span>/ siempre</span></div>
+            <div class="plan-tagline">Ideal para probar AlertTrail en una sola casilla.</div>
+            <ul class="plan-list">
+              <li>Scanner de correos manual.</li>
+              <li>Analizador de logs básico.</li>
+              <li>Hasta 1 casilla conectada.</li>
+              <li>Soporte por email.</li>
+            </ul>
+            <button id="btn-free" class="btn btn-ghost" type="button">
+              Seguir con plan Free
+            </button>
+          </article>
 
-      <!-- Pago con Mercado Pago (nuevo flujo unificado) -->
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="buyMpMonthly">Comprar PRO Mensual (MP)</button>
-        <button class="btn" id="buyMpYearly">Comprar PRO Anual (MP)</button>
-      </div>
+          <!-- PRO -->
+          <article class="plan pro">
+            <div class="plan-name">PRO</div>
+            <div class="plan-price">${{ '%.0f'|format(price_month) }} <span>/ mes</span></div>
+            <div class="plan-tagline">Para pymes sin IT que quieren dejar de sufrir con los correos.</div>
+            <ul class="plan-list">
+              <li>Scanner de correos con alertas en tiempo real.</li>
+              <li>Panel de alertas y reglas personalizadas.</li>
+              <li>Reportes PDF exportables.</li>
+              <li>Soporte prioritario.</li>
+            </ul>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              <button id="btn-trial" class="btn-primary" type="button">
+                Empezar prueba gratis de {{ trial_days }} días
+              </button>
+              <button id="btn-pro-monthly" class="btn" type="button">
+                Contratar PRO mensual
+              </button>
+            </div>
+            <div id="msg-trial" class="alert-msg"></div>
+          </article>
 
-      <div id="msgPro" class="msg"></div>
-      <p class="hint">También podés activar un Trial PRO de 5 días si es tu primera vez.</p>
+          <!-- EMPRESAS -->
+          <article class="plan plan-enterprise">
+            <div class="plan-name">Empresas</div>
+            <div class="plan-price">A medida <span>/ por equipo</span></div>
+            <div class="plan-tagline">Incluye hasta {{ biz_included }} casillas, con costo por asiento extra.</div>
+            <ul class="plan-list">
+              <li>Multi-casilla, panel de organización.</li>
+              <li>Reglas globales y reportes consolidados.</li>
+              <li>Soporte dedicado.</li>
+              <li>Integración con herramientas de la empresa.</li>
+            </ul>
+            <a href="mailto:hola@alerttrail.com?subject=Quiero%20AlertTrail%20para%20mi%20empresa" class="btn">
+              Hablar con ventas
+            </a>
+          </article>
+        </div>
+      </section>
+
+      <!-- Columna derecha: estado + historial -->
+      <section class="card card-soft">
+        <div class="section-title">
+          <div>
+            <div class="section-heading">Estado de tu suscripción</div>
+            <p class="muted">
+              Mirá si tu periodo de prueba sigue activo y revisá tus últimos pagos.
+            </p>
+          </div>
+          <button id="btn-refresh" class="btn btn-ghost" type="button">Actualizar</button>
+        </div>
+
+        <div class="status-row">
+          <div>
+            <div id="status-main" class="status-main">Cargando estado…</div>
+            <div id="status-secondary" class="status-secondary"></div>
+          </div>
+          <div id="status-pill" class="status-badge">
+            <span class="status-dot"></span>
+            <span id="status-label">Sin PRO activo</span>
+          </div>
+        </div>
+
+        <hr style="margin:12px 0;border:0;border-top:1px solid rgba(30,64,175,0.5);"/>
+
+        <div class="small" style="margin-bottom:4px;">Historial de pagos</div>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Descripción</th>
+              <th>Monto</th>
+              <th>Estado</th>
+              <th>Origen</th>
+            </tr>
+          </thead>
+          <tbody id="history-body">
+            <tr><td colspan="5" class="text-center small">Sin pagos registrados.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="small" style="margin-top:6px;">
+          Si activás el plan PRO, tus pagos van a aparecer acá automáticamente.
+        </p>
+      </section>
     </div>
+  </main>
 
-    <!-- PLAN BUSINESS (placeholder v1) -->
-    <div class="tile">
-      <h2 style="margin:0 0 8px 0;">Business (Empresa)</h2>
-      <p><b>USD {{ biz_price }}/mes</b> — incluye <b>{{ biz_included }}</b> cuentas.</p>
-      <p>Asiento extra: <b>USD {{ '%0.2f'|format(biz_extra) }}</b>/mes</p>
-      <p>Anual: <b>USD {{ biz_year }}</b> ({{ biz_disc }}% OFF)</p>
+  <script>
+  (function () {
+    const planBadge = document.getElementById("plan-badge");
+    const expiryText = document.getElementById("expiry-text");
+    const statusMain = document.getElementById("status-main");
+    const statusSecondary = document.getElementById("status-secondary");
+    const statusPill = document.getElementById("status-pill");
+    const statusLabel = document.getElementById("status-label");
+    const tbody = document.getElementById("history-body");
+    const btnMonthly = document.getElementById("btn-pro-monthly");
+    const btnTrial = document.getElementById("btn-trial");
+    const btnFree = document.getElementById("btn-free");
+    const btnRefresh = document.getElementById("btn-refresh");
+    const msgTrial = document.getElementById("msg-trial");
 
-      <form method="post" action="/billing/upgrade_business" style="margin-top:8px">
-        <button type="submit" class="btn-outline">Activar Business</button>
-      </form>
-
-      <div id="msgBiz" class="msg"></div>
-      <p class="hint">En v1 la gestión de miembros es manual. Próximamente flujo de suscripciones.</p>
-    </div>
-
-    <!-- VOLVER A FREE -->
-    <div class="tile">
-      <h2 style="margin:0 0 8px 0;">↩️ Volver a FREE</h2>
-      <p>Cancelar PRO/Business y volver a FREE.</p>
-      <form method="post" action="/billing/cancel">
-        <button type="submit" class="btn-outline">Volver a FREE</button>
-      </form>
-      <p class="hint">Al volver a FREE, el acceso PRO se desactiva al vencer tu período.</p>
-    </div>
-  </div>
-
-  <!-- HISTORIAL -->
-  <div class="card" style="margin-top:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">Historial de pagos</h2>
-      <button class="btn-outline" id="btnReloadHistory">Actualizar historial</button>
-    </div>
-    <div style="overflow:auto;margin-top:10px">
-      <table>
-        <thead>
-          <tr>
-            <th>Fecha</th>
-            <th>Descripción</th>
-            <th>Monto</th>
-            <th>Estado</th>
-            <th>Vence</th>
-            <th>Origen</th>
-          </tr>
-        </thead>
-        <tbody id="historyBody">
-          <tr><td class="muted" colspan="6">Cargando…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</main>
-
-<script>
-/**
- * Versión actualizada para integrarse con:
- *  - GET /billing/me           -> estado de plan
- *  - GET /billing/history      -> historial
- *  - GET /payments/checkout    -> crea preferencia (monthly/yearly/trial)
- * El webhook de MP hace el alta real del PRO al aprobar el pago.
- */
-
-function money(amount_cents, currency){
-  const v=(amount_cents||0)/100.0;
-  try{ return new Intl.NumberFormat(undefined,{style:'currency',currency:currency||'USD'}).format(v); }
-  catch(_){ return (v.toFixed(2)+' '+(currency||'USD')); }
-}
-function fmtDate(iso){
-  if(!iso) return '-';
-  const d=new Date(iso);
-  return d.toLocaleString();
-}
-
-const planBadge = document.getElementById('planBadge');
-const expiryInfo = document.getElementById('expiryInfo');
-const msgPro = document.getElementById('msgPro');
-const msgBiz = document.getElementById('msgBiz');
-const historyBody = document.getElementById('historyBody');
-
-async function loadStatus(){
-  try{
-    const r = await fetch('/billing/me', {credentials:'include'});
-    const j = await r.json();
-    if(!j.ok) throw new Error('status not ok');
-
-    const isPro = !!j.is_pro;
-    const plan = (j.plan || 'FREE').toUpperCase();
-
-    planBadge.textContent = isPro ? 'PRO' : plan;
-    planBadge.className = 'badge ' + (isPro ? 'badge-pro' : 'badge-free');
-
-    if(j.pro_expires_at){
-      expiryInfo.textContent = 'Activo hasta ' + fmtDate(j.pro_expires_at) +
-        ` — quedan ${j.remaining_days ?? 0}d ${j.remaining_hours ?? 0}h`;
-    }else{
-      expiryInfo.textContent = isPro ? '' : 'Sin PRO activo';
-    }
-  }catch(e){
-    planBadge.textContent = 'Error';
-    planBadge.className = 'badge badge-free';
-    expiryInfo.textContent = '';
-    console.error(e);
-  }
-}
-
-async function loadHistory(){
-  try{
-    const r = await fetch('/billing/history?limit=100', {credentials:'include'});
-    const j = await r.json();
-    if(!j.ok) throw new Error('history not ok');
-    const items = j.items || [];
-    historyBody.innerHTML = '';
-
-    if(items.length===0){
-      historyBody.innerHTML = '<tr><td class="muted" colspan="6">No hay pagos registrados.</td></tr>';
-      return;
+    function fmtDate(iso) {
+      if (!iso) return "-";
+      const d = new Date(iso);
+      return d.toLocaleString();
     }
 
-    for(const it of items){
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${fmtDate(it.created_at)}</td>
-        <td>${it.description || '-'}</td>
-        <td>${money(it.amount_cents, it.currency)}</td>
-        <td>${(it.status||'').toUpperCase()}</td>
-        <td>${fmtDate(it.expires_at)}</td>
-        <td>${it.origin || '-'}</td>
-      `;
-      historyBody.appendChild(tr);
-    }
-  }catch(e){
-    historyBody.innerHTML = '<tr><td class="muted" colspan="6">Error al cargar el historial.</td></tr>';
-    console.error(e);
-  }
-}
-
-async function startCheckout(period){
-  try{
-    msgPro.textContent = period==='trial' ? 'Activando trial…' : 'Creando orden…';
-    const url = `/payments/checkout?plan=pro&period=${encodeURIComponent(period)}`;
-    const r = await fetch(url, {credentials:'include'});
-    const j = await r.json();
-
-    if(period==='trial'){
-      if(j.ok && j.trial_activated){
-        msgPro.textContent = 'Trial PRO activado ✔';
-        await loadStatus();
-        await loadHistory();
-        return;
+    function setStatusBadge(mode) {
+      const dot = statusPill.querySelector(".status-dot");
+      if (mode === "pro") {
+        dot.style.backgroundColor = "#4ade80";
+        statusLabel.textContent = "PRO activo";
+      } else if (mode === "trial") {
+        dot.style.backgroundColor = "#facc15";
+        statusLabel.textContent = "Prueba PRO activa";
+      } else {
+        dot.style.backgroundColor = "#64748b";
+        statusLabel.textContent = "Sin PRO activo";
       }
-      msgPro.textContent = 'No se pudo activar el trial.';
-      return;
     }
 
-    const init = j.init_point;
-    if(j.ok && init){
-      window.location.href = init; // redirige a Mercado Pago
-    }else{
-      msgPro.textContent = 'No se pudo iniciar el checkout.';
+    async function loadStatus() {
+      try {
+        const r = await fetch("/billing/me", { credentials: "include" });
+        const j = await r.json();
+        if (!j.ok) throw new Error("status not ok");
+
+        const isPro = !!j.is_pro;
+        const plan = (j.plan || "FREE").toUpperCase();
+        const proExpires = j.pro_expires_at;
+        const trialExpires = j.trial_expires_at;
+        const hadTrial = !!j.had_trial;
+        const proSource = (j.pro_source || "").toLowerCase();
+
+        if (isPro) {
+          planBadge.textContent = "PRO";
+          planBadge.classList.remove("pill-badge-free");
+        } else {
+          planBadge.textContent = plan;
+          planBadge.classList.add("pill-badge-free");
+        }
+
+        if (proExpires && isPro) {
+          expiryText.textContent = `Activo hasta ${fmtDate(proExpires)} (${j.remaining_days ?? "-"}d ${j.remaining_hours ?? "-"}h)`;
+        } else if (!isPro && trialExpires && new Date(trialExpires) < new Date() && hadTrial) {
+          expiryText.textContent = "Tu prueba PRO terminó. Podés seguir en Free o pasar a PRO cuando quieras.";
+        } else {
+          expiryText.textContent = isPro ? "" : "Sin PRO activo.";
+        }
+
+        if (isPro && proSource === "subscription") {
+          statusMain.textContent = "Tenés un plan PRO activo.";
+          statusSecondary.textContent = proExpires ? `Renueva antes de ${fmtDate(proExpires)}.` : "";
+          setStatusBadge("pro");
+        } else if (isPro && proSource === "trial") {
+          statusMain.textContent = "Estás usando tu periodo de prueba PRO.";
+          statusSecondary.textContent = trialExpires ? `Tu prueba termina el ${fmtDate(trialExpires)}.` : "";
+          setStatusBadge("trial");
+        } else if (!isPro && hadTrial) {
+          statusMain.textContent = "Tu prueba PRO ya terminó.";
+          statusSecondary.textContent = "Podés seguir en el plan Free o contratar PRO cuando quieras.";
+          setStatusBadge("off");
+        } else {
+          statusMain.textContent = "Estás en el plan Free.";
+          statusSecondary.textContent = "Podés activar una prueba PRO gratuita de {{ trial_days }} días cuando quieras.";
+          setStatusBadge("off");
+        }
+      } catch (e) {
+        console.error(e);
+        planBadge.textContent = "Error";
+        expiryText.textContent = "";
+        statusMain.textContent = "No se pudo cargar el estado.";
+        statusSecondary.textContent = "";
+        setStatusBadge("off");
+      }
     }
-  }catch(e){
-    console.error(e);
-    msgPro.textContent = 'Error iniciando checkout.';
-  }
-}
 
-// Botones principales (estado)
-document.getElementById('btnMonthly').addEventListener('click', ()=> startCheckout('monthly'));
-document.getElementById('btnYearly').addEventListener('click', ()=> startCheckout('yearly'));
-document.getElementById('btnTrial').addEventListener('click', ()=> startCheckout('trial'));
-document.getElementById('btnRefresh').addEventListener('click', async ()=>{ await loadStatus(); await loadHistory(); });
+    async function loadHistory() {
+      try {
+        const r = await fetch("/billing/history?limit=50", { credentials: "include" });
+        const j = await r.json();
+        if (!j.ok) throw new Error("history not ok");
 
-// Botones dentro de tarjeta PRO (compatibilidad visual)
-document.getElementById('buyMpMonthly').addEventListener('click', ()=> startCheckout('monthly'));
-document.getElementById('buyMpYearly').addEventListener('click', ()=> startCheckout('yearly'));
+        const items = j.items || j.history || [];
+        tbody.innerHTML = "";
+        if (!items || items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center small">Sin pagos registrados.</td></tr>';
+          return;
+        }
 
-// Carga inicial
-(async function(){
-  await loadStatus();
-  await loadHistory();
+        for (const it of items) {
+          const when = it.created_at ? new Date(it.created_at) : null;
+          const dateText = when ? when.toLocaleDateString() + " " + when.toLocaleTimeString() : "-";
+          const amountCents = typeof it.amount_cents === "number" ? it.amount_cents : 0;
+          const currency = it.currency || "USD";
+          const status = (it.status || "").toLowerCase();
 
-  // Si MP devuelve /payments/return?status=success|failure|pending
-  const params = new URLSearchParams(location.search);
-  const pstatus = params.get('payment_status') || params.get('status');
-  if(pstatus){
-    if(pstatus === 'success'){ msgPro.textContent = 'Pago aprobado. Actualizando estado…'; }
-    else if(pstatus === 'pending'){ msgPro.textContent = 'Pago pendiente. Se activará al aprobarse.'; }
-    else if(pstatus === 'failure'){ msgPro.textContent = 'Pago fallido o cancelado.'; }
-    // refrescamos por si el webhook ya corrió
-    setTimeout(async ()=>{ await loadStatus(); await loadHistory(); }, 1200);
-  }
-})();
-</script>
+          const amount = (amountCents / 100.0).toLocaleString(undefined, {
+            style: "currency",
+            currency: currency,
+          });
+
+          let statusHtml = `<span class="badge">${status || "-"}</span>`;
+          if (status === "approved" || status === "authorized") {
+            statusHtml = '<span class="badge badge-success">Aprobado</span>';
+          } else if (status === "pending" || status === "in_process") {
+            statusHtml = '<span class="badge badge-pending">Pendiente</span>';
+          } else if (status === "rejected" || status === "cancelled") {
+            statusHtml = '<span class="badge badge-failed">Rechazado</span>';
+          }
+
+          const origin = it.origin || (it.plan ? `Plan ${it.plan}` : "-");
+
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${dateText}</td>
+            <td>${it.description || "Suscripción PRO"}</td>
+            <td class="text-right">${amount}</td>
+            <td>${statusHtml}</td>
+            <td>${origin}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+      } catch (e) {
+        console.error(e);
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center small">Error cargando historial.</td></tr>';
+      }
+    }
+
+    async function startCheckout(period) {
+      try {
+        const url = `/payments/checkout?plan=pro&period=${encodeURIComponent(period)}`;
+        const r = await fetch(url, { method: "POST", credentials: "include" });
+        const j = await r.json();
+        if (j.ok && j.init_point) {
+          window.location.href = j.init_point;
+        } else {
+          alert("No se pudo iniciar el checkout.");
+        }
+      } catch (e) {
+        console.error(e);
+        alert("Error iniciando checkout.");
+      }
+    }
+
+    async function startTrial() {
+      msgTrial.textContent = "";
+      msgTrial.className = "alert-msg";
+      try {
+        const r = await fetch("/billing/trial/start", {
+          method: "POST",
+          credentials: "include",
+        });
+        const j = await r.json();
+        if (!j.ok && j.error === "trial_already_used") {
+          msgTrial.textContent = "Ya usaste tu prueba PRO. Podés seguir en Free o pasar a PRO cuando quieras.";
+          msgTrial.classList.add("error");
+        } else if (!j.ok && j.error === "already_pro") {
+          msgTrial.textContent = "Ya tenés un plan PRO activo.";
+          msgTrial.classList.add("ok");
+        } else if (j.ok && j.trial_activated) {
+          msgTrial.textContent = `Activamos tu prueba PRO por ${j.trial_days} días.`;
+          msgTrial.classList.add("ok");
+        } else if (j.ok && !j.trial_activated) {
+          msgTrial.textContent = "Tu prueba PRO ya estaba activa.";
+          msgTrial.classList.add("ok");
+        } else {
+          msgTrial.textContent = "No se pudo activar la prueba PRO.";
+          msgTrial.classList.add("error");
+        }
+        await loadStatus();
+      } catch (e) {
+        console.error(e);
+        msgTrial.textContent = "Error al activar la prueba PRO.";
+        msgTrial.classList.add("error");
+      }
+    }
+
+    btnMonthly?.addEventListener("click", () => startCheckout("monthly"));
+    btnTrial?.addEventListener("click", () => startTrial());
+    btnFree?.addEventListener("click", () => {
+      alert("Podés seguir usando el plan Free sin problemas. Cuando quieras PRO, volvé a esta pantalla.");
+    });
+    btnRefresh?.addEventListener("click", async () => {
+      await loadStatus();
+      await loadHistory();
+    });
+
+    (async () => {
+      await loadStatus();
+      await loadHistory();
+
+      const params = new URLSearchParams(window.location.search);
+      const pstatus = params.get("payment_status") || params.get("status");
+      if (pstatus) {
+        if (pstatus === "success") {
+          statusSecondary.textContent = "Pago aprobado. Actualizando estado…";
+        } else if (pstatus === "pending") {
+          statusSecondary.textContent = "Pago pendiente. Se activará al aprobarse.";
+        } else if (pstatus === "failure") {
+          statusSecondary.textContent = "Pago fallido o cancelado.";
+        }
+        setTimeout(async () => {
+          await loadStatus();
+          await loadHistory();
+        }, 1500);
+      }
+    })();
+  })();
+  </script>
 </body>
 </html>
