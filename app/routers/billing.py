@@ -39,7 +39,7 @@ def _pricing_ctx() -> Dict[str, Any]:
     price_year = _as_float("PRO_PRICE_YEAR_USD", 96.0)  # 20% OFF aprox.
     biz_included = _as_int("BIZ_INCLUDED_SEATS", 25)
     biz_extra = _as_float("BIZ_EXTRA_SEAT_USD", 5.0)
-    trial_days = _as_int("TRIAL_DAYS", 30)
+    trial_days = _as_int("TRIAL_DAYS", _as_int("TRIAL_PRO_DAYS", 30))
 
     return {
         "price_month": price_month,
