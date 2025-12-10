@@ -74,12 +74,15 @@ def start_trial(
             status_code=400,
         )
 
-    days_env = os.getenv("TRIAL_DAYS")
-    try:
-        days_env_val = int(days_env) if days_env is not None else None
-    except Exception:
-        days_env_val = None
-    days = days_env_val or getattr(user, "trial_days", None) or 30
+# Soporta tanto TRIAL_DAYS como TRIAL_PRO_DAYS (legacy)
+days_env = os.getenv("TRIAL_DAYS") or os.getenv("TRIAL_PRO_DAYS")
+try:
+    days_env_val = int(days_env) if days_env is not None else None
+except Exception:
+    days_env_val = None
+
+days = days_env_val or getattr(user, "trial_days", None) or 30
+
 
     trial_start = now
     trial_end = now + timedelta(days=days)
