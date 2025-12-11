@@ -135,8 +135,18 @@ class Organization(Base):
     updated_at     = Column(DateTime, nullable=True)
 
     # Relaciones
-    owner   = relationship("User", foreign_keys=[owner_user_id], back_populates="owned_organizations")
-    members = relationship("User", back_populates="organization", lazy="selectin")
+    owner   = relationship(
+        "User",
+        foreign_keys=[owner_user_id],
+        back_populates="owned_organizations",
+        lazy="selectin",
+    )
+    members = relationship(
+        "User",
+        back_populates="organization",
+        foreign_keys="User.org_id",
+        lazy="selectin",
+    )
     invitations = relationship("OrgInvite", back_populates="organization", lazy="selectin")
 
     def __repr__(self):
@@ -328,7 +338,7 @@ class PaymentHistory(Base):
     user_id           = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     provider          = Column(String(32), nullable=False)   # mp | stripe
-    external_payment_id = Column(String(128), nullable=False)  # id en el proveedor
+    external_payment_id = Column(String(128), nullable=False  ) # id en el proveedor
     plan              = Column(String(32), nullable=False, default="PRO")
     months            = Column(Integer, nullable=False, default=1)
     amount            = Column(Numeric(10, 2), nullable=False)
