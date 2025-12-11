@@ -42,8 +42,7 @@ class User(Base):
     verification_code         = Column(String(12), nullable=True)
     verification_expires_at   = Column(DateTime, nullable=True)
     verification_attempts     = Column(Integer, nullable=False, default=0)
-    # OJO: quitamos last_verification_sent_at porque no existe en la BD
-    # last_verification_sent_at = Column(DateTime, nullable=True)
+    # IMPORTANTE: no existe last_verification_sent_at en la BD, por eso no está definido aquí
 
     # Recuperación de contraseña
     reset_code          = Column(String(64), nullable=True)
@@ -108,8 +107,8 @@ class User(Base):
 
     def __repr__(self):
         return (
-            f"<User id={self.id} email={self.email!r} role={self.role} "
-            f"plan={self.plan} email_verified={self.email_verified}>"
+        f"<User id={self.id} email={self.email!r} role={self.role} "
+        f"plan={self.plan} email_verified={self.email_verified}>"
         )
 
 
