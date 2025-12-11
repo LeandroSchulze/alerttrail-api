@@ -42,7 +42,8 @@ class User(Base):
     verification_code         = Column(String(12), nullable=True)
     verification_expires_at   = Column(DateTime, nullable=True)
     verification_attempts     = Column(Integer, nullable=False, default=0)
-    last_verification_sent_at = Column(DateTime, nullable=True)
+    # OJO: quitamos last_verification_sent_at porque no existe en la BD
+    # last_verification_sent_at = Column(DateTime, nullable=True)
 
     # Recuperación de contraseña
     reset_code          = Column(String(64), nullable=True)
@@ -338,7 +339,7 @@ class PaymentHistory(Base):
     user_id           = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     provider          = Column(String(32), nullable=False)   # mp | stripe
-    external_payment_id = Column(String(128), nullable=False  ) # id en el proveedor
+    external_payment_id = Column(String(128), nullable=False)  # id en el proveedor
     plan              = Column(String(32), nullable=False, default="PRO")
     months            = Column(Integer, nullable=False, default=1)
     amount            = Column(Numeric(10, 2), nullable=False)
