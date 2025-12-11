@@ -76,7 +76,12 @@ class User(Base):
     mail_accounts = relationship("MailAccount", back_populates="user", lazy="selectin")
     report_downloads = relationship("ReportDownload", back_populates="user", lazy="selectin")
     allowed_ips = relationship("AllowedIP", back_populates="user", lazy="selectin")
-    accepted_invites = relationship("OrgInvite", back_populates="used_by_user", lazy="selectin")
+    accepted_invites = relationship(
+        "OrgInvite",
+        back_populates="used_by_user",
+        foreign_keys="OrgInvite.used_by_user_id",
+        lazy="selectin",
+    )
 
     # Pagos
     payment_events = relationship("PaymentEvent", back_populates="user", lazy="selectin")
