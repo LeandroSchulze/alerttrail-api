@@ -110,6 +110,8 @@ def ensure_payment_events_columns() -> None:
             print("[init_db] payment_events.processed_at agregado")
 
 
+from sqlalchemy import inspect, text  # asegúrate de tener estos imports arriba del archivo
+
 def ensure_payments_history_columns():
     inspector = inspect(engine)
     tables = inspector.get_table_names()
@@ -132,6 +134,42 @@ def ensure_payments_history_columns():
                 "ADD COLUMN months INTEGER DEFAULT 1"
             ))
             print("[init_db] payments_history.months agregado")
+
+        if "amount" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN amount REAL DEFAULT 0"
+            ))
+            print("[init_db] payments_history.amount agregado")
+
+        if "currency" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN currency VARCHAR(10)"
+            ))
+            print("[init_db] payments_history.currency agregado")
+
+        if "status" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN status VARCHAR(50)"
+            ))
+            print("[init_db] payments_history.status agregado")
+
+        if "description" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN description TEXT"
+            ))
+            print("[init_db] payments_history.description agregado")
+
+        if "raw_payload" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN raw_payload TEXT"
+            ))
+            print("[init_db] payments_history.raw_payload agregado")
+
 
 
 
