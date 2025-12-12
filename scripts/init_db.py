@@ -200,6 +200,23 @@ def ensure_user_billing_columns():
         if "last_payment_id" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN last_payment_id VARCHAR(64)"))
             print("[init_db] users.last_payment_id agregado")
+                # columnas adicionales para seguimiento de PRO / trial
+        if "pro_started_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN pro_started_at DATETIME"))
+            print("[init_db] users.pro_started_at agregado")
+
+        if "trial_started_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN trial_started_at DATETIME"))
+            print("[init_db] users.trial_started_at agregado")
+
+        if "trial_expires_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN trial_expires_at DATETIME"))
+            print("[init_db] users.trial_expires_at agregado")
+
+        if "trial_used" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN trial_used BOOLEAN DEFAULT 0 NOT NULL"))
+            print("[init_db] users.trial_used agregado")
+
 
 
 # ---------------------------------------------------------------------------
