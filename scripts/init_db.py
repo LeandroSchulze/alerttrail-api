@@ -110,36 +110,29 @@ def ensure_payment_events_columns() -> None:
             print("[init_db] payment_events.processed_at agregado")
 
 
-def ensure_payments_history_columns() -> None:
-    """
-    Asegura columnas nuevas en payments_history:
-    - external_payment_id
-
-    Es idempotente: si ya existe, no hace nada.
-    """
-    insp = inspect(engine)
-    try:
-        cols = {c["name"] for c in insp.get_columns("payments_history")}
-    except Exception:
-        print("[init_db] Tabla payments_history no existe aún (será creada por create_all)")
+def ensure_payments_history_columns():
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    if "payments_history" not in tables:
         return
+
+    cols = {c["name"] for c in inspector.get_columns("payments_history")}
 
     with engine.begin() as conn:
         if "external_payment_id" not in cols:
-            conn.execute(
-                text(
-                    "ALTER TABLE payments_history "
-                    "ADD COLUMN external_payment_id VARCHAR(64)"
-                            if "months" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN external_payment_id VARCHAR(255)"
+            ))
+            print("[init_db] payments_history.external_payment_id agregado")
+
+        if "months" not in cols:
             conn.execute(text(
                 "ALTER TABLE payments_history "
                 "ADD COLUMN months INTEGER DEFAULT 1"
             ))
             print("[init_db] payments_history.months agregado")
 
-                )
-            )
-            print("[init_db] payments_history.external_payment_id agregado")
 
 
 def backfill_mail_accounts() -> None:
