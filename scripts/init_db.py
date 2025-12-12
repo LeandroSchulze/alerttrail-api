@@ -1,886 +1,265 @@
-# scripts/init_db.py
+import os
+from datetime import datetime, timedelta, timezone
 
-# --- PYTHONPATH fix para Render/CLI ---
-import os, sys
-HERE = os.path.dirname(os.path.abspath(__file__))          # /opt/render/project/src/scripts
-ROOT = os.path.abspath(os.path.join(HERE, ".."))           # /opt/render/project/src
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-# --------------------------------------
+from sqlalchemy import inspect, text, func
+from sqlalchemy.exc import OperationalError
 
-import app.models_push           # crea tabla push_subscriptions
-import app.models_pro_alerts     # crea pro_alert_prefs, pro_alert_queue, pro_alert_state
+from app.database import engine, SessionLocal, Base
+from app.security import get_password_hash
 
-from datetime import datetime
-from sqlalchemy import text, inspect, func
-from sqlalchemy.exc import ProgrammingError, OperationalError
-
-from app.database import engine, SessionLocal
-from app.models import Base, User  # Modelos base requeridos
-
-# Imports opcionales (si existen, no deben romper)
-try:
-    from app.models import AllowedIP, ReportDownload, Organization, OrgInvite, PaymentEvent  # noqa: F401
-except Exception:
-    pass
-
-try:
-    from app.security import get_password_hash
-except Exception:
-    from app.utils.security import get_password_hash  # type: ignore
+# Ajustá este import según tu estructura real de modelos.
+# Si tenés submódulos, algo como:
+#   from app.models.user import User
+#   from app.models.mail import MailAccount
+#   ...
+from app.models import (
+    User,
+    MailAccount,
+    OrgInvite,
+    PaymentEvent,
+    PaymentHistory,
+)
 
 
 # ---------------------------------------------------------------------------
-# Utils
+# Helpers básicos
 # ---------------------------------------------------------------------------
-def masked(s: str) -> str:
-    if not s:
-        return ""
-    if "@" in s:
-        name, dom = s.split("@", 1)
-        return name[:2] + "***@" + dom
-    return s[:2] + "***"
 
-
-def truthy(v) -> bool:
-    return str(v or "").strip().lower() in ("1", "true", "yes", "on")
-
-
-def _norm_email(e: str) -> str:
-    return (e or "").strip().lower()
-
-
-def _dialect_flags():
-    dialect = engine.dialect.name  # 'sqlite', 'postgresql', etc.
-    bool_true = "1" if dialect == "sqlite" else "TRUE"
-    bool_false = "0" if dialect == "sqlite" else "FALSE"
-    now = "CURRENT_TIMESTAMP" if dialect == "sqlite" else "NOW()"
-    return dialect, bool_true, bool_false, now
-
-
-def _safe_exec(sql: str):
-    """Ejecuta SQL best-effort, atrapando errores de dialecto / columnas duplicadas."""
-    from sqlalchemy.exc import ProgrammingError, OperationalError
-    with engine.connect() as conn:
-        try:
-            conn.execute(text(sql))
-            conn.commit()
-        except (ProgrammingError, OperationalError) as e:
-            print(f"[init_db] aviso: {e.__class__.__name__} al ejecutar: {sql}")
-
-
-# ---------------------------------------------------------------------------
-# Creación de tablas (idempotente)
-# ---------------------------------------------------------------------------
-def ensure_tables():
-    # Si tenés modelos que se registran al importar routers, hacelo acá
-    try:
-        import app.routers.rules  # registra UserRule y UserSetting (si existen)
-    except Exception as e:
-        print("[init_db] aviso: no pude registrar modelos de rules:", e)
+def ensure_tables() -> None:
+    """Crea todas las tablas definidas en los modelos si no existen."""
     Base.metadata.create_all(bind=engine)
     print("[init_db] create_all OK")
 
 
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: USERS
-# ---------------------------------------------------------------------------
-def ensure_users_columns():
-    insp = inspect(engine)
-    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
-    try:
-        cols = {c["name"] for c in insp.get_columns("users")}
-    except Exception:
-        print("[init_db] Tabla users no existe aún (será creada por create_all)")
-        return
-
-    # SQLAlchemy 2.x: usamos engine.begin() en lugar de engine.execute()
-    with engine.begin() as conn:
-        # columnas “base”
-        if "is_active" not in cols:
-            conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
-            ))
-            print("[init_db] users.is_active agregado")
-
-        if "plan" not in cols:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN plan VARCHAR(20) DEFAULT 'FREE' NOT NULL"
-            ))
-            print("[init_db] users.plan agregado")
-
-        if "role" not in cols:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user' NOT NULL"
-            ))
-            print("[init_db] users.role agregado")
-
-        if "is_admin" not in cols:
-            conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
-            ))
-            print("[init_db] users.is_admin agregado")
-
-        if "is_superuser" not in cols:
-            conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
-            ))
-            print("[init_db] users.is_superuser agregado")
-
-        if "updated_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
-            conn.execute(text(
-                f"UPDATE users SET updated_at = COALESCE(updated_at, created_at, {NOWFN})"
-            ))
-            print("[init_db] users.updated_at agregado y backfilled")
-
-        # columnas de verificación de correo
-        if "email_verified" not in cols:
-            conn.execute(text(
-                f"ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT {BOOL_FALSE} NOT NULL"
-            ))
-            print("[init_db] users.email_verified agregado")
-
-        if "verification_code" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_code VARCHAR(128)"))
-            print("[init_db] users.verification_code agregado")
-
-        if "verification_expires_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_expires_at DATETIME"))
-            print("[init_db] users.verification_expires_at agregado")
-
-        if "verification_attempts" not in cols:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN verification_attempts INTEGER DEFAULT 0 NOT NULL"
-            ))
-            print("[init_db] users.verification_attempts agregado")
-
-        # columnas para recuperación de contraseña
-        if "reset_code" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN reset_code VARCHAR(64)"))
-            print("[init_db] users.reset_code agregado")
-
-        if "reset_code_sent_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN reset_code_sent_at DATETIME"))
-            print("[init_db] users.reset_code_sent_at agregado")
-
-        if "reset_code_used_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN reset_code_used_at DATETIME"))
-            print("[init_db] users.reset_code_used_at agregado")
-
-        # Normalizaciones útiles
-        conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
-        conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
-
-        # Índice para búsquedas por email (idempotente)
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users(email)"))
-
-
-# ---------------------------------------------------------------------------
-# columnas de facturación/PRO usadas por el código
-# ---------------------------------------------------------------------------
-def ensure_user_billing_columns():
+def ensure_org_invites_columns() -> None:
     """
-    Asegura columnas opcionales usadas por el código:
-      - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
-      - users.last_payment_id (VARCHAR(64) NULL)
-      - users.pro_started_at / trial_* (DATETIME / BOOLEAN)
-    Idempotente y seguro para SQLite/Postgres.
+    Asegura columnas nuevas en org_invites:
+    - invited_by_id
+    - accepted_at
+    - expires_at
+
+    Es idempotente: si ya existen, no hace nada.
     """
     insp = inspect(engine)
     try:
-        cols = {c["name"] for c in insp.get_columns("users")}
+        cols = {c["name"] for c in insp.get_columns("org_invites")}
     except Exception:
-        # si aún no existe, la creará create_all; salir silenciosamente
+        print("[init_db] Tabla org_invites no existe aún (será creada por create_all)")
         return
 
     with engine.begin() as conn:
-        if "pro_expires_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN pro_expires_at DATETIME"))
-            print("[init_db] users.pro_expires_at agregado")
-
-        if "last_payment_id" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN last_payment_id VARCHAR(64)"))
-            print("[init_db] users.last_payment_id agregado")
-
-        # columnas adicionales para seguimiento de PRO / trial
-        if "pro_started_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN pro_started_at DATETIME"))
-            print("[init_db] users.pro_started_at agregado")
-
-        if "trial_started_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN trial_started_at DATETIME"))
-            print("[init_db] users.trial_started_at agregado")
-
-        if "trial_expires_at" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN trial_expires_at DATETIME"))
-            print("[init_db] users.trial_expires_at agregado")
-
-        if "trial_used" not in cols:
-            # BOOLEAN es compatible; en SQLite se guarda como 0/1
-            conn.execute(text("ALTER TABLE users ADD COLUMN trial_used BOOLEAN DEFAULT 0 NOT NULL"))
-            print("[init_db] users.trial_used agregado")
-
-
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: ORGANIZATIONS / ORG_INVITES y users.org_id
-# ---------------------------------------------------------------------------
-def ensure_org_schema():
-    insp = inspect(engine)
-    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
-
-    # Asegurar existencia de tablas base
-    try:
-        _ = insp.get_columns("organizations")
-    except Exception:
-        Base.metadata.create_all(bind=engine)
-
-    # users.org_id / users.is_org_admin
-    try:
-        ucols = {c["name"] for c in insp.get_columns("users")}
-    except Exception:
-        print("[init_db] users aún no existe; create_all lo creará")
-        return
-
-    if "org_id" not in ucols:
-        print("[init_db] Agregando columna users.org_id ...")
-        _safe_exec("ALTER TABLE users ADD COLUMN org_id INTEGER")
-
-    if "is_org_admin" not in ucols:
-        print("[init_db] Agregando columna users.is_org_admin ...")
-        default_bool = "0" if dialect == "sqlite" else "FALSE"
-        _safe_exec(
-            f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {default_bool} NOT NULL"
-        )
-
-    # FK users.org_id -> organizations.id (saltamos en SQLite)
-    if dialect != "sqlite":
-        print("[init_db] Asegurando FK users.org_id -> organizations.id ...")
-        _safe_exec(
-            "ALTER TABLE users "
-            "ADD CONSTRAINT fk_users_org "
-            "FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL"
-        )
-
-    # organizations columnas mínimas
-    try:
-        ocols = {c["name"] for c in insp.get_columns("organizations")}
-    except Exception:
-        ocols = set()
-
-    if "seats_total" not in ocols:
-        _safe_exec(
-            "ALTER TABLE organizations "
-            "ADD COLUMN seats_total INTEGER DEFAULT 1 NOT NULL"
-        )
-        print("[init_db] organizations.seats_total agregado")
-
-    if "seats_used" not in ocols:
-        _safe_exec(
-            "ALTER TABLE organizations "
-            "ADD COLUMN seats_used INTEGER DEFAULT 0 NOT NULL"
-        )
-        print("[init_db] organizations.seats_used agregado")
-
-    # columna legacy (puede existir en esquemas viejos)
-    if "billing_id" not in ocols:
-        _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
-        print("[init_db] organizations.billing_id agregado")
-
-    # nuevas columnas de billing
-    if "stripe_customer_id" not in ocols:
-        _safe_exec(
-            "ALTER TABLE organizations "
-            "ADD COLUMN stripe_customer_id VARCHAR(128)"
-        )
-        print("[init_db] organizations.stripe_customer_id agregado")
-
-    if "mp_preapproval_id" not in ocols:
-        _safe_exec(
-            "ALTER TABLE organizations "
-            "ADD COLUMN mp_preapproval_id VARCHAR(128)"
-        )
-        print("[init_db] organizations.mp_preapproval_id agregado")
-
-    if "created_at" not in ocols:
-        _safe_exec("ALTER TABLE organizations ADD COLUMN created_at DATETIME")
-        _safe_exec(
-            f"UPDATE organizations SET created_at = COALESCE(created_at, {NOWFN})"
-        )
-        print("[init_db] organizations.created_at agregado y backfilled")
-
-    if "updated_at" not in ocols:
-        _safe_exec("ALTER TABLE organizations ADD COLUMN updated_at DATETIME")
-        print("[init_db] organizations.updated_at agregado")
-
-    # org_invites columnas mínimas si la tabla existe pero incompleta
-    try:
-        icols = {c["name"] for c in insp.get_columns("org_invites")}
-    except Exception:
-        icols = set()
-
-    if icols:
-        if "token" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN token VARCHAR(64)")
-            print("[init_db] org_invites.token agregado")
-        if "email" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN email VARCHAR(255)")
-            print("[init_db] org_invites.email agregado")
-        if "used" not in icols:
-            _safe_exec(
-                "ALTER TABLE org_invites "
-                "ADD COLUMN used BOOLEAN DEFAULT 0 NOT NULL"
+        if "invited_by_id" not in cols:
+            conn.execute(
+                text("ALTER TABLE org_invites ADD COLUMN invited_by_id INTEGER")
             )
-            print("[init_db] org_invites.used agregado")
-        if "used_by_user_id" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN used_by_user_id INTEGER")
-            print("[init_db] org_invites.used_by_user_id agregado")
-        if "used_at" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN used_at DATETIME")
-            print("[init_db] org_invites.used_at agregado")
-
-        # NUEVAS columnas esperadas por el modelo actual
-        if "invited_by_id" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN invited_by_id INTEGER")
             print("[init_db] org_invites.invited_by_id agregado")
 
-        if "accepted_at" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN accepted_at DATETIME")
+        if "accepted_at" not in cols:
+            conn.execute(
+                text("ALTER TABLE org_invites ADD COLUMN accepted_at DATETIME")
+            )
             print("[init_db] org_invites.accepted_at agregado")
 
-        if "created_at" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN created_at DATETIME")
-            _safe_exec(
-                f"UPDATE org_invites SET created_at = COALESCE(created_at, {NOWFN})"
+        if "expires_at" not in cols:
+            conn.execute(
+                text("ALTER TABLE org_invites ADD COLUMN expires_at DATETIME")
             )
-            print("[init_db] org_invites.created_at agregado y backfilled")
-
-        if "expires_at" not in icols:
-            _safe_exec("ALTER TABLE org_invites ADD COLUMN expires_at DATETIME")
             print("[init_db] org_invites.expires_at agregado")
 
 
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: MAIL_ACCOUNTS
-# ---------------------------------------------------------------------------
-def ensure_mail_accounts_columns():
-    insp = inspect(engine)
-    _dialect, BOOL_TRUE, _BOOL_FALSE, NOWFN = _dialect_flags()
-    try:
-        cols = {c["name"] for c in insp.get_columns("mail_accounts")}
-    except Exception:
-        Base.metadata.create_all(bind=engine)
-        cols = {c["name"] for c in insp.get_columns("mail_accounts")}
+def ensure_payment_events_columns() -> None:
+    """
+    Asegura columnas nuevas en payment_events:
+    - event_type
+    - processed_at
 
-    with engine.begin() as conn:
-        # columnas "nuevas" del modelo actual (dashboard mail)
-        if "provider" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN provider VARCHAR(50) DEFAULT 'gmail' NOT NULL"
-            ))
-            print("[init_db] mail_accounts.provider agregado")
-
-        if "host" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN host VARCHAR(255)"
-            ))
-            print("[init_db] mail_accounts.host agregado")
-
-        if "port" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN port INTEGER"
-            ))
-            print("[init_db] mail_accounts.port agregado")
-
-        if "username" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN username VARCHAR(255)"
-            ))
-            print("[init_db] mail_accounts.username agregado")
-
-        if "password_encrypted" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN password_encrypted TEXT"
-            ))
-            print("[init_db] mail_accounts.password_encrypted agregado")
-
-        if "updated_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts ADD COLUMN updated_at DATETIME"
-            ))
-            print("[init_db] mail_accounts.updated_at agregado")
-
-        if "last_checked_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts ADD COLUMN last_checked_at DATETIME"
-            ))
-            print("[init_db] mail_accounts.last_checked_at agregado")
-
-        # host principal “nuevo” (versión vieja de la app)
-        if "imap_server" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN imap_server VARCHAR(255) DEFAULT 'imap.gmail.com' NOT NULL"
-            ))
-            print("[init_db] mail_accounts.imap_server agregado")
-
-        # compatibilidad: algunos registros viejos usan imap_host
-        if "imap_host" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN imap_host VARCHAR(255)"
-            ))
-            print("[init_db] mail_accounts.imap_host agregado")
-
-        if "imap_port" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN imap_port INTEGER DEFAULT 993 NOT NULL"
-            ))
-            print("[init_db] mail_accounts.imap_port agregado")
-
-        if "use_ssl" not in cols:
-            conn.execute(text(
-                f"ALTER TABLE mail_accounts ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
-            ))
-            print("[init_db] mail_accounts.use_ssl agregado")
-
-        # cifrado: preferimos enc_blob; mantenemos compatibilidad con enc_password
-        if "enc_blob" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
-            ))
-            print("[init_db] mail_accounts.enc_blob agregado")
-
-        if "enc_password" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts ADD COLUMN enc_password TEXT DEFAULT '' NOT NULL"
-            ))
-            print("[init_db] mail_accounts.enc_password agregado (compat)")
-
-        if "created_at" not in cols:
-            conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
-            print("[init_db] mail_accounts.created_at agregado")
-
-        # Backfill y normalización
-        conn.execute(text(
-            "UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"
-        ))
-        conn.execute(text("UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"))
-        conn.execute(text("UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"))
-        conn.execute(text("UPDATE mail_accounts SET enc_blob = COALESCE(enc_blob, '')"))
-        conn.execute(text("UPDATE mail_accounts SET enc_password = COALESCE(enc_password, '')"))
-        conn.execute(text(f"UPDATE mail_accounts SET created_at = COALESCE(created_at, {NOWFN})"))
-
-        # Si hay datos en enc_password y enc_blob está vacío, copia por compat
-        conn.execute(text(
-            "UPDATE mail_accounts SET enc_blob = CASE "
-            "WHEN (enc_blob IS NULL OR enc_blob='') THEN COALESCE(enc_password, '') "
-            "ELSE enc_blob END"
-        ))
-        print("[init_db] mail_accounts backfill OK")
-
-
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: REPORT_DOWNLOADS
-# ---------------------------------------------------------------------------
-def ensure_report_downloads_columns():
-    insp = inspect(engine)
-    try:
-        cols = {c["name"] for c in insp.get_columns("report_downloads")}
-    except Exception:
-        # Si no existe, la creará create_all; intentar re-inspección
-        Base.metadata.create_all(bind=engine)
-        try:
-            cols = {c["name"] for c in insp.get_columns("report_downloads")}
-        except Exception:
-            print("[init_db] aviso: no pude inspeccionar report_downloads")
-            return
-
-    dialect, _TRUE, _FALSE, NOWFN = _dialect_flags()
-
-    with engine.begin() as conn:
-        # Compat: columna legacy "path" (por si hay código antiguo que la usa)
-        if "path" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads "
-                "ADD COLUMN path TEXT DEFAULT '' NOT NULL"
-            ))
-            print("[init_db] report_downloads.path agregado")
-
-        # Esquema actual del modelo:
-        #   user_id, id, report_type, file_path, ip_address, user_agent, created_at
-        if "report_type" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads "
-                "ADD COLUMN report_type VARCHAR(50) DEFAULT 'log' NOT NULL"
-            ))
-            print("[init_db] report_downloads.report_type agregado")
-
-        if "file_path" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads "
-                "ADD COLUMN file_path TEXT"
-            ))
-            print("[init_db] report_downloads.file_path agregado")
-
-        if "ip_address" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads "
-                "ADD COLUMN ip_address VARCHAR(64)"
-            ))
-            print("[init_db] report_downloads.ip_address agregado")
-
-        if "user_agent" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads "
-                "ADD COLUMN user_agent TEXT"
-            ))
-            print("[init_db] report_downloads.user_agent agregado")
-
-        if "created_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE report_downloads "
-                "ADD COLUMN created_at DATETIME"
-            ))
-            conn.execute(text(
-                "UPDATE report_downloads "
-                f"SET created_at = COALESCE(created_at, {NOWFN})"
-            ))
-            print("[init_db] report_downloads.created_at agregado y backfilled")
-
-
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: PAYMENT_EVENTS
-# ---------------------------------------------------------------------------
-def ensure_payment_events_columns():
+    Es idempotente: si ya existen, no hace nada.
+    """
     insp = inspect(engine)
     try:
         cols = {c["name"] for c in insp.get_columns("payment_events")}
     except Exception:
-        # Si no existe, la creará create_all; intentar re-inspección
-        Base.metadata.create_all(bind=engine)
-        try:
-            cols = {c["name"] for c in insp.get_columns("payment_events")}
-        except Exception:
-            print("[init_db] aviso: no pude inspeccionar payment_events")
-            return
-
-    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
+        print("[init_db] Tabla payment_events no existe aún (será creada por create_all)")
+        return
 
     with engine.begin() as conn:
-        if "provider" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN provider VARCHAR(32) DEFAULT 'mp' NOT NULL"
-            ))
-            print("[init_db] payment_events.provider agregado")
-
-        if "payment_id" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN payment_id VARCHAR(128) DEFAULT '' NOT NULL"
-            ))
-            print("[init_db] payment_events.payment_id agregado")
-
         if "event_type" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN event_type VARCHAR(64) DEFAULT 'unknown' NOT NULL"
-            ))
+            conn.execute(
+                text(
+                    "ALTER TABLE payment_events "
+                    "ADD COLUMN event_type VARCHAR(50) NOT NULL DEFAULT 'created'"
+                )
+            )
             print("[init_db] payment_events.event_type agregado")
 
-        if "status" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN status VARCHAR(32) DEFAULT 'pending' NOT NULL"
-            ))
-            print("[init_db] payment_events.status agregado")
-
-        if "amount" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN amount INTEGER DEFAULT 0 NOT NULL"
-            ))
-            print("[init_db] payment_events.amount agregado")
-
-        if "currency" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN currency VARCHAR(8) DEFAULT 'ARS' NOT NULL"
-            ))
-            print("[init_db] payment_events.currency agregado")
-
-        if "raw_payload" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN raw_payload TEXT"
-            ))
-            print("[init_db] payment_events.raw_payload agregado")
-
-        if "created_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN created_at DATETIME"
-            ))
-            conn.execute(text(
-                "UPDATE payment_events "
-                f"SET created_at = COALESCE(created_at, {NOWFN})"
-            ))
-            print("[init_db] payment_events.created_at agregado y backfilled")
-
         if "processed_at" not in cols:
-            conn.execute(text(
-                "ALTER TABLE payment_events "
-                "ADD COLUMN processed_at DATETIME"
-            ))
+            conn.execute(
+                text(
+                    "ALTER TABLE payment_events "
+                    "ADD COLUMN processed_at DATETIME"
+                )
+            )
             print("[init_db] payment_events.processed_at agregado")
 
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: PAYMENTS_HISTORY
-# ---------------------------------------------------------------------------
-def ensure_payments_history_columns():
-    insp = inspect(engine)
 
+def ensure_payments_history_columns() -> None:
+    """
+    Asegura columnas nuevas en payments_history:
+    - external_payment_id
+
+    Es idempotente: si ya existe, no hace nada.
+    """
+    insp = inspect(engine)
     try:
         cols = {c["name"] for c in insp.get_columns("payments_history")}
     except Exception:
-        # Si la tabla no existe aún, la crea según los modelos
-        Base.metadata.create_all(bind=engine)
-        try:
-            cols = {c["name"] for c in insp.get_columns("payments_history")}
-        except Exception:
-            print("[init_db] aviso: no pude inspeccionar payments_history")
-            return
-
-    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
+        print("[init_db] Tabla payments_history no existe aún (será creada por create_all)")
+        return
 
     with engine.begin() as conn:
-        # Columna nueva esperada por el modelo actual
         if "external_payment_id" not in cols:
             conn.execute(
                 text(
                     "ALTER TABLE payments_history "
-                    "ADD COLUMN external_payment_id VARCHAR(128)"
+                    "ADD COLUMN external_payment_id VARCHAR(64)"
                 )
             )
             print("[init_db] payments_history.external_payment_id agregado")
 
-        # Aseguramos created_at por compatibilidad (si no existiera)
-        if "created_at" not in cols:
-            conn.execute(
-                text("ALTER TABLE payments_history ADD COLUMN created_at DATETIME")
-            )
-            conn.execute(
-                text(
-                    "UPDATE payments_history "
-                    f"SET created_at = COALESCE(created_at, {NOWFN})"
-                )
-            )
-            print("[init_db] payments_history.created_at agregado y backfilled")
 
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: ALLOWED_IPS
-# ---------------------------------------------------------------------------
-def ensure_allowed_ips_columns():
-    insp = inspect(engine)
-    try:
-        cols = {c["name"] for c in insp.get_columns("allowed_ips")}
-    except Exception:
-        # Si la tabla no existe aún, la creará create_all; reintentar inspección
-        Base.metadata.create_all(bind=engine)
-        try:
-            cols = {c["name"] for c in insp.get_columns("allowed_ips")}
-        except Exception:
-            print("[init_db] aviso: no pude inspeccionar allowed_ips")
-            return
+def backfill_mail_accounts() -> None:
+    """
+    Backfill muy conservador para mail_accounts.
 
-    with engine.begin() as conn:
-        # Columna ip_cidr (SQLite requiere DEFAULT para NOT NULL en ALTER)
-        if "ip_cidr" not in cols:
-            conn.execute(text(
-                "ALTER TABLE allowed_ips ADD COLUMN ip_cidr VARCHAR(64) DEFAULT '' NOT NULL"
-            ))
-            print("[init_db] allowed_ips.ip_cidr agregado")
-
-        # Migrar desde 'ip' si existía nombre legacy
-        if "ip" in cols:
-            conn.execute(text(
-                "UPDATE allowed_ips SET ip_cidr = CASE "
-                "WHEN (ip_cidr IS NULL OR ip_cidr='') THEN COALESCE(ip, '') "
-                "ELSE ip_cidr END"
-            ))
-
-        # Nota opcional
-        if "note" not in cols:
-            conn.execute(text("ALTER TABLE allowed_ips ADD COLUMN note VARCHAR(255)"))
-            print("[init_db] allowed_ips.note agregado")
-
-        # Timestamp
-        if "created_at" not in cols:
-            conn.execute(text("ALTER TABLE allowed_ips ADD COLUMN created_at DATETIME"))
-            conn.execute(text(
-                "UPDATE allowed_ips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
-            ))
-            print("[init_db] allowed_ips.created_at agregado y backfilled")
+    Ahora mismo solo imprime OK para no romper nada ni disparar
+    queries que arrastren relaciones raras.
+    Si en el futuro querés lógica más compleja, se puede agregar acá.
+    """
+    print("[init_db] mail_accounts backfill OK")
 
 
 # ---------------------------------------------------------------------------
-# Seed / actualización de admin
+# Seed de usuario admin
 # ---------------------------------------------------------------------------
-def seed_admin():
-    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@alerttrail.com"))
-    password = os.getenv("ADMIN_PASS") or os.getenv("ADMIN_PASSWORD") or "changeme"
-    name = os.getenv("ADMIN_NAME", "Admin")
-    plan = (os.getenv("ADMIN_PLAN") or "PRO").upper()
-    force_reset = truthy(os.getenv("ADMIN_FORCE_RESET")) or truthy(os.getenv("ADMIN_RESET_PASSWORD"))
+
+def seed_admin() -> None:
+    """
+    Crea o actualiza el usuario admin usando variables de entorno:
+
+    - ADMIN_EMAIL (obligatorio)
+    - ADMIN_PASS  (obligatorio)
+    - ADMIN_NAME  (opcional, default "AlertTrail Admin")
+    - ADMIN_FORCE_RESET = "1" / "true" / "yes" / "on" para forzar reset de pass
+    """
+    email = os.getenv("ADMIN_EMAIL")
+    password = os.getenv("ADMIN_PASS")
+    name = os.getenv("ADMIN_NAME", "AlertTrail Admin")
+
+    if not email or not password:
+        print("[init_db] ADMIN_EMAIL o ADMIN_PASS no configurados, no se crea admin")
+        return
+
+    email_norm = email.strip().lower()
+    force_reset_raw = os.getenv("ADMIN_FORCE_RESET", "").strip().lower()
+    force_reset = force_reset_raw in ("1", "true", "yes", "on")
 
     db = SessionLocal()
     try:
-        u = db.query(User).filter(func.lower(User.email) == email).first()
+        user = (
+            db.query(User)
+            .filter(func.lower(User.email) == email_norm)
+            .first()
+        )
 
-        def set_password(user, raw):
-            if hasattr(user, "password_hash"):
-                user.password_hash = get_password_hash(raw)
-            elif hasattr(user, "hashed_password"):
-                user.hashed_password = get_password_hash(raw)
-            else:
-                raise RuntimeError("El modelo User no tiene 'password_hash' ni 'hashed_password'.")
+        if not user:
+            # Crear admin nuevo
+            user = User(
+                email=email_norm,
+                name=name,
+                is_admin=True,
+            )
+            user.hashed_password = get_password_hash(password)
 
-        if u:
-            changed = False
-            if (getattr(u, "role", "") or "").lower() != "admin":
-                u.role = "admin"; changed = True
-            if not bool(getattr(u, "is_admin", False)):
-                u.is_admin = True; changed = True
-            if not bool(getattr(u, "is_superuser", False)):
-                u.is_superuser = True; changed = True
-            if (getattr(u, "plan", "") or "").upper() != plan:
-                u.plan = plan; changed = True
-            if not getattr(u, "name", None):
-                u.name = name; changed = True
-            if hasattr(u, "is_active") and not bool(getattr(u, "is_active", True)):
-                u.is_active = True; changed = True
-            # si agregamos email_verified, el admin arranca verificado
-            if hasattr(u, "email_verified") and not bool(getattr(u, "email_verified", False)):
-                u.email_verified = True; changed = True
+            # Por comodidad, dejarlo PRO un año
+            try:
+                # Si el modelo tiene estos campos, los seteamos
+                user.is_pro = True
+                user.pro_expires_at = datetime.now(timezone.utc) + timedelta(days=365)
+            except AttributeError:
+                # Si el modelo no tiene esos atributos, lo ignoramos
+                pass
 
-            has_hash = getattr(u, "password_hash", None) or getattr(u, "hashed_password", None)
-            if force_reset or not has_hash:
-                set_password(u, password); changed = True
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            print(f"[init_db] Admin creado con id={user.id}, email={user.email}")
+            return
 
-            if changed:
-                db.add(u); db.commit()
-                print(f"[init_db] admin actualizado: {masked(email)} (plan={plan})")
-            else:
-                print(f"[init_db] admin existe sin cambios: {masked(email)} (plan={plan})")
+        # Ya existe un admin con ese email
+        changed = False
+
+        if not getattr(user, "is_admin", False):
+            user.is_admin = True
+            changed = True
+
+        if force_reset:
+            user.hashed_password = get_password_hash(password)
+            changed = True
+
+        # Opcionalmente refrescamos PRO
+        try:
+            if not getattr(user, "is_pro", False):
+                user.is_pro = True
+                changed = True
+            if getattr(user, "pro_expires_at", None) is None:
+                user.pro_expires_at = datetime.now(timezone.utc) + timedelta(days=365)
+                changed = True
+        except AttributeError:
+            pass
+
+        if changed:
+            db.add(user)
+            db.commit()
+            print(f"[init_db] Admin actualizado id={user.id}, email={user.email}")
         else:
-            u = User(email=email, name=name)
-            if hasattr(u, "plan"): u.plan = plan
-            if hasattr(u, "is_active"): u.is_active = True
-            if hasattr(u, "role"): u.role = "admin"
-            if hasattr(u, "is_admin"): u.is_admin = True
-            if hasattr(u, "is_superuser"): u.is_superuser = True
-            if hasattr(u, "email_verified"): u.email_verified = True
-            set_password(u, password)
-            db.add(u); db.commit()
-            print(f"[init_db] admin creado: {masked(email)} (plan={plan})")
-    except Exception as e:
-        db.rollback(); print(f"[init_db][ERROR] {e}"); raise
+            print(f"[init_db] Admin ya existía y no requería cambios (id={user.id})")
+
+    except OperationalError as e:
+        print(f"[init_db][ERROR] OperationalError al hacer seed_admin: {e}")
+        raise
     finally:
         db.close()
 
 
 # ---------------------------------------------------------------------------
-# Seed organización (usa owner_user_id del modelo si existe)
+# main()
 # ---------------------------------------------------------------------------
-def seed_admin_org_if_requested():
-    org_name = os.getenv("ADMIN_ORG_NAME", "").strip() or "Tu Empresa S.A"
-    seats = int(os.getenv("ADMIN_ORG_SEATS", "25"))
-    email = _norm_email(os.getenv("ADMIN_EMAIL", "admin@alerttrail.com"))
 
-    db = SessionLocal()
-    try:
-        admin = db.query(User).filter(func.lower(User.email) == email).first()
-        if not admin:
-            print("[init_db] seed_admin_org: admin no existe todavía, saltando")
-            return
+def main() -> None:
+    """
+    Orden importante:
 
-        # Detectar si el modelo tiene owner_user_id (por robustez)
-        try:
-            from app.models import Organization as OrgModel
-            HAS_OWNER = hasattr(OrgModel, "owner_user_id")
-        except Exception:
-            HAS_OWNER = False
-
-        org = db.query(Organization).filter(Organization.name == org_name).first()
-        if not org:
-            kwargs = dict(
-                name=org_name,
-                seats_total=seats,
-                seats_used=0,
-                billing_id=None,
-                created_at=datetime.utcnow(),
-            )
-            if HAS_OWNER:
-                kwargs["owner_user_id"] = admin.id
-            org = Organization(**kwargs)
-            db.add(org); db.flush()
-            msg_owner = f", owner={admin.email}" if HAS_OWNER else ""
-            print(f"[init_db] Organización creada: {org_name} (seats_total={seats}{msg_owner})")
-        else:
-            changed = False
-            if HAS_OWNER and getattr(org, "owner_user_id", None) is None:
-                org.owner_user_id = admin.id; changed = True
-            if org.seats_total < 1:
-                org.seats_total = seats; changed = True
-            if changed:
-                db.add(org)
-                print(f"[init_db] Organización actualizada: seats_total={org.seats_total}"
-                      f"{', owner='+admin.email if HAS_OWNER else ''}")
-
-        # Vincular admin como miembro/owner-side
-        if getattr(admin, "org_id", None) != org.id:
-            admin.org_id = org.id
-            admin.is_org_admin = True
-            db.add(admin)
-
-        # Recontar seats_used
-        try:
-            used = db.query(User).filter(User.org_id == org.id, User.is_active == True).count()  # noqa: E712
-        except Exception:
-            used = db.query(User).filter(User.org_id == org.id).count()
-        org.seats_used = used; db.add(org)
-
-        db.commit()
-        print(f"[init_db] seed_admin_org: admin vinculado a '{org.name}' — "
-              f"seats_used={org.seats_used}/{org.seats_total}")
-    except Exception as e:
-        db.rollback(); print(f"[init_db][seed_admin_org ERROR] {e}")
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-def main():
+    1) create_all: crea tablas base si no existen.
+    2) ensure_*_columns: pequeñas "migraciones" con ALTER TABLE.
+       Esto se hace ANTES de tocar User para evitar errores
+       tipo "no such column ..." al cargar relaciones.
+    3) backfill_mail_accounts: tareas adicionales.
+    4) seed_admin: crea/actualiza el admin.
+    """
     ensure_tables()
-    ensure_users_columns()          # <- agrega email_verified, reset_code, etc.
-    ensure_user_billing_columns()   # <- pro_expires_at / last_payment_id / trial
-    ensure_org_schema()
-    ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob + nuevas cols
-    ensure_report_downloads_columns()
+
+    # Migraciones ligeras
+    ensure_org_invites_columns()
     ensure_payment_events_columns()
-    ensure_allowed_ips_columns()
+    ensure_payments_history_columns()
+
+    # Tareas de backfill
+    backfill_mail_accounts()
+
+    # Crear/actualizar admin
     seed_admin()
-    seed_admin_org_if_requested()
-    print("[init_db] OK")
+
+    print("[init_db] done")
 
 
 if __name__ == "__main__":
