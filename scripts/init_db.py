@@ -162,6 +162,19 @@ def ensure_users_columns():
     except Exception:
         pass
 
+        # columnas para recuperación de contraseña
+        if "reset_code" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN reset_code VARCHAR(64)"))
+            print("[init_db] users.reset_code agregado")
+
+        if "reset_code_sent_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN reset_code_sent_at DATETIME"))
+            print("[init_db] users.reset_code_sent_at agregado")
+
+        if "reset_code_used_at" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN reset_code_used_at DATETIME"))
+            print("[init_db] users.reset_code_used_at agregado")
+
 
 # ---------------------------------------------------------------------------
 # 🔧 NUEVO: columnas de facturación/PRO usadas por el código
