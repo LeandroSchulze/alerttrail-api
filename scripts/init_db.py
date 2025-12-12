@@ -20,7 +20,7 @@ from app.models import Base, User  # Modelos base requeridos
 
 # Imports opcionales (si existen, no deben romper)
 try:
-    from app.models import AllowedIP, ReportDownload, Organization, OrgInvite  # noqa: F401
+    from app.models import AllowedIP, ReportDownload, Organization, OrgInvite, PaymentEvent  # noqa: F401
 except Exception:
     pass
 
@@ -60,6 +60,7 @@ def _dialect_flags():
 
 def _safe_exec(sql: str):
     """Ejecuta SQL best-effort, atrapando errores de dialecto / columnas duplicadas."""
+    from sqlalchemy.exc import ProgrammingError, OperationalError
     with engine.connect() as conn:
         try:
             conn.execute(text(sql))
@@ -361,10 +362,6 @@ def ensure_org_schema():
 
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: MAIL_ACCOUNTS
-# Compatibilidad con esquemas antiguos:
-# - soporta imap_host e imap_server
-# - soporta enc_password y/o enc_blob (migra a enc_blob)
-# - ahora también provider/host/port/username/password_encrypted/updated_at/last_checked_at
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
@@ -461,7 +458,6 @@ def ensure_mail_accounts_columns():
             print("[init_db] mail_accounts.enc_blob agregado")
 
         if "enc_password" not in cols:
-            # crear para evitar NOT NULL constraint en esquemas antiguos
             conn.execute(text(
                 "ALTER TABLE mail_accounts ADD COLUMN enc_password TEXT DEFAULT '' NOT NULL"
             ))
@@ -557,6 +553,93 @@ def ensure_report_downloads_columns():
                 f"SET created_at = COALESCE(created_at, {NOWFN})"
             ))
             print("[init_db] report_downloads.created_at agregado y backfilled")
+
+
+# ---------------------------------------------------------------------------
+# Migraciones ligeras: PAYMENT_EVENTS
+# ---------------------------------------------------------------------------
+def ensure_payment_events_columns():
+    insp = inspect(engine)
+    try:
+        cols = {c["name"] for c in insp.get_columns("payment_events")}
+    except Exception:
+        # Si no existe, la creará create_all; intentar re-inspección
+        Base.metadata.create_all(bind=engine)
+        try:
+            cols = {c["name"] for c in insp.get_columns("payment_events")}
+        except Exception:
+            print("[init_db] aviso: no pude inspeccionar payment_events")
+            return
+
+    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
+
+    with engine.begin() as conn:
+        if "provider" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN provider VARCHAR(32) DEFAULT 'mp' NOT NULL"
+            ))
+            print("[init_db] payment_events.provider agregado")
+
+        if "payment_id" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN payment_id VARCHAR(128) DEFAULT '' NOT NULL"
+            ))
+            print("[init_db] payment_events.payment_id agregado")
+
+        if "event_type" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN event_type VARCHAR(64) DEFAULT 'unknown' NOT NULL"
+            ))
+            print("[init_db] payment_events.event_type agregado")
+
+        if "status" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN status VARCHAR(32) DEFAULT 'pending' NOT NULL"
+            ))
+            print("[init_db] payment_events.status agregado")
+
+        if "amount" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN amount INTEGER DEFAULT 0 NOT NULL"
+            ))
+            print("[init_db] payment_events.amount agregado")
+
+        if "currency" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN currency VARCHAR(8) DEFAULT 'ARS' NOT NULL"
+            ))
+            print("[init_db] payment_events.currency agregado")
+
+        if "raw_payload" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN raw_payload TEXT"
+            ))
+            print("[init_db] payment_events.raw_payload agregado")
+
+        if "created_at" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN created_at DATETIME"
+            ))
+            conn.execute(text(
+                "UPDATE payment_events "
+                f"SET created_at = COALESCE(created_at, {NOWFN})"
+            ))
+            print("[init_db] payment_events.created_at agregado y backfilled")
+
+        if "processed_at" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payment_events "
+                "ADD COLUMN processed_at DATETIME"
+            ))
+            print("[init_db] payment_events.processed_at agregado")
 
 
 # ---------------------------------------------------------------------------
@@ -751,6 +834,7 @@ def main():
     ensure_org_schema()
     ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob + nuevas cols
     ensure_report_downloads_columns()
+    ensure_payment_events_columns()
     ensure_allowed_ips_columns()
     seed_admin()
     seed_admin_org_if_requested()
