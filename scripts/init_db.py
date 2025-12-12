@@ -255,6 +255,11 @@ def ensure_org_schema():
         _safe_exec(
             f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT "
             f"{_TRUE if False else 0 if engine.dialect.name == 'sqlite' else 'FALSE'} NOT NULL"
+
+    if "updated_at" not in ocols:
+    _safe_exec("ALTER TABLE organizations ADD COLUMN updated_at DATETIME")
+    print("[init_db] organizations.updated_at agregado")
+
         )
 
     # FK users.org_id -> organizations.id (saltamos en SQLite)
