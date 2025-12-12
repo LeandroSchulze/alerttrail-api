@@ -231,35 +231,30 @@ def ensure_user_billing_columns():
 # ---------------------------------------------------------------------------
 def ensure_org_schema():
     insp = inspect(engine)
-    dialect, _TRUE, BOOL_FALSE, _NOW = _dialect_flags()
+    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
 
-    # Asegurar existencia de tablas
+    # Asegurar existencia de tabla organizations
     try:
-        _ = insp.get_columns("organizations")
+        insp.get_columns("organizations")
     except Exception:
         Base.metadata.create_all(bind=engine)
 
     # users.org_id / users.is_org_admin
     try:
-        cols = {c["name"] for c in insp.get_columns("users")}
+        ucols = {c["name"] for c in insp.get_columns("users")}
     except Exception:
         print("[init_db] users aún no existe; create_all lo creará")
         return
 
-    if "org_id" not in cols:
+    if "org_id" not in ucols:
         print("[init_db] Agregando columna users.org_id ...")
         _safe_exec("ALTER TABLE users ADD COLUMN org_id INTEGER")
 
-    if "is_org_admin" not in cols:
+    if "is_org_admin" not in ucols:
         print("[init_db] Agregando columna users.is_org_admin ...")
         _safe_exec(
             f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT "
-            f"{_TRUE if False else 0 if engine.dialect.name == 'sqlite' else 'FALSE'} NOT NULL"
-
-    if "updated_at" not in ocols:
-    _safe_exec("ALTER TABLE organizations ADD COLUMN updated_at DATETIME")
-    print("[init_db] organizations.updated_at agregado")
-
+            f"{BOOL_FALSE} NOT NULL"
         )
 
     # FK users.org_id -> organizations.id (saltamos en SQLite)
@@ -297,6 +292,13 @@ def ensure_org_schema():
         print("[init_db] organizations.billing_id agregado")
 
     # NUEVAS columnas del modelo actual
+    if "plan" not in ocols:
+        _safe_exec(
+            "ALTER TABLE organizations "
+            "ADD COLUMN plan VARCHAR(32) DEFAULT 'BIZ' NOT NULL"
+        )
+        print("[init_db] organizations.plan agregado")
+
     if "stripe_customer_id" not in ocols:
         _safe_exec(
             "ALTER TABLE organizations "
@@ -310,6 +312,14 @@ def ensure_org_schema():
             "ADD COLUMN mp_preapproval_id VARCHAR(128)"
         )
         print("[init_db] organizations.mp_preapproval_id agregado")
+
+    if "created_at" not in ocols:
+        _safe_exec("ALTER TABLE organizations ADD COLUMN created_at DATETIME")
+        print("[init_db] organizations.created_at agregado")
+
+    if "updated_at" not in ocols:
+        _safe_exec("ALTER TABLE organizations ADD COLUMN updated_at DATETIME")
+        print("[init_db] organizations.updated_at agregado")
 
     # org_invites columnas mínimas si la tabla existe pero incompleta
     try:
@@ -417,7 +427,7 @@ def ensure_mail_accounts_columns():
             "WHEN (enc_blob IS NULL OR enc_blob='') THEN COALESCE(enc_password, '') "
             "ELSE enc_blob END"
         ))
-        print("[init_db] mail_accounts backfill OK")
+        print("[init_db] mail_accounts.backfill OK")
 
 
 # ---------------------------------------------------------------------------
