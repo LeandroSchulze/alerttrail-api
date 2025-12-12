@@ -130,6 +130,13 @@ def ensure_payments_history_columns() -> None:
                 text(
                     "ALTER TABLE payments_history "
                     "ADD COLUMN external_payment_id VARCHAR(64)"
+                            if "months" not in cols:
+            conn.execute(text(
+                "ALTER TABLE payments_history "
+                "ADD COLUMN months INTEGER DEFAULT 1"
+            ))
+            print("[init_db] payments_history.months agregado")
+
                 )
             )
             print("[init_db] payments_history.external_payment_id agregado")
