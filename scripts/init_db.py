@@ -641,6 +641,48 @@ def ensure_payment_events_columns():
             ))
             print("[init_db] payment_events.processed_at agregado")
 
+# ---------------------------------------------------------------------------
+# Migraciones ligeras: PAYMENTS_HISTORY
+# ---------------------------------------------------------------------------
+def ensure_payments_history_columns():
+    insp = inspect(engine)
+
+    try:
+        cols = {c["name"] for c in insp.get_columns("payments_history")}
+    except Exception:
+        # Si la tabla no existe aún, la crea según los modelos
+        Base.metadata.create_all(bind=engine)
+        try:
+            cols = {c["name"] for c in insp.get_columns("payments_history")}
+        except Exception:
+            print("[init_db] aviso: no pude inspeccionar payments_history")
+            return
+
+    dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
+
+    with engine.begin() as conn:
+        # Columna nueva esperada por el modelo actual
+        if "external_payment_id" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE payments_history "
+                    "ADD COLUMN external_payment_id VARCHAR(128)"
+                )
+            )
+            print("[init_db] payments_history.external_payment_id agregado")
+
+        # Aseguramos created_at por compatibilidad (si no existiera)
+        if "created_at" not in cols:
+            conn.execute(
+                text("ALTER TABLE payments_history ADD COLUMN created_at DATETIME")
+            )
+            conn.execute(
+                text(
+                    "UPDATE payments_history "
+                    f"SET created_at = COALESCE(created_at, {NOWFN})"
+                )
+            )
+            print("[init_db] payments_history.created_at agregado y backfilled")
 
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: ALLOWED_IPS
