@@ -8,7 +8,6 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 # --------------------------------------
 
-# scripts/init_db.py (arriba, junto con otros imports)
 import app.models_push           # crea tabla push_subscriptions
 import app.models_pro_alerts     # crea pro_alert_prefs, pro_alert_queue, pro_alert_state
 
@@ -21,12 +20,7 @@ from app.models import Base, User  # Modelos base requeridos
 
 # Imports opcionales (si existen, no deben romper)
 try:
-    from app.models import AllowedIP, ReportDownload  # noqa: F401
-except Exception:
-    pass
-
-try:
-    from app.models import Organization, OrgInvite  # noqa: F401
+    from app.models import AllowedIP, ReportDownload, Organization, OrgInvite  # noqa: F401
 except Exception:
     pass
 
@@ -65,6 +59,7 @@ def _dialect_flags():
 
 
 def _safe_exec(sql: str):
+    """Ejecuta SQL best-effort, atrapando errores de dialecto / columnas duplicadas."""
     with engine.connect() as conn:
         try:
             conn.execute(text(sql))
@@ -181,14 +176,16 @@ def ensure_users_columns():
 
 
 # ---------------------------------------------------------------------------
-# 🔧 NUEVO: columnas de facturación/PRO usadas por el código
+# columnas de facturación/PRO usadas por el código
 # ---------------------------------------------------------------------------
 def ensure_user_billing_columns():
-    # Asegura columnas opcionales usadas por el código:
-    #   - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
-    #   - users.last_payment_id (VARCHAR(64) NULL)
-    #   - users.pro_started_at / trial_* (DATETIME / BOOLEAN)
-    # Idempotente y seguro para SQLite/Postgres.
+    """
+    Asegura columnas opcionales usadas por el código:
+      - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
+      - users.last_payment_id (VARCHAR(64) NULL)
+      - users.pro_started_at / trial_* (DATETIME / BOOLEAN)
+    Idempotente y seguro para SQLite/Postgres.
+    """
     insp = inspect(engine)
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
@@ -231,9 +228,9 @@ def ensure_org_schema():
     insp = inspect(engine)
     dialect, BOOL_TRUE, BOOL_FALSE, NOWFN = _dialect_flags()
 
-    # Asegurar existencia de tabla organizations
+    # Asegurar existencia de tablas base
     try:
-        insp.get_columns("organizations")
+        _ = insp.get_columns("organizations")
     except Exception:
         Base.metadata.create_all(bind=engine)
 
@@ -250,13 +247,13 @@ def ensure_org_schema():
 
     if "is_org_admin" not in ucols:
         print("[init_db] Agregando columna users.is_org_admin ...")
+        default_bool = "0" if dialect == "sqlite" else "FALSE"
         _safe_exec(
-            f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT "
-            f"{BOOL_FALSE} NOT NULL"
+            f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {default_bool} NOT NULL"
         )
 
     # FK users.org_id -> organizations.id (saltamos en SQLite)
-    if engine.dialect.name != "sqlite":
+    if dialect != "sqlite":
         print("[init_db] Asegurando FK users.org_id -> organizations.id ...")
         _safe_exec(
             "ALTER TABLE users "
@@ -289,14 +286,7 @@ def ensure_org_schema():
         _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
         print("[init_db] organizations.billing_id agregado")
 
-    # NUEVAS columnas del modelo actual
-    if "plan" not in ocols:
-        _safe_exec(
-            "ALTER TABLE organizations "
-            "ADD COLUMN plan VARCHAR(32) DEFAULT 'BIZ' NOT NULL"
-        )
-        print("[init_db] organizations.plan agregado")
-
+    # nuevas columnas de billing
     if "stripe_customer_id" not in ocols:
         _safe_exec(
             "ALTER TABLE organizations "
@@ -313,7 +303,10 @@ def ensure_org_schema():
 
     if "created_at" not in ocols:
         _safe_exec("ALTER TABLE organizations ADD COLUMN created_at DATETIME")
-        print("[init_db] organizations.created_at agregado")
+        _safe_exec(
+            f"UPDATE organizations SET created_at = COALESCE(created_at, {NOWFN})"
+        )
+        print("[init_db] organizations.created_at agregado y backfilled")
 
     if "updated_at" not in ocols:
         _safe_exec("ALTER TABLE organizations ADD COLUMN updated_at DATETIME")
@@ -345,11 +338,33 @@ def ensure_org_schema():
             _safe_exec("ALTER TABLE org_invites ADD COLUMN used_at DATETIME")
             print("[init_db] org_invites.used_at agregado")
 
+        # NUEVAS columnas esperadas por el modelo actual
+        if "invited_by_id" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN invited_by_id INTEGER")
+            print("[init_db] org_invites.invited_by_id agregado")
+
+        if "accepted_at" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN accepted_at DATETIME")
+            print("[init_db] org_invites.accepted_at agregado")
+
+        if "created_at" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN created_at DATETIME")
+            _safe_exec(
+                f"UPDATE org_invites SET created_at = COALESCE(created_at, {NOWFN})"
+            )
+            print("[init_db] org_invites.created_at agregado y backfilled")
+
+        if "expires_at" not in icols:
+            _safe_exec("ALTER TABLE org_invites ADD COLUMN expires_at DATETIME")
+            print("[init_db] org_invites.expires_at agregado")
+
 
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: MAIL_ACCOUNTS
-# Esquema actual: email, provider, host, port, use_ssl, username,
-# password_encrypted, created_at, updated_at, last_checked_at
+# Compatibilidad con esquemas antiguos:
+# - soporta imap_host e imap_server
+# - soporta enc_password y/o enc_blob (migra a enc_blob)
+# - ahora también provider/host/port/username/password_encrypted/updated_at/last_checked_at
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
@@ -357,47 +372,31 @@ def ensure_mail_accounts_columns():
     try:
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
     except Exception:
-        # Si la tabla no existe aún, la creará create_all y re-inspeccionamos
         Base.metadata.create_all(bind=engine)
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
 
     with engine.begin() as conn:
-        # Columna email (por si venimos de un esquema MUY viejo)
-        if "email" not in cols:
-            conn.execute(text(
-                "ALTER TABLE mail_accounts "
-                "ADD COLUMN email VARCHAR(255) DEFAULT '' NOT NULL"
-            ))
-            print("[init_db] mail_accounts.email agregado")
-
-        # Campos principales del modelo actual
+        # columnas "nuevas" del modelo actual (dashboard mail)
         if "provider" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
-                "ADD COLUMN provider VARCHAR(32) DEFAULT 'imap' NOT NULL"
+                "ADD COLUMN provider VARCHAR(50) DEFAULT 'gmail' NOT NULL"
             ))
             print("[init_db] mail_accounts.provider agregado")
 
         if "host" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
-                "ADD COLUMN host VARCHAR(255) DEFAULT '' NOT NULL"
+                "ADD COLUMN host VARCHAR(255)"
             ))
             print("[init_db] mail_accounts.host agregado")
 
         if "port" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
-                "ADD COLUMN port INTEGER DEFAULT 993 NOT NULL"
+                "ADD COLUMN port INTEGER"
             ))
             print("[init_db] mail_accounts.port agregado")
-
-        if "use_ssl" not in cols:
-            conn.execute(text(
-                f"ALTER TABLE mail_accounts "
-                f"ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
-            ))
-            print("[init_db] mail_accounts.use_ssl agregado")
 
         if "username" not in cols:
             conn.execute(text(
@@ -413,60 +412,84 @@ def ensure_mail_accounts_columns():
             ))
             print("[init_db] mail_accounts.password_encrypted agregado")
 
+        if "updated_at" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts ADD COLUMN updated_at DATETIME"
+            ))
+            print("[init_db] mail_accounts.updated_at agregado")
+
+        if "last_checked_at" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts ADD COLUMN last_checked_at DATETIME"
+            ))
+            print("[init_db] mail_accounts.last_checked_at agregado")
+
+        # host principal “nuevo” (versión vieja de la app)
+        if "imap_server" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN imap_server VARCHAR(255) DEFAULT 'imap.gmail.com' NOT NULL"
+            ))
+            print("[init_db] mail_accounts.imap_server agregado")
+
+        # compatibilidad: algunos registros viejos usan imap_host
+        if "imap_host" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN imap_host VARCHAR(255)"
+            ))
+            print("[init_db] mail_accounts.imap_host agregado")
+
+        if "imap_port" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN imap_port INTEGER DEFAULT 993 NOT NULL"
+            ))
+            print("[init_db] mail_accounts.imap_port agregado")
+
+        if "use_ssl" not in cols:
+            conn.execute(text(
+                f"ALTER TABLE mail_accounts ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
+            ))
+            print("[init_db] mail_accounts.use_ssl agregado")
+
+        # cifrado: preferimos enc_blob; mantenemos compatibilidad con enc_password
+        if "enc_blob" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
+            ))
+            print("[init_db] mail_accounts.enc_blob agregado")
+
+        if "enc_password" not in cols:
+            # crear para evitar NOT NULL constraint en esquemas antiguos
+            conn.execute(text(
+                "ALTER TABLE mail_accounts ADD COLUMN enc_password TEXT DEFAULT '' NOT NULL"
+            ))
+            print("[init_db] mail_accounts.enc_password agregado (compat)")
+
         if "created_at" not in cols:
             conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
             print("[init_db] mail_accounts.created_at agregado")
 
-        if "updated_at" not in cols:
-            conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN updated_at DATETIME"))
-            print("[init_db] mail_accounts.updated_at agregado")
-
-        if "last_checked_at" not in cols:
-            conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN last_checked_at DATETIME"))
-            print("[init_db] mail_accounts.last_checked_at agregado")
-
-        # Backfill/normalización usando columnas legacy si existen
-        if "imap_server" in cols:
-            conn.execute(text(
-                "UPDATE mail_accounts "
-                "SET host = COALESCE(host, imap_server) "
-                "WHERE (host IS NULL OR host = '')"
-            ))
-        if "imap_host" in cols:
-            conn.execute(text(
-                "UPDATE mail_accounts "
-                "SET host = COALESCE(host, imap_host) "
-                "WHERE (host IS NULL OR host = '')"
-            ))
-        if "imap_port" in cols:
-            conn.execute(text(
-                "UPDATE mail_accounts "
-                "SET port = COALESCE(port, imap_port) "
-                "WHERE port IS NULL"
-            ))
-
+        # Backfill y normalización
         conn.execute(text(
-            "UPDATE mail_accounts "
-            "SET provider = COALESCE(provider, 'imap')"
+            "UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"
         ))
+        conn.execute(text("UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"))
+        conn.execute(text("UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"))
+        conn.execute(text("UPDATE mail_accounts SET enc_blob = COALESCE(enc_blob, '')"))
+        conn.execute(text("UPDATE mail_accounts SET enc_password = COALESCE(enc_password, '')"))
+        conn.execute(text(f"UPDATE mail_accounts SET created_at = COALESCE(created_at, {NOWFN})"))
+
+        # Si hay datos en enc_password y enc_blob está vacío, copia por compat
         conn.execute(text(
-            "UPDATE mail_accounts "
-            "SET host = COALESCE(host, '')"
-        ))
-        conn.execute(text(
-            "UPDATE mail_accounts "
-            "SET port = COALESCE(port, 993)"
-        ))
-        conn.execute(text(
-            f"UPDATE mail_accounts "
-            f"SET created_at = COALESCE(created_at, {NOWFN})"
+            "UPDATE mail_accounts SET enc_blob = CASE "
+            "WHEN (enc_blob IS NULL OR enc_blob='') THEN COALESCE(enc_password, '') "
+            "ELSE enc_blob END"
         ))
         print("[init_db] mail_accounts backfill OK")
 
 
-# ---------------------------------------------------------------------------
-# Migraciones ligeras: REPORT_DOWNLOADS
-# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: REPORT_DOWNLOADS
 # ---------------------------------------------------------------------------
@@ -482,6 +505,8 @@ def ensure_report_downloads_columns():
         except Exception:
             print("[init_db] aviso: no pude inspeccionar report_downloads")
             return
+
+    dialect, _TRUE, _FALSE, NOWFN = _dialect_flags()
 
     with engine.begin() as conn:
         # Compat: columna legacy "path" (por si hay código antiguo que la usa)
@@ -529,7 +554,7 @@ def ensure_report_downloads_columns():
             ))
             conn.execute(text(
                 "UPDATE report_downloads "
-                "SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+                f"SET created_at = COALESCE(created_at, {NOWFN})"
             ))
             print("[init_db] report_downloads.created_at agregado y backfilled")
 
@@ -574,7 +599,9 @@ def ensure_allowed_ips_columns():
         # Timestamp
         if "created_at" not in cols:
             conn.execute(text("ALTER TABLE allowed_ips ADD COLUMN created_at DATETIME"))
-            conn.execute(text("UPDATE allowed_ips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
+            conn.execute(text(
+                "UPDATE allowed_ips SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+            ))
             print("[init_db] allowed_ips.created_at agregado y backfilled")
 
 
@@ -661,8 +688,8 @@ def seed_admin_org_if_requested():
 
         # Detectar si el modelo tiene owner_user_id (por robustez)
         try:
-            from app.models import Organization
-            HAS_OWNER = hasattr(Organization, "owner_user_id")
+            from app.models import Organization as OrgModel
+            HAS_OWNER = hasattr(OrgModel, "owner_user_id")
         except Exception:
             HAS_OWNER = False
 
@@ -722,7 +749,7 @@ def main():
     ensure_users_columns()          # <- agrega email_verified, reset_code, etc.
     ensure_user_billing_columns()   # <- pro_expires_at / last_payment_id / trial
     ensure_org_schema()
-    ensure_mail_accounts_columns()  # <- mail_accounts moderno + compat legacy
+    ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob + nuevas cols
     ensure_report_downloads_columns()
     ensure_allowed_ips_columns()
     seed_admin()
