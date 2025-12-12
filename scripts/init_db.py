@@ -184,13 +184,11 @@ def ensure_users_columns():
 # 🔧 NUEVO: columnas de facturación/PRO usadas por el código
 # ---------------------------------------------------------------------------
 def ensure_user_billing_columns():
-    """
-    Asegura columnas opcionales usadas por el código:
-      - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
-      - users.last_payment_id (VARCHAR(64) NULL)
-      - users.pro_started_at / trial_* (DATETIME / BOOLEAN)
-    Idempotente y seguro para SQLite/Postgres.
-    """
+    # Asegura columnas opcionales usadas por el código:
+    #   - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
+    #   - users.last_payment_id (VARCHAR(64) NULL)
+    #   - users.pro_started_at / trial_* (DATETIME / BOOLEAN)
+    # Idempotente y seguro para SQLite/Postgres.
     insp = inspect(engine)
     try:
         cols = {c["name"] for c in insp.get_columns("users")}
@@ -350,9 +348,8 @@ def ensure_org_schema():
 
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: MAIL_ACCOUNTS
-# Compatibilidad con esquemas antiguos:
-# - soporta imap_host e imap_server
-# - soporta enc_password y/o enc_blob (migra a enc_blob)
+# Esquema actual: email, provider, host, port, use_ssl, username,
+# password_encrypted, created_at, updated_at, last_checked_at
 # ---------------------------------------------------------------------------
 def ensure_mail_accounts_columns():
     insp = inspect(engine)
@@ -360,74 +357,111 @@ def ensure_mail_accounts_columns():
     try:
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
     except Exception:
+        # Si la tabla no existe aún, la creará create_all y re-inspeccionamos
         Base.metadata.create_all(bind=engine)
         cols = {c["name"] for c in insp.get_columns("mail_accounts")}
 
     with engine.begin() as conn:
-        # host principal “nuevo”
-        if "imap_server" not in cols:
+        # Columna email (por si venimos de un esquema MUY viejo)
+        if "email" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
-                "ADD COLUMN imap_server VARCHAR(255) DEFAULT 'imap.gmail.com' NOT NULL"
+                "ADD COLUMN email VARCHAR(255) DEFAULT '' NOT NULL"
             ))
-            print("[init_db] mail_accounts.imap_server agregado")
+            print("[init_db] mail_accounts.email agregado")
 
-        # compatibilidad: algunos registros viejos usan imap_host
-        if "imap_host" not in cols:
+        # Campos principales del modelo actual
+        if "provider" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
-                "ADD COLUMN imap_host VARCHAR(255)"
+                "ADD COLUMN provider VARCHAR(32) DEFAULT 'imap' NOT NULL"
             ))
-            print("[init_db] mail_accounts.imap_host agregado")
+            print("[init_db] mail_accounts.provider agregado")
 
-        if "imap_port" not in cols:
+        if "host" not in cols:
             conn.execute(text(
                 "ALTER TABLE mail_accounts "
-                "ADD COLUMN imap_port INTEGER DEFAULT 993 NOT NULL"
+                "ADD COLUMN host VARCHAR(255) DEFAULT '' NOT NULL"
             ))
-            print("[init_db] mail_accounts.imap_port agregado")
+            print("[init_db] mail_accounts.host agregado")
+
+        if "port" not in cols:
+            conn.execute(text(
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN port INTEGER DEFAULT 993 NOT NULL"
+            ))
+            print("[init_db] mail_accounts.port agregado")
 
         if "use_ssl" not in cols:
             conn.execute(text(
-                f"ALTER TABLE mail_accounts ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
+                f"ALTER TABLE mail_accounts "
+                f"ADD COLUMN use_ssl BOOLEAN DEFAULT {BOOL_TRUE} NOT NULL"
             ))
             print("[init_db] mail_accounts.use_ssl agregado")
 
-        # cifrado: preferimos enc_blob; mantenemos compatibilidad con enc_password
-        if "enc_blob" not in cols:
+        if "username" not in cols:
             conn.execute(text(
-                "ALTER TABLE mail_accounts ADD COLUMN enc_blob TEXT DEFAULT '' NOT NULL"
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN username VARCHAR(255)"
             ))
-            print("[init_db] mail_accounts.enc_blob agregado")
+            print("[init_db] mail_accounts.username agregado")
 
-        if "enc_password" not in cols:
-            # crear para evitar NOT NULL constraint en esquemas antiguos
+        if "password_encrypted" not in cols:
             conn.execute(text(
-                "ALTER TABLE mail_accounts ADD COLUMN enc_password TEXT DEFAULT '' NOT NULL"
+                "ALTER TABLE mail_accounts "
+                "ADD COLUMN password_encrypted TEXT"
             ))
-            print("[init_db] mail_accounts.enc_password agregado (compat)")
+            print("[init_db] mail_accounts.password_encrypted agregado")
 
         if "created_at" not in cols:
             conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN created_at DATETIME"))
             print("[init_db] mail_accounts.created_at agregado")
 
-        # Backfill y normalización
-        conn.execute(text(
-            "UPDATE mail_accounts SET imap_server = COALESCE(imap_server, 'imap.gmail.com')"
-        ))
-        conn.execute(text("UPDATE mail_accounts SET imap_port = COALESCE(imap_port, 993)"))
-        conn.execute(text("UPDATE mail_accounts SET use_ssl = COALESCE(use_ssl, 1)"))
-        conn.execute(text("UPDATE mail_accounts SET enc_blob = COALESCE(enc_blob, '')"))
-        conn.execute(text("UPDATE mail_accounts SET enc_password = COALESCE(enc_password, '')"))
-        conn.execute(text(f"UPDATE mail_accounts SET created_at = COALESCE(created_at, {NOWFN})"))
+        if "updated_at" not in cols:
+            conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN updated_at DATETIME"))
+            print("[init_db] mail_accounts.updated_at agregado")
 
-        # Si hay datos en enc_password y enc_blob está vacío, copia por compat
+        if "last_checked_at" not in cols:
+            conn.execute(text("ALTER TABLE mail_accounts ADD COLUMN last_checked_at DATETIME"))
+            print("[init_db] mail_accounts.last_checked_at agregado")
+
+        # Backfill/normalización usando columnas legacy si existen
+        if "imap_server" in cols:
+            conn.execute(text(
+                "UPDATE mail_accounts "
+                "SET host = COALESCE(host, imap_server) "
+                "WHERE (host IS NULL OR host = '')"
+            ))
+        if "imap_host" in cols:
+            conn.execute(text(
+                "UPDATE mail_accounts "
+                "SET host = COALESCE(host, imap_host) "
+                "WHERE (host IS NULL OR host = '')"
+            ))
+        if "imap_port" in cols:
+            conn.execute(text(
+                "UPDATE mail_accounts "
+                "SET port = COALESCE(port, imap_port) "
+                "WHERE port IS NULL"
+            ))
+
         conn.execute(text(
-            "UPDATE mail_accounts SET enc_blob = CASE "
-            "WHEN (enc_blob IS NULL OR enc_blob='') THEN COALESCE(enc_password, '') "
-            "ELSE enc_blob END"
+            "UPDATE mail_accounts "
+            "SET provider = COALESCE(provider, 'imap')"
         ))
-        print("[init_db] mail_accounts.backfill OK")
+        conn.execute(text(
+            "UPDATE mail_accounts "
+            "SET host = COALESCE(host, '')"
+        ))
+        conn.execute(text(
+            "UPDATE mail_accounts "
+            "SET port = COALESCE(port, 993)"
+        ))
+        conn.execute(text(
+            f"UPDATE mail_accounts "
+            f"SET created_at = COALESCE(created_at, {NOWFN})"
+        ))
+        print("[init_db] mail_accounts backfill OK")
 
 
 # ---------------------------------------------------------------------------
@@ -648,7 +682,7 @@ def main():
     ensure_users_columns()          # <- agrega email_verified, reset_code, etc.
     ensure_user_billing_columns()   # <- pro_expires_at / last_payment_id / trial
     ensure_org_schema()
-    ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob
+    ensure_mail_accounts_columns()  # <- mail_accounts moderno + compat legacy
     ensure_report_downloads_columns()
     ensure_allowed_ips_columns()
     seed_admin()
