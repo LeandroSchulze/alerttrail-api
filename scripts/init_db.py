@@ -47,11 +47,14 @@ def masked(s: str) -> str:
         return name[:2] + "***@" + dom
     return s[:2] + "***"
 
+
 def truthy(v) -> bool:
     return str(v or "").strip().lower() in ("1", "true", "yes", "on")
 
+
 def _norm_email(e: str) -> str:
     return (e or "").strip().lower()
+
 
 def _dialect_flags():
     dialect = engine.dialect.name  # 'sqlite', 'postgresql', etc.
@@ -59,6 +62,7 @@ def _dialect_flags():
     bool_false = "0" if dialect == "sqlite" else "FALSE"
     now = "CURRENT_TIMESTAMP" if dialect == "sqlite" else "NOW()"
     return dialect, bool_true, bool_false, now
+
 
 def _safe_exec(sql: str):
     with engine.connect() as conn:
@@ -94,6 +98,7 @@ def ensure_users_columns():
         print("[init_db] Tabla users no existe aún (será creada por create_all)")
         return
 
+    # SQLAlchemy 2.x: usamos engine.begin() en lugar de engine.execute()
     with engine.begin() as conn:
         # columnas “base”
         if "is_active" not in cols:
@@ -149,18 +154,10 @@ def ensure_users_columns():
             print("[init_db] users.verification_expires_at agregado")
 
         if "verification_attempts" not in cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN verification_attempts INTEGER DEFAULT 0 NOT NULL"))
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN verification_attempts INTEGER DEFAULT 0 NOT NULL"
+            ))
             print("[init_db] users.verification_attempts agregado")
-
-        # Normalizaciones útiles
-        conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
-        conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
-
-    # Índice para búsquedas por email (SQLite: índice simple)
-    try:
-        engine.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users(email)"))
-    except Exception:
-        pass
 
         # columnas para recuperación de contraseña
         if "reset_code" not in cols:
@@ -175,6 +172,13 @@ def ensure_users_columns():
             conn.execute(text("ALTER TABLE users ADD COLUMN reset_code_used_at DATETIME"))
             print("[init_db] users.reset_code_used_at agregado")
 
+        # Normalizaciones útiles
+        conn.execute(text("UPDATE users SET plan = UPPER(plan)"))
+        conn.execute(text("UPDATE users SET role = COALESCE(role, 'user')"))
+
+        # Índice para búsquedas por email (idempotente)
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users(email)"))
+
 
 # ---------------------------------------------------------------------------
 # 🔧 NUEVO: columnas de facturación/PRO usadas por el código
@@ -184,6 +188,7 @@ def ensure_user_billing_columns():
     Asegura columnas opcionales usadas por el código:
       - users.pro_expires_at (DATETIME / TIMESTAMP NULL)
       - users.last_payment_id (VARCHAR(64) NULL)
+      - users.pro_started_at / trial_* (DATETIME / BOOLEAN)
     Idempotente y seguro para SQLite/Postgres.
     """
     insp = inspect(engine)
@@ -197,10 +202,12 @@ def ensure_user_billing_columns():
         if "pro_expires_at" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN pro_expires_at DATETIME"))
             print("[init_db] users.pro_expires_at agregado")
+
         if "last_payment_id" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN last_payment_id VARCHAR(64)"))
             print("[init_db] users.last_payment_id agregado")
-                # columnas adicionales para seguimiento de PRO / trial
+
+        # columnas adicionales para seguimiento de PRO / trial
         if "pro_started_at" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN pro_started_at DATETIME"))
             print("[init_db] users.pro_started_at agregado")
@@ -214,9 +221,9 @@ def ensure_user_billing_columns():
             print("[init_db] users.trial_expires_at agregado")
 
         if "trial_used" not in cols:
+            # BOOLEAN es compatible; en SQLite se guarda como 0/1
             conn.execute(text("ALTER TABLE users ADD COLUMN trial_used BOOLEAN DEFAULT 0 NOT NULL"))
             print("[init_db] users.trial_used agregado")
-
 
 
 # ---------------------------------------------------------------------------
@@ -592,8 +599,8 @@ def seed_admin_org_if_requested():
 # ---------------------------------------------------------------------------
 def main():
     ensure_tables()
-    ensure_users_columns()          # <- agrega email_verified y campos de verificación
-    ensure_user_billing_columns()   # <- 🔧 NUEVO: pro_expires_at / last_payment_id
+    ensure_users_columns()          # <- agrega email_verified, reset_code, etc.
+    ensure_user_billing_columns()   # <- pro_expires_at / last_payment_id / trial
     ensure_org_schema()
     ensure_mail_accounts_columns()  # <- compat imap_host/enc_password/enc_blob
     ensure_report_downloads_columns()
