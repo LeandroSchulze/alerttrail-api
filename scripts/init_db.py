@@ -252,7 +252,10 @@ def ensure_org_schema():
 
     if "is_org_admin" not in cols:
         print("[init_db] Agregando columna users.is_org_admin ...")
-        _safe_exec(f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT {_TRUE if False else 0 if engine.dialect.name=='sqlite' else 'FALSE'} NOT NULL")
+        _safe_exec(
+            f"ALTER TABLE users ADD COLUMN is_org_admin BOOLEAN DEFAULT "
+            f"{_TRUE if False else 0 if engine.dialect.name == 'sqlite' else 'FALSE'} NOT NULL"
+        )
 
     # FK users.org_id -> organizations.id (saltamos en SQLite)
     if engine.dialect.name != "sqlite":
@@ -270,20 +273,45 @@ def ensure_org_schema():
         ocols = set()
 
     if "seats_total" not in ocols:
-        _safe_exec("ALTER TABLE organizations ADD COLUMN seats_total INTEGER DEFAULT 1 NOT NULL")
+        _safe_exec(
+            "ALTER TABLE organizations "
+            "ADD COLUMN seats_total INTEGER DEFAULT 1 NOT NULL"
+        )
         print("[init_db] organizations.seats_total agregado")
+
     if "seats_used" not in ocols:
-        _safe_exec("ALTER TABLE organizations ADD COLUMN seats_used INTEGER DEFAULT 0 NOT NULL")
+        _safe_exec(
+            "ALTER TABLE organizations "
+            "ADD COLUMN seats_used INTEGER DEFAULT 0 NOT NULL"
+        )
         print("[init_db] organizations.seats_used agregado")
+
+    # columna legacy (puede existir en esquemas viejos)
     if "billing_id" not in ocols:
         _safe_exec("ALTER TABLE organizations ADD COLUMN billing_id VARCHAR(255)")
         print("[init_db] organizations.billing_id agregado")
+
+    # NUEVAS columnas del modelo actual
+    if "stripe_customer_id" not in ocols:
+        _safe_exec(
+            "ALTER TABLE organizations "
+            "ADD COLUMN stripe_customer_id VARCHAR(128)"
+        )
+        print("[init_db] organizations.stripe_customer_id agregado")
+
+    if "mp_preapproval_id" not in ocols:
+        _safe_exec(
+            "ALTER TABLE organizations "
+            "ADD COLUMN mp_preapproval_id VARCHAR(128)"
+        )
+        print("[init_db] organizations.mp_preapproval_id agregado")
 
     # org_invites columnas mínimas si la tabla existe pero incompleta
     try:
         icols = {c["name"] for c in insp.get_columns("org_invites")}
     except Exception:
         icols = set()
+
     if icols:
         if "token" not in icols:
             _safe_exec("ALTER TABLE org_invites ADD COLUMN token VARCHAR(64)")
@@ -292,7 +320,10 @@ def ensure_org_schema():
             _safe_exec("ALTER TABLE org_invites ADD COLUMN email VARCHAR(255)")
             print("[init_db] org_invites.email agregado")
         if "used" not in icols:
-            _safe_exec(f"ALTER TABLE org_invites ADD COLUMN used BOOLEAN DEFAULT 0 NOT NULL")
+            _safe_exec(
+                "ALTER TABLE org_invites "
+                "ADD COLUMN used BOOLEAN DEFAULT 0 NOT NULL"
+            )
             print("[init_db] org_invites.used agregado")
         if "used_by_user_id" not in icols:
             _safe_exec("ALTER TABLE org_invites ADD COLUMN used_by_user_id INTEGER")
