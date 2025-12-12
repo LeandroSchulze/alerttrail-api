@@ -467,6 +467,9 @@ def ensure_mail_accounts_columns():
 # ---------------------------------------------------------------------------
 # Migraciones ligeras: REPORT_DOWNLOADS
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Migraciones ligeras: REPORT_DOWNLOADS
+# ---------------------------------------------------------------------------
 def ensure_report_downloads_columns():
     insp = inspect(engine)
     try:
@@ -481,16 +484,53 @@ def ensure_report_downloads_columns():
             return
 
     with engine.begin() as conn:
+        # Compat: columna legacy "path" (por si hay código antiguo que la usa)
         if "path" not in cols:
-            # En SQLite: NOT NULL requiere DEFAULT al agregar
             conn.execute(text(
-                "ALTER TABLE report_downloads ADD COLUMN path TEXT DEFAULT '' NOT NULL"
+                "ALTER TABLE report_downloads "
+                "ADD COLUMN path TEXT DEFAULT '' NOT NULL"
             ))
             print("[init_db] report_downloads.path agregado")
 
+        # Esquema actual del modelo:
+        #   user_id, id, report_type, file_path, ip_address, user_agent, created_at
+        if "report_type" not in cols:
+            conn.execute(text(
+                "ALTER TABLE report_downloads "
+                "ADD COLUMN report_type VARCHAR(50) DEFAULT 'log' NOT NULL"
+            ))
+            print("[init_db] report_downloads.report_type agregado")
+
+        if "file_path" not in cols:
+            conn.execute(text(
+                "ALTER TABLE report_downloads "
+                "ADD COLUMN file_path TEXT"
+            ))
+            print("[init_db] report_downloads.file_path agregado")
+
+        if "ip_address" not in cols:
+            conn.execute(text(
+                "ALTER TABLE report_downloads "
+                "ADD COLUMN ip_address VARCHAR(64)"
+            ))
+            print("[init_db] report_downloads.ip_address agregado")
+
+        if "user_agent" not in cols:
+            conn.execute(text(
+                "ALTER TABLE report_downloads "
+                "ADD COLUMN user_agent TEXT"
+            ))
+            print("[init_db] report_downloads.user_agent agregado")
+
         if "created_at" not in cols:
-            conn.execute(text("ALTER TABLE report_downloads ADD COLUMN created_at DATETIME"))
-            conn.execute(text("UPDATE report_downloads SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"))
+            conn.execute(text(
+                "ALTER TABLE report_downloads "
+                "ADD COLUMN created_at DATETIME"
+            ))
+            conn.execute(text(
+                "UPDATE report_downloads "
+                "SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+            ))
             print("[init_db] report_downloads.created_at agregado y backfilled")
 
 
