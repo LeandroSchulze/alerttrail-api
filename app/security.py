@@ -291,3 +291,19 @@ def normalize_user_plan(db, user):
     except Exception:
         pass
     return user
+
+# ===============================
+# Compatibility stubs (NO-OP)
+# ===============================
+
+def issue_csrf(*args, **kwargs):
+    """
+    Stub de compatibilidad.
+    No se usa CSRF real en AlertTrail (JWT por cookie).
+    """
+    return None
+
+
+def verify_csrf(*args, **kwargs):
+    return True
+
