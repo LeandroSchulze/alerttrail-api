@@ -1,30 +1,140 @@
 <!doctype html>
-<html lang="es">
+<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Iniciar sesión — AlertTrail</title>
+  <title>{{ t(lang, "Sign in") }} — AlertTrail</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto;min-height:100vh;display:grid;place-items:center;background:#f5f8ff}
-    .card{background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);padding:28px;max-width:360px;width:92%}
-    h1{margin:0 0 12px}
-    form{display:grid;gap:10px}
-    input{padding:12px;border:1px solid #dde5f0;border-radius:10px}
-    button{padding:12px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}
-    a{color:#2563eb;text-decoration:none}
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f5f8ff;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.08);
+      padding: 28px;
+      max-width: 360px;
+      width: 92%;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 8px;
+    }
+    .brand {
+      font-weight: 700;
+      color: #111827;
+      font-size: 18px;
+    }
+    .lang-switch {
+      font-size: 12px;
+      color: #6b7280;
+      white-space: nowrap;
+    }
+    .lang-switch a {
+      color: #2563eb;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .lang-switch a.active {
+      font-weight: 700;
+      text-decoration: underline;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+    form {
+      display: grid;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    input {
+      padding: 12px;
+      border: 1px solid #dde5f0;
+      border-radius: 10px;
+      font-size: 14px;
+    }
+    button {
+      padding: 12px;
+      border: 0;
+      border-radius: 10px;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      filter: brightness(1.05);
+    }
+    a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+    p {
+      margin: 0;
+      font-size: 13px;
+    }
+    .footer-text {
+      margin-top: 10px;
+      color: #4b5563;
+    }
   </style>
 </head>
 <body>
   <main class="card">
-    <h1>Iniciar sesión</h1>
+    <div class="card-header">
+      <div class="brand">AlertTrail</div>
+      <div class="lang-switch">
+        {{ t(lang, "Language") }}:
+        <a
+          href="/set-lang?lang=es&next={{ request.url.path }}"
+          class="{% if (lang or 'es') == 'es' %}active{% endif %}"
+        >ES</a>
+        <span>·</span>
+        <a
+          href="/set-lang?lang=en&next={{ request.url.path }}"
+          class="{% if (lang or 'es') == 'en' %}active{% endif %}"
+        >EN</a>
+      </div>
+    </div>
+
+    <h1>{{ t(lang, "Sign in") }}</h1>
+
     <!-- IMPORTANTE: apuntar al endpoint web -->
     <form method="post" action="/auth/login/web">
-      <input name="email" type="email" placeholder="Email" required>
-      <input name="password" type="password" placeholder="Contraseña" required>
-      <button>Entrar</button>
+      <input
+        name="email"
+        type="email"
+        placeholder="{{ t(lang, 'Email') }}"
+        required
+      >
+      <input
+        name="password"
+        type="password"
+        placeholder="{{ t(lang, 'Password') }}"
+        required
+      >
+      <button type="submit">
+        {{ t(lang, "Sign in") }}
+      </button>
     </form>
-    <p style="margin-top:10px">¿No tenés cuenta? <a href="/register">Crear cuenta</a></p>
+
+    <p class="footer-text">
+      {{ t(lang, "Don't have an account?") }}
+      <a href="/register">
+        {{ t(lang, "Create account") }}
+      </a>
+    </p>
   </main>
 </body>
 </html>
