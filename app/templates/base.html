@@ -1,57 +1,127 @@
 <!doctype html>
-<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
+<html lang="es">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>AlertTrail</title>
-  <link rel="stylesheet" href="/static/style.css"/>
-</head>
-  
-  {% if user and (user.plan_expires or user.pro_until) %}
-<script>
-(function(){
-  try{
-    var exp = "{{ (user.plan_expires or user.pro_until)|string }}";
-    if(!exp) return;
-    var d = new Date(exp);
-    if(isNaN(d.getTime())) return;
-    var ms = d - new Date();
-    var days = Math.ceil(ms / (1000*60*60*24));
-    if(days <= 7){
-      var bar = document.createElement('div');
-      bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;background:#0f766e;color:#ecfeff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;z-index:60";
-      bar.innerHTML = "<span>Tu plan PRO vence en "+days+" día(s).</span><a href='/billing' style='background:#ecfeff;color:#134e4a;padding:6px 10px;border-radius:10px;text-decoration:none;font-weight:700'>Renovar</a>";
-      document.body.appendChild(bar);
+  <meta charset="utf-8">
+  <title>{% block title %}AlertTrail{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="stylesheet" href="/static/style.css">
+
+  <style>
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: radial-gradient(circle at top left,#e0f2fe,#eff6ff 40%,#f9fafb 75%);
+      color:#0f172a;
+      min-height:100vh;
     }
-  }catch(e){}
-})();
-</script>
-{% endif %}
+    .container{
+      max-width:1200px;
+      margin:0 auto;
+      padding:16px 16px 24px;
+    }
+    .mobile-only{
+      display:none;
+    }
+    @media(max-width:768px){
+      .container{
+        padding:12px;
+      }
+      .mobile-only{
+        display:block;
+      }
+    }
+
+    /* Botón flotante de alertas (se muestra solo si existe /alerts/unread-count) */
+    #alerts-fab{
+      position:fixed;
+      right:18px;
+      bottom:18px;
+      z-index:50;
+      text-decoration:none;
+    }
+    #alerts-fab span{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      background:#0f172a;
+      color:#f9fafb;
+      border-radius:999px;
+      padding:10px 14px;
+      box-shadow:0 8px 30px rgba(15,23,42,.35);
+      font-size:13px;
+    }
+    #alerts-fab span span{
+      background:#ef4444;
+      min-width:20px;
+      text-align:center;
+      border-radius:999px;
+      padding:2px 8px;
+      font-weight:600;
+    }
+
+    /* Ocultar por defecto, lo mostramos por JS sólo si responde el endpoint */
+    #alerts-fab{
+      display:none;
+    }
+  </style>
+</head>
 
 <body>
+  {# Selector de idioma fijo arriba a la derecha #}
+  {% set current_lang = (lang or 'es')|lower %}
+  <div class="lang-switch"
+       style="position:fixed;top:14px;right:18px;z-index:60;font-size:12px;
+              background:rgba(255,255,255,0.9);backdrop-filter:blur(8px);
+              border-radius:999px;border:1px solid rgba(148,163,184,0.5);
+              padding:3px 6px;display:flex;align-items:center;gap:4px;
+              box-shadow:0 8px 20px rgba(15,23,42,0.08);">
+    <span style="margin-right:4px;color:#64748b;">Lang</span>
+    <a href="/set-lang?lang=es&next={{ request.url.path }}"
+       style="padding:2px 8px;border-radius:999px;text-decoration:none;
+              {% if current_lang == 'es' %}
+                background:#0f172a;color:#f9fafb;font-weight:600;
+              {% else %}
+                color:#475569;
+              {% endif %}">
+      ES
+    </a>
+    <a href="/set-lang?lang=en&next={{ request.url.path }}"
+       style="padding:2px 8px;border-radius:999px;text-decoration:none;
+              {% if current_lang == 'en' %}
+                background:#0f172a;color:#f9fafb;font-weight:600;
+              {% else %}
+                color:#475569;
+              {% endif %}">
+      EN
+    </a>
+  </div>
+
   <div class="container">
     {% block body %}{% endblock %}
   </div>
-</body>
-  <a id="alerts-fab" href="/alerts"
-  style="position:fixed;right:16px;bottom:16px;z-index:50;text-decoration:none;">
-  <span style="display:inline-flex;align-items:center;gap:8px;background:#111827;color:#fff;
-    border-radius:999px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.25)">
-    🔔 <span id="alerts-fab-count"
-      style="background:#ef4444;border-radius:999px;padding:2px 8px;min-width:18px;text-align:center">0</span>
-    <span>Alertas</span>
-  </span>
-</a>
-<script>
-async function refreshFab(){
-  try{
-    const r = await fetch('/alerts/unread-count', {credentials:'include'});
-    if(!r.ok) return;
-    const d = await r.json();
-    document.getElementById('alerts-fab-count').textContent = d.count || 0;
-  }catch(e){}
-}
-refreshFab(); setInterval(refreshFab,15000);
-</script>
 
+  {# Botón flotante de alertas (si el endpoint existe) #}
+  <a href="/alerts" id="alerts-fab">
+    <span>
+      🔔 <span id="alerts-fab-count"
+        style="background:#ef4444;border-radius:999px;padding:2px 8px;min-width:18px;text-align:center">0</span>
+      <span>Alertas</span>
+    </span>
+  </a>
+  <script>
+  async function refreshFab(){
+    try{
+      const r = await fetch('/alerts/unread-count', {credentials:'include'});
+      if(!r.ok) return;
+      const d = await r.json();
+      // Si el endpoint existe y responde, mostramos el FAB
+      document.getElementById('alerts-fab').style.display = 'block';
+      document.getElementById('alerts-fab-count').textContent = d.count || 0;
+    }catch(e){}
+  }
+  refreshFab(); setInterval(refreshFab,15000);
+  </script>
+
+</body>
 </html>
