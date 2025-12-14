@@ -19,27 +19,27 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "app.name": "AlertTrail",
         "nav.dashboard": "Dashboard",
         "nav.logout": "Log out",
-        "nav.login": "Log in",
+        "nav.login": "Sign in",
         "nav.language": "Language",
         "lang.es": "ES",
         "lang.en": "EN",
     },
 }
 
-
 def get_lang(request: Any = None) -> str:
     """
-    Obtiene idioma desde cookie 'alerttrail_lang'
+    Obtiene idioma desde cookie. Compatibilidad:
+      - preferimos cookie "lang" (actual)
+      - fallback cookie "alerttrail_lang" (legacy)
     """
     try:
         if request is not None:
-            lang = request.cookies.get("alerttrail_lang")
+            lang = (request.cookies.get("lang") or request.cookies.get("alerttrail_lang") or "").lower()[:2]
             if lang in SUPPORTED_LANGS:
                 return lang
     except Exception:
         pass
     return DEFAULT_LANG
-
 
 def translate(key: str, lang: str | None = None, **kwargs: Any) -> str:
     lang = lang if lang in SUPPORTED_LANGS else DEFAULT_LANG
@@ -56,11 +56,9 @@ def translate(key: str, lang: str | None = None, **kwargs: Any) -> str:
 
     return text
 
-
 # 👇 ESTA ES LA FUNCIÓN QUE USA JINJA
 def t(lang: str, key: str, **kwargs: Any) -> str:
     return translate(key, lang, **kwargs)
-
 
 __all__ = [
     "SUPPORTED_LANGS",
