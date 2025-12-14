@@ -22,6 +22,7 @@ from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
     clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,
 )
+from app.i18n import t  # 👈 NUEVO: función de traducción para Jinja
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
@@ -143,6 +144,8 @@ app.mount("/reports", StaticFiles(directory=REPORTS_DIR, html=True), name="repor
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 app.state.templates = templates
+# 👇 NUEVO: exponer t() para usar {{ t(lang, "clave") }} en cualquier template
+templates.env.globals["t"] = t
 
 # --- Endurecedor de cookies de sesión ---
 @app.middleware("http")
