@@ -6,7 +6,7 @@ import os, re, json
 from pathlib import Path
 from importlib import import_module
 
-from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form, Query
+from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,7 +22,6 @@ from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
     clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,
 )
-from app.i18n import pick_lang, t
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
@@ -67,6 +66,10 @@ class LangContextMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(LangContextMiddleware)
 
+from fastapi import Query, Request
+from fastapi.responses import RedirectResponse
+
+SUPPORTED_LANGS = ("es", "en")
 
 @app.get("/set-lang", include_in_schema=False)
 async def set_lang(
@@ -74,9 +77,14 @@ async def set_lang(
     lang: str = Query("es", pattern="^(es|en)$"),
     next: str = Query("/", alias="next"),
 ):
-    """Cambia el idioma de la app seteando la cookie `lang` y redirige de vuelta."""
-    # Normalizamos el idioma pedido (usa la misma lógica que el resto de la app)
-    selected_lang = pick_lang(cookie=lang)
+    """
+    Cambia el idioma de la app seteando la cookie `lang`
+    y redirige de vuelta a la página anterior.
+    """
+    # Normalizamos el idioma pedido (ya validado por el pattern)
+    selected_lang = (lang or "es").lower()
+    if selected_lang not in SUPPORTED_LANGS:
+        selected_lang = "es"
 
     # Si no viene `next`, intento usar el Referer
     redirect_url = next or request.headers.get("referer") or "/"
