@@ -154,15 +154,19 @@ async def cookie_hardener(request: Request, call_next):
 # ============================================================
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request, user=Depends(lambda r=request: None)):
+def home(request: Request):
+    # Si hay cookie válida, redirigimos al dashboard
+    try:
+        _ = get_current_user_cookie(request)
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    except Exception:
+        pass
+
     try:
         return templates.TemplateResponse("landing.html", {"request": request})
     except TemplateNotFound:
         return HTMLResponse("<h1>AlertTrail</h1>")
 
-@app.get("/login", include_in_schema=False)
-def login_alias():
-    return RedirectResponse("/auth/login", status_code=302)
 
 # ============================================================
 # Dashboard (NO SE TOCA EL TEMPLATE)
