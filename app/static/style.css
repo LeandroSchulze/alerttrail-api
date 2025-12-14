@@ -181,3 +181,45 @@ td {
 .text-center {
   text-align: center;
 }
+
+/* ===== Language switcher (ES / EN) ===== */
+.lang-switcher {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.lang-switcher form {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.lang-pill {
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.05s ease;
+}
+
+.lang-pill:hover {
+  transform: translateY(-0.5px);
+  background: #e0f2fe;
+  border-color: #38bdf8;
+}
+
+.lang-pill.active {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #ecfeff;
+}
+
