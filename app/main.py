@@ -165,6 +165,28 @@ def set_lang(
     return resp
 
 # ============================================================
+# i18n: lang global para TODOS los templates
+# ============================================================
+
+from app.i18n import get_lang
+
+def _inject_lang(request: Request):
+    try:
+        return get_lang(request)
+    except Exception:
+        return "es"
+
+templates.env.globals["lang"] = None
+templates.env.globals["_get_lang"] = _inject_lang
+
+@templates.env.globals.setdefault("context_processor", lambda **kw: kw)
+def inject_globals(**context):
+    request = context.get("request")
+    if request:
+        context["lang"] = _get_lang(request)
+    return context
+
+# ============================================================
 # Home / Login
 # ============================================================
 
