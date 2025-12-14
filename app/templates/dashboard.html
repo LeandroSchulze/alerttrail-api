@@ -363,8 +363,24 @@
         <div class="user-email">
           {{ current_user.email or user.email }}
         </div>
+
+        <!-- Selector de idioma ES / EN -->
+        <div class="lang-switcher">
+          <form method="get" action="/set-lang">
+            <input type="hidden" name="next" value="{{ request.url.path }}">
+            <button type="submit" name="lang" value="es"
+                    class="lang-pill {% if (lang or 'es') == 'es' %}active{% endif %}">
+              ES
+            </button>
+            <button type="submit" name="lang" value="en"
+                    class="lang-pill {% if (lang or 'es') == 'en' %}active{% endif %}">
+              EN
+            </button>
+          </form>
+        </div>
       </div>
     </header>
+
 
     {# Banner de prueba PRO / downgrade #}
     {% set pro_source = (current_user.pro_source or '')|lower if current_user is defined else '' %}
