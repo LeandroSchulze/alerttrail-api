@@ -1,199 +1,199 @@
 # app/routers/auth.py
+from __future__ import annotations
+
 import os
-import secrets
-import time
 from typing import Optional
 
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Response, Form, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from jinja2 import TemplateNotFound
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.models import User
+from app.i18n import get_lang
+
 from app.security import (
-    get_password_hash, verify_password,
-    issue_access_cookie, clear_access_cookie,
-    get_current_user_cookie, issue_csrf, validate_csrf
+    issue_access_cookie,
+    clear_access_cookie,
+    create_access_token,
+    verify_password,
+    get_password_hash,
+    get_current_user_cookie,
 )
 
-# ---------- Templates ----------
-TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+# Si billing_guard existe como archivo, se usa desde ahí (NO desde app.security como "package")
+try:
+    from app.security.billing_guard import normalize_user_plan  # type: ignore
+except Exception:
+    # fallback: si tu normalize_user_plan quedó en app.security (viejo), intentamos
+    try:
+        from app.security import normalize_user_plan  # type: ignore
+    except Exception:
+        normalize_user_plan = None  # noqa
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# ---------- Rate limiting (login) ----------
-from collections import defaultdict, deque
+DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
 
-_LOGIN_WINDOW = int(os.getenv("LOGIN_WINDOW_SEC", "300"))        # 5 min
-_LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "10")) # 10 intentos
-_login_attempts = defaultdict(deque)
 
-def _rl_check(ip: str):
-    now = time.time()
-    q = _login_attempts[ip]
-    while q and now - q[0] > _LOGIN_WINDOW:
-        q.popleft()
-    if len(q) >= _LOGIN_MAX_ATTEMPTS:
-        raise HTTPException(status_code=429, detail="Demasiados intentos, probá más tarde")
+def _templates(request: Request):
+    """
+    Usa SIEMPRE los templates del main.py (app.state.templates),
+    que ya tienen templates.env.globals["t"] = t
+    """
+    tpl = getattr(request.app.state, "templates", None)
+    if tpl is None:
+        raise RuntimeError("templates no inicializado en app.state (main.py)")
+    return tpl
 
-def _rl_hit(ip: str, success: bool):
-    now = time.time()
-    q = _login_attempts[ip]
-    q.append(now)
-    if success:
-        q.clear()
 
-# ---------- Email verification ----------
-_CODE_TTL_MIN = int(os.getenv("EMAIL_CODE_TTL_MIN", "15"))
-
-def _issue_email_code(user: User, db: Session) -> str:
-    code = secrets.token_urlsafe(8)
-    user.email_code = code
-    user.email_code_expires = datetime.now(timezone.utc) + timedelta(minutes=_CODE_TTL_MIN)
-    db.add(user); db.commit(); db.refresh(user)
-    # TODO: enviar correo real; por ahora, log:
-    print(f"[verify-email] code={code} for {user.email}")
-    return code
-
-def _must_verify(user: User) -> bool:
-    # Si existe columna is_email_verified, la usamos; de lo contrario no bloqueamos
-    return bool(getattr(user, "is_email_verified", True) is False)
-
-# ---------- Schemas ----------
-class RegisterIn(BaseModel):
-    email: EmailStr
-    password: str
-    name: Optional[str] = None
-
-# ---------- Rutas ----------
-@router.get("/login", response_class=HTMLResponse)
+@router.get("/login", response_class=HTMLResponse, include_in_schema=False)
 def login_get(request: Request):
-    try:
-        resp = templates.TemplateResponse("login.html", {"request": request})
-        issue_csrf(resp)
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
-    except TemplateNotFound:
-        html = """<!doctype html><meta charset='utf-8'>
-        <title>Login — AlertTrail</title>
-        <form method="post" action="/auth/login/web"
-              style="font-family:system-ui;padding:24px;display:grid;gap:8px;max-width:320px">
-          <h2>Iniciar sesión</h2>
-          <input name="email" type="email" placeholder="Email" required>
-          <input name="password" type="password" placeholder="Contraseña" required>
-          <input type="hidden" name="csrf_token" id="csrf_token">
-          <button>Entrar</button>
-          <script>
-            // lee csrftoken de cookie
-            const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
-            if (m) document.getElementById('csrf_token').value = decodeURIComponent(m[1]);
-          </script>
-        </form>"""
-        return HTMLResponse(html)
+    tpl = _templates(request)
+    lang = get_lang(request)
+    # login.html usa {{ t(lang, "...") }} => t tiene que estar en globals del template env
+    return tpl.TemplateResponse("login.html", {"request": request, "lang": lang})
 
-@router.post("/login")
-async def login_api(request: Request, response: Response, email: EmailStr = Form(...), password: str = Form(...), db= Depends(get_db)):
-    await validate_csrf(request)
-    ip = request.client.host if request.client else "unknown"
-    _rl_check(ip)
-    email_norm = email.strip().lower()
-    user = db.query(User).filter(func.lower(User.email) == email_norm).first()
-    hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
-    if not user or not verify_password(password, hp or ""):
-        _rl_hit(ip, success=False)
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-    _rl_hit(ip, success=True)
-    issue_access_cookie(response, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
-    return {"ok": True, "user_id": user.id}
 
-@router.post("/login/web")
-async def login_web(request: Request, email: EmailStr = Form(...), password: str = Form(...), db= Depends(get_db)):
-    await validate_csrf(request)
-    ip = request.client.host if request.client else "unknown"
-    _rl_check(ip)
-    email_norm = email.strip().lower()
-    user = db.query(User).filter(func.lower(User.email) == email_norm).first()
-    hp = getattr(user, "hashed_password", None) or getattr(user, "password_hash", None)
-    if not user or not verify_password(password, hp or ""):
-        _rl_hit(ip, success=False)
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-    _rl_hit(ip, success=True)
-    r = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-    issue_access_cookie(r, {"sub": str(user.id), "user_id": user.id, "uid": user.id, "email": user.email})
+@router.post("/login/web", include_in_schema=False)
+def login_web(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    email = (email or "").strip().lower()
+
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == email)
+        .first()
+    )
+
+    if not user or not verify_password(password, user.hashed_password):
+        # Re-render del login con error (sin romper)
+        tpl = _templates(request)
+        lang = get_lang(request)
+        return tpl.TemplateResponse(
+            "login.html",
+            {"request": request, "lang": lang, "error": "Credenciales inválidas"},
+            status_code=400,
+        )
+
+    # Normalizar plan si existe
+    if normalize_user_plan:
+        try:
+            normalize_user_plan(db, user)
+        except Exception:
+            pass
+
+    # Token + cookie
+    token = create_access_token({"sub": str(user.id), "email": user.email})
+    r = RedirectResponse("/dashboard", status_code=303)
+    issue_access_cookie(r, token)
+
+    if DEBUG_AUTH:
+        try:
+            print(f"[auth][login_web] ok email={user.email} id={user.id}")
+        except Exception:
+            pass
+
     return r
 
-@router.post("/logout")
-def logout_api():
-    r = JSONResponse({"ok": True, "logged_out": True}); clear_access_cookie(r); return r
+
+@router.post("/login", response_class=JSONResponse)
+def login_api(
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Login API (si lo usás desde JS o integraciones).
+    Devuelve JSON, y también setea la cookie.
+    """
+    email = (email or "").strip().lower()
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Credenciales inválidas")
+
+    if normalize_user_plan:
+        try:
+            normalize_user_plan(db, user)
+        except Exception:
+            pass
+
+    token = create_access_token({"sub": str(user.id), "email": user.email})
+    resp = JSONResponse({"ok": True})
+    issue_access_cookie(resp, token)
+    return resp
+
 
 @router.get("/logout", include_in_schema=False)
-def logout_get():
-    r = RedirectResponse(url="/", status_code=303); clear_access_cookie(r); return r
+def logout():
+    r = RedirectResponse("/", status_code=303)
+    clear_access_cookie(r)
+    return r
 
-@router.get("/me")
-def me(request: Request, db= Depends(get_db)):
-    u = get_current_user_cookie(request, db)
+
+@router.get("/me", response_class=JSONResponse)
+def me(request: Request, db: Session = Depends(get_db)):
+    payload = get_current_user_cookie(request)
+    user = db.query(User).filter(User.id == int(payload["sub"])).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+
+    if normalize_user_plan:
+        try:
+            normalize_user_plan(db, user)
+        except Exception:
+            pass
+
     return {
-        "id": getattr(u, "id", None),
-        "email": getattr(u, "email", None),
-        "name": getattr(u, "name", None),
-        "role": getattr(u, "role", None),
-        "plan": getattr(u, "plan", None),
-        "is_pro": bool(getattr(u, "is_pro", False)),
-        "is_email_verified": bool(getattr(u, "is_email_verified", True)),
+        "id": user.id,
+        "email": user.email,
+        "name": getattr(user, "name", None),
+        "plan": getattr(user, "plan", "FREE"),
+        "is_pro": bool(getattr(user, "is_pro", False)),
+        "pro_expires_at": getattr(user, "pro_expires_at", None).isoformat() if getattr(user, "pro_expires_at", None) else None,
     }
 
-@router.post("/register")
-def register(payload: RegisterIn, request: Request, db= Depends(get_db)):
-    email = payload.email.strip().lower()
-    if db.query(User).filter(func.lower(User.email) == email).first():
-        raise HTTPException(status_code=400, detail="Email ya registrado")
-    user = User(
+
+@router.post("/register", response_class=JSONResponse)
+def register(
+    email: str = Form(...),
+    password: str = Form(...),
+    name: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Registro simple (por si lo tenés habilitado).
+    Si no lo usás, igual no molesta.
+    """
+    email = (email or "").strip().lower()
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email y password requeridos")
+
+    exists = db.query(User).filter(func.lower(User.email) == email).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="El email ya está registrado")
+
+    u = User(
         email=email,
-        name=(payload.name or email.split("@")[0]),
-        hashed_password=get_password_hash(payload.password),
-        plan=getattr(User, "plan").default.arg if hasattr(getattr(User, "plan"), "default") else "free",
-        is_email_verified=False if hasattr(User, "is_email_verified") else True,
+        hashed_password=get_password_hash(password),
     )
-    db.add(user); db.commit(); db.refresh(user)
-    # emitir código si corresponde
-    try:
-        if _must_verify(user):
-            _issue_email_code(user, db)
-    except Exception as e:
-        print("[register] warn issue email code:", e)
-    return {"ok": True, "user_id": user.id}
+    if hasattr(u, "name") and name:
+        u.name = name
 
-@router.post("/resend-code")
-def resend_code(request: Request, db= Depends(get_db)):
-    u = get_current_user_cookie(request, db)
-    if not _must_verify(u):
-        return {"ok": True, "already_verified": True}
-    _issue_email_code(u, db)
-    return {"ok": True}
+    # defaults razonables
+    if hasattr(u, "plan"):
+        u.plan = "FREE"
+    if hasattr(u, "is_pro"):
+        u.is_pro = False
 
-@router.post("/verify")
-def verify_email(request: Request, code: str = Form(...), db= Depends(get_db)):
-    u = get_current_user_cookie(request, db)
-    if not hasattr(u, "is_email_verified"):
-        return {"ok": True, "skipped": True}
-    if not u.email_code or not u.email_code_expires:
-        raise HTTPException(400, "No hay código pendiente")
-    now = datetime.now(timezone.utc)
-    if now > u.email_code_expires:
-        raise HTTPException(400, "Código expirado")
-    if code != u.email_code:
-        raise HTTPException(400, "Código inválido")
-    u.is_email_verified = True
-    u.email_code = None
-    u.email_code_expires = None
-    db.add(u); db.commit()
-    return {"ok": True, "verified": True}
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+
+    return {"ok": True, "id": u.id}
