@@ -101,6 +101,31 @@ TR = {
 def _translate(lang: str, key: str) -> str:
     return TR.get(lang, {}).get(key, TR[DEFAULT_LANG].get(key, key))
 
+# === Extensiones de traducciones para auth / login ===
+
+EXTRA_TR = {
+    "es": {
+        "Sign in": "Iniciar sesión",
+        "Sign in to AlertTrail": "Iniciar sesión en AlertTrail",
+        "Email": "Email",
+        "Password": "Contraseña",
+        "Don't have an account?": "¿No tenés cuenta?",
+        "Create account": "Crear cuenta",
+    },
+    "en": {
+        "Sign in": "Sign in",
+        "Sign in to AlertTrail": "Sign in to AlertTrail",
+        "Email": "Email",
+        "Password": "Password",
+        "Don't have an account?": "Don't have an account?",
+        "Create account": "Create account",
+    },
+}
+
+for _lang, _mapping in EXTRA_TR.items():
+    if _lang in TR:
+        TR[_lang].update(_mapping)
+
 def pick_lang(cookie: str | None, query: str | None, accept: str | None) -> str:
     # prioridad: ?lang=  > cookie > Accept-Language > default
     if query and query in SUPPORTED: return query
