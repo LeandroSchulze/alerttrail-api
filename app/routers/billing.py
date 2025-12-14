@@ -12,97 +12,63 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.security import get_current_user_cookie
-from app.security.billing_guard import normalize_user_plan
+from app.security import normalize_user_plan
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-
-def _as_int(name: str, default: int) -> int:
-    v = (os.getenv(name, "") or "").strip()
-    try:
-        return int(v.replace("_", "").replace(",", ""))
-    except Exception:
-        return int(default)
-
-
-def _as_float(name: str, default: float) -> float:
-    v = (os.getenv(name, "") or "").strip()
-    try:
-        return float(v.replace("_", "").replace(",", ""))
-    except Exception:
-        return float(default)
-
-
 def _pricing_ctx() -> Dict[str, Any]:
-    """Contexto de precios inyectado en billing.html."""
-    price_month = _as_float("PRO_PRICE_USD", float(os.getenv("PLAN_PRICE", "10") or 10.0))
-    price_year = _as_float("PRO_PRICE_YEAR_USD", 96.0)  # 20% OFF aprox.
-    biz_included = _as_int("BIZ_INCLUDED_SEATS", 25)
-    biz_extra = _as_float("BIZ_EXTRA_SEAT_USD", 5.0)
-    trial_days = _as_int("TRIAL_DAYS", _as_int("TRIAL_PRO_DAYS", 30))
+    try:
+        price_month = float(os.getenv("PLAN_PRICE", "10"))
+    except Exception:
+        price_month = 10.0
+    try:
+        disc_pct = int(os.getenv("PLAN_ANNUAL_DISCOUNT_PCT", "20"))
+    except Exception:
+        disc_pct = 20
+    price_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
+    currency = (os.getenv("PLAN_CURRENCY", "USD") or "USD").upper()
+    return dict(price_month=price_month, price_year=price_year, disc_pct=disc_pct, currency=currency)
 
-    return {
-        "price_month": price_month,
-        "price_year": price_year,
-        "biz_included": biz_included,
-        "biz_extra": biz_extra,
-        "trial_days": trial_days,
-    }
+@router.get("", response_class=HTMLResponse, include_in_schema=False)
+def billing_page(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
+    user: User | None = db.query(User).filter(User.id == current["sub"]).first()
+    if user:
+        user = normalize_user_plan(db, user)
 
-
-@router.get("/subscriptions", response_class=HTMLResponse)
-def billing_subscriptions(
-    request: Request,
-    user=Depends(get_current_user_cookie),
-):
-    ctx: Dict[str, Any] = {"request": request, "user": user}
+    ctx = {"request": request, "user": current, "current_user": user, "page_title": "Facturación | AlertTrail"}
     ctx.update(_pricing_ctx())
-    return request.app.state.templates.TemplateResponse("billing.html", ctx)
 
+    # Si existe Jinja templates en app.state.templates, la usa el main.py.
+    templates = getattr(request.app.state, "templates", None)
+    if templates is None:
+        return HTMLResponse("<h1>Billing</h1><p>Templates no disponibles.</p>")
+
+    try:
+        return templates.TemplateResponse("billing.html", ctx)
+    except Exception:
+        # fallback mínimo
+        return HTMLResponse("<h1>Billing</h1><p>No encontré billing.html</p>")
 
 @router.get("/me")
-def billing_me(
-    db: Session = Depends(get_db),
-    current=Depends(get_current_user_cookie),
-):
-    """Devuelve el estado de plan del usuario actual para la UI de facturación."""
+def billing_me(request: Request, db: Session = Depends(get_db), current=Depends(get_current_user_cookie)):
     user: User | None = db.query(User).filter(User.id == current["sub"]).first()
     if not user:
         return JSONResponse({"ok": False, "error": "user_not_found"}, status_code=404)
 
     user = normalize_user_plan(db, user)
 
-    now = datetime.utcnow()
-    pro_expires_at: datetime | None = getattr(user, "pro_expires_at", None)
-    trial_started_at: datetime | None = getattr(user, "trial_started_at", None)
-    trial_expires_at: datetime | None = getattr(user, "trial_expires_at", None)
-
-    is_pro = False
-    remaining_days = None
-    remaining_hours = None
-    if pro_expires_at and pro_expires_at > now:
-        is_pro = True
-        delta = pro_expires_at - now
-        total_seconds = max(0, int(delta.total_seconds()))
-        remaining_days = total_seconds // 86400
-        remaining_hours = (total_seconds % 86400) // 3600
-
     data = {
         "ok": True,
-        "email": user.email,
-        "plan": (user.plan or "FREE").upper(),
-        "is_pro": is_pro,
-        "pro_expires_at": pro_expires_at.isoformat() if pro_expires_at else None,
-        "remaining_days": remaining_days,
-        "remaining_hours": remaining_hours,
-        "trial_started_at": trial_started_at.isoformat() if trial_started_at else None,
-        "trial_expires_at": trial_expires_at.isoformat() if trial_expires_at else None,
-        "had_trial": bool(getattr(user, "had_trial", False)),
+        "user_id": getattr(user, "id", None),
+        "email": getattr(user, "email", None),
+        "plan": (getattr(user, "plan", None) or "FREE").upper(),
+        "is_pro": bool(getattr(user, "is_pro", False)),
+        "plan_expires": getattr(user, "plan_expires", None) or getattr(user, "pro_expires_at", None),
+        "pro_expires_at": getattr(user, "pro_expires_at", None),
         "pro_source": getattr(user, "pro_source", None),
         "trial_days": getattr(user, "trial_days", None),
     }
     return JSONResponse(data)
-
 
 @router.get("/history")
 def billing_history():
