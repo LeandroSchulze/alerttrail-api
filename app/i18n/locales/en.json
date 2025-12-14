@@ -1,0 +1,25 @@
+{
+  "app.name": "AlertTrail",
+
+  "lang.en": "English",
+  "lang.es": "Spanish",
+
+  "nav.dashboard": "Dashboard",
+  "nav.logout": "Log out",
+
+  "auth.login.title": "Sign in to your account",
+  "auth.login.email": "Email",
+  "auth.login.password": "Password",
+  "auth.login.submit": "Sign in",
+
+  "dashboard.title": "Security dashboard",
+  "dashboard.scan_logs": "Scan logs",
+  "dashboard.scan_mail": "Scan mailboxes",
+
+  "pdf.report.title": "Security Report",
+  "pdf.report.section.summary": "Summary",
+  "pdf.report.section.findings": "Findings",
+
+  "toast.saved": "Changes saved successfully",
+  "error.generic": "Something went wrong. Please try again."
+}
