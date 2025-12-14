@@ -16,12 +16,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
 from app.routers.mail import start_mail_scheduler  # NEW
+from app.routers import lang as lang_router
 
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
     clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,
 )
+app.include_router(lang_router.router)
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
