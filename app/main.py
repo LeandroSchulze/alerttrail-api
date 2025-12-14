@@ -6,7 +6,7 @@ import os, re, json
 from pathlib import Path
 from importlib import import_module
 
-from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
+from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,14 +16,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from jinja2 import TemplateNotFound
 from app.routers.mail import start_mail_scheduler  # NEW
-from app.routers import lang as lang_router
 
 from app.database import SessionLocal
 from app.security import (
     issue_access_cookie, get_current_user_cookie, get_password_hash, verify_password,
     clear_access_cookie, decode_token, COOKIE_NAME, create_access_token,
 )
-app.include_router(lang_router.router)
+from app.i18n import pick_lang, t
 
 # === Crear la app ANTES de agregar middlewares y routers ===
 app = FastAPI(title="AlertTrail API", version="1.0.0")
@@ -68,9 +67,6 @@ class LangContextMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(LangContextMiddleware)
 
-from fastapi import Query, Request
-from fastapi.responses import RedirectResponse
-from app.i18n import pick_lang, t  # esto ya lo tenés importado arriba
 
 @app.get("/set-lang", include_in_schema=False)
 async def set_lang(
@@ -78,11 +74,8 @@ async def set_lang(
     lang: str = Query("es", pattern="^(es|en)$"),
     next: str = Query("/", alias="next"),
 ):
-    """
-    Cambia el idioma de la app seteando la cookie `lang`
-    y redirige de vuelta a la página anterior.
-    """
-    # Normalizamos el idioma pedido
+    """Cambia el idioma de la app seteando la cookie `lang` y redirige de vuelta."""
+    # Normalizamos el idioma pedido (usa la misma lógica que el resto de la app)
     selected_lang = pick_lang(cookie=lang)
 
     # Si no viene `next`, intento usar el Referer
