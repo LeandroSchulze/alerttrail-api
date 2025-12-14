@@ -89,6 +89,49 @@ app.state.templates = templates
 templates.env.globals["t"] = t
 
 # ============================================================
+# i18n: traducir HTML final (modo rápido sin romper templates)
+# ============================================================
+@app.middleware("http")
+async def i18n_html_middleware(request: Request, call_next):
+    response = await call_next(request)
+
+    try:
+        lang = get_lang(request)
+        response.headers["Content-Language"] = lang
+
+        # Solo traducimos HTML (y solo si EN)
+        ctype = (response.headers.get("content-type") or "").lower()
+        if lang != "en":
+            return response
+        if "text/html" not in ctype:
+            return response
+
+        # Leer body y reescribirlo
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+
+        html = body.decode("utf-8", errors="ignore")
+        html2 = translate_html(lang, html)
+
+        # Re-crear response (evita problemas con body_iterator consumido)
+        new_resp = Response(
+            content=html2.encode("utf-8"),
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type="text/html",
+        )
+
+        # Content-Length correcto
+        new_resp.headers["content-length"] = str(len(new_resp.body or b""))
+        return new_resp
+
+    except Exception:
+        # Si algo falla, devolvemos el response original (no rompe producción)
+        return response
+
+
+# ============================================================
 # DB
 # ============================================================
 
