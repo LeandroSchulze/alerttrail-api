@@ -28,7 +28,8 @@ from app.security import (
     create_access_token,
     normalize_user_plan,   # ✅ FIX import
 )
-from app.i18n import get_lang, t
+from app.i18n import get_lang, t, translate_html
+
 
 # ============================================================
 # App
