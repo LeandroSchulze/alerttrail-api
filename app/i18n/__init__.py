@@ -1,54 +1,83 @@
-import json
-from pathlib import Path
-from functools import lru_cache
+# app/i18n/__init__.py
+from __future__ import annotations
 
-BASE_DIR = Path(__file__).resolve().parent
-LOCALES_DIR = BASE_DIR / "locales"
-
-DEFAULT_LANG = "en"
-SUPPORTED_LANGS = {"en", "es"}
+from typing import Any, Dict, Optional
 
 
-@lru_cache
-def _load_locale(lang: str) -> dict:
+# Diccionario simple de traducciones.
+# Si ya tenías tus textos en otros archivos/módulos, podés moverlos ahí y que esto los importe.
+TRANSLATIONS: Dict[str, Dict[str, str]] = {
+    "es": {
+        "app.name": "AlertTrail",
+        "nav.dashboard": "Dashboard",
+        "nav.logout": "Cerrar sesión",
+        "nav.login": "Iniciar sesión",
+        "nav.language": "Idioma",
+        "lang.es": "ES",
+        "lang.en": "EN",
+    },
+    "en": {
+        "app.name": "AlertTrail",
+        "nav.dashboard": "Dashboard",
+        "nav.logout": "Log out",
+        "nav.login": "Log in",
+        "nav.language": "Language",
+        "lang.es": "ES",
+        "lang.en": "EN",
+    },
+}
+
+
+def get_lang(request: Any = None, default: str = "es") -> str:
     """
-    Carga y cachea el JSON de idioma.
+    Intenta obtener el idioma desde:
+    - request.cookies['lang']
+    - fallback a default
     """
-    lang = lang if lang in SUPPORTED_LANGS else DEFAULT_LANG
-    path = LOCALES_DIR / f"{lang}.json"
-    if not path.exists():
-        # por si falta algún archivo, no rompe
-        lang = DEFAULT_LANG
-        path = LOCALES_DIR / f"{lang}.json"
+    try:
+        if request is not None:
+            lang = getattr(request, "cookies", {}).get("lang")
+            if lang in TRANSLATIONS:
+                return lang
+    except Exception:
+        pass
+    return default
 
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
 
-
-def get_translator(lang: str):
+def translate(key: str, lang: str = "es", **kwargs: Any) -> str:
     """
-    Devuelve una función t(key, **kwargs) para traducir.
-    Usa fallback al idioma por defecto si falta la key.
+    Traduce una key para un idioma.
+    - fallback: si no existe la key en el idioma, intenta en 'en'
+    - fallback final: devuelve la key tal cual
+    - soporta format con kwargs: "Hola {name}"
     """
-    data = _load_locale(lang)
-    fallback = _load_locale(DEFAULT_LANG)
+    lang = (lang or "es").lower()
+    if lang not in TRANSLATIONS:
+        lang = "es"
 
-    def t(key: str, **kwargs) -> str:
-        text = data.get(key) or fallback.get(key) or key
-        if kwargs:
-            try:
-                text = text.format(**kwargs)
-            except Exception:
-                # si falla el format no rompemos la app
-                pass
-        return text
+    text = TRANSLATIONS.get(lang, {}).get(key)
+    if text is None:
+        text = TRANSLATIONS.get("en", {}).get(key)
+    if text is None:
+        text = key
 
-    return t
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except Exception:
+            # Si falla el format, devolvemos el texto sin formatear para no romper el render.
+            pass
+
+    return text
 
 
-def sanitize_lang(lang: str | None) -> str:
-    if not lang:
-        return DEFAULT_LANG
-    if lang not in SUPPORTED_LANGS:
-        return DEFAULT_LANG
-    return lang
+# ✅ COMPAT: tu main.py hace "from app.i18n import t"
+def t(lang: str, key: str, **kwargs: Any) -> str:
+    """
+    Wrapper compatible para Jinja / uso directo desde main.py.
+    Uso esperado: t(lang, "some.key", name="Leandro")
+    """
+    return translate(key=key, lang=lang, **kwargs)
+
+
+__all__ = ["TRANSLATIONS", "get_lang", "translate", "t"]
