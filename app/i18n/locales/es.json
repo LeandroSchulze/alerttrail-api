@@ -1,0 +1,25 @@
+{
+  "app.name": "AlertTrail",
+
+  "lang.en": "Inglés",
+  "lang.es": "Español",
+
+  "nav.dashboard": "Panel",
+  "nav.logout": "Cerrar sesión",
+
+  "auth.login.title": "Iniciá sesión en tu cuenta",
+  "auth.login.email": "Correo electrónico",
+  "auth.login.password": "Contraseña",
+  "auth.login.submit": "Iniciar sesión",
+
+  "dashboard.title": "Panel de seguridad",
+  "dashboard.scan_logs": "Analizar logs",
+  "dashboard.scan_mail": "Analizar casillas",
+
+  "pdf.report.title": "Informe de seguridad",
+  "pdf.report.section.summary": "Resumen",
+  "pdf.report.section.findings": "Hallazgos",
+
+  "toast.saved": "Cambios guardados correctamente",
+  "error.generic": "Ocurrió un error. Intentá de nuevo."
+}
