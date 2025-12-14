@@ -68,6 +68,38 @@ class LangContextMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(LangContextMiddleware)
 
+from fastapi import Query, Request
+from fastapi.responses import RedirectResponse
+from app.i18n import pick_lang, t  # esto ya lo tenés importado arriba
+
+@app.get("/set-lang", include_in_schema=False)
+async def set_lang(
+    request: Request,
+    lang: str = Query("es", pattern="^(es|en)$"),
+    next: str = Query("/", alias="next"),
+):
+    """
+    Cambia el idioma de la app seteando la cookie `lang`
+    y redirige de vuelta a la página anterior.
+    """
+    # Normalizamos el idioma pedido
+    selected_lang = pick_lang(cookie=lang)
+
+    # Si no viene `next`, intento usar el Referer
+    redirect_url = next or request.headers.get("referer") or "/"
+
+    response = RedirectResponse(url=redirect_url)
+    response.set_cookie(
+        "lang",
+        selected_lang,
+        max_age=60 * 60 * 24 * 365,  # 1 año
+        httponly=False,              # tiene que ser legible desde el navegador
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
 # ---- DB hotfix temprano ----
 try:
     from app.db_hotfix import ensure_user_pro_columns  # type: ignore
