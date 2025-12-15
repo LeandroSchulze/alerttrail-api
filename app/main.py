@@ -24,7 +24,7 @@ from app.security import (
     clear_access_cookie,
     COOKIE_NAME,
     create_access_token,
-    normalize_user_plan,  # ✅ OK
+    normalize_user_plan,
 )
 from app.i18n import get_lang, t, translate_html
 
@@ -75,8 +75,8 @@ REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 
+# ✅ static no interfiere con routers (prefijo distinto)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 
 
 class TemplatesWithDefaults(Jinja2Templates):
@@ -90,7 +90,6 @@ class TemplatesWithDefaults(Jinja2Templates):
             if request and "lang" not in context:
                 context["lang"] = get_lang(request)
         except Exception:
-            # fallback seguro, no rompe producción
             context.setdefault("lang", "es")
         return super().TemplateResponse(name, context, *args, **kwargs)
 
@@ -98,7 +97,7 @@ class TemplatesWithDefaults(Jinja2Templates):
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
-# Exponer traducción global (para que no vuelva a pasar 't undefined')
+# Exponer traducción global
 templates.env.globals["t"] = t
 
 # ============================================================
@@ -113,7 +112,7 @@ async def i18n_html_middleware(request: Request, call_next):
         lang = get_lang(request)
         response.headers["Content-Language"] = lang
 
-        # Solo traducimos HTML y solo si EN
+        # Solo traducimos HTML y solo si EN (asumiendo templates base en ES)
         ctype = (response.headers.get("content-type") or "").lower()
         if lang != "en":
             return response
@@ -151,22 +150,8 @@ def get_db():
         db.close()
 
 # ============================================================
-# Idioma (cookie) - FIX COMPAT + DOMINIO
+# Idioma (cookie)
 # ============================================================
-
-def _is_https(request: Request) -> bool:
-    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
-
-def _lang_cookie_domain() -> str | None:
-    """
-    Para que funcione tanto en www.alerttrail.com como en alerttrail.com.
-    Si usás otro dominio en dev, dejalo en None.
-    """
-    base = os.getenv("APP_COOKIE_DOMAIN", "").strip()
-    if base:
-        return base
-    # default producción
-    return ".alerttrail.com"
 
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(
@@ -180,73 +165,57 @@ def set_lang(
 
     resp = RedirectResponse(next or "/", status_code=303)
 
-    common = dict(
+    # ✅ Guardamos en ambos nombres por compatibilidad (según cómo esté get_lang)
+    resp.set_cookie(
+        "lang",
+        lang,
         max_age=60 * 60 * 24 * 365,
         httponly=False,
         samesite="lax",
         path="/",
-        secure=_is_https(request),
-        domain=_lang_cookie_domain(),
     )
-
-    # ✅ COMPAT: el proyecto tiene partes leyendo alerttrail_lang y otras leyendo lang
-    resp.set_cookie("alerttrail_lang", lang, **common)
-    resp.set_cookie("lang", lang, **common)
-
+    resp.set_cookie(
+        "alerttrail_lang",
+        lang,
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="lax",
+        path="/",
+    )
     return resp
 
 # ============================================================
-# Redirects "puente" (evita 404 por slash / paths viejos)
-# ============================================================
-
-@app.get("/rules", include_in_schema=False)
-def _redir_rules():
-    return RedirectResponse("/rules/", status_code=307)
-
-@app.get("/reports_browser", include_in_schema=False)
-def _redir_reports_browser():
-    # En tu app real existe /reports/ (router reports)
-    return RedirectResponse("/reports/", status_code=307)
-
-@app.get("/billing/subscriptions", include_in_schema=False)
-def _redir_billing_subscriptions():
-    # En tus routes existe /admin/subscriptions (y /billing no tiene /subscriptions)
-    return RedirectResponse("/admin/subscriptions", status_code=307)
-
-@app.get("/billing/payments", include_in_schema=False)
-def _redir_billing_payments():
-    # En tus routes existe /billing/history
-    return RedirectResponse("/billing/history", status_code=307)
-
-@app.get("/orgs/admin", include_in_schema=False)
-def _redir_orgs_admin():
-    # Si tu UI vieja apuntaba a /orgs/admin
-    return RedirectResponse("/org/admin", status_code=307)
-
-# ============================================================
-# Cookie hardener
+# Cookie hardener (NO romper otros Set-Cookie)
 # ============================================================
 
 @app.middleware("http")
 async def cookie_hardener(request: Request, call_next):
     resp = await call_next(request)
-    sc = resp.headers.get("set-cookie")
-    if not sc:
+
+    # Si no hay raw_headers, no tocamos nada
+    raw = getattr(resp, "raw_headers", None)
+    if not raw:
         return resp
 
-    def patch(c: str) -> str:
-        if COOKIE_NAME not in c:
-            return c
-        if "samesite" not in c.lower():
-            c += "; SameSite=Lax"
-        if "httponly" not in c.lower():
-            c += "; HttpOnly"
-        if _is_https(request) and "secure" not in c.lower():
-            c += "; Secure"
-        return c
+    new_raw = []
+    for k, v in raw:
+        if k.lower() == b"set-cookie":
+            c = v.decode("latin-1", errors="ignore")
 
-    parts = [p.strip() for p in sc.split(",")]
-    resp.headers["set-cookie"] = ", ".join(patch(p) for p in parts)
+            # Solo endurecemos el cookie del JWT; NO pisamos los demás cookies (lang, etc.)
+            if COOKIE_NAME in c:
+                if "samesite" not in c.lower():
+                    c += "; SameSite=Lax"
+                if "httponly" not in c.lower():
+                    c += "; HttpOnly"
+                if (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https") and "secure" not in c.lower():
+                    c += "; Secure"
+
+            new_raw.append((k, c.encode("latin-1")))
+        else:
+            new_raw.append((k, v))
+
+    resp.raw_headers = new_raw
     return resp
 
 # ============================================================
@@ -303,7 +272,7 @@ def login_action(
     email = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Credenciales inválidas")
+        raise HTTPException(400, "Credenciales inválidas")
 
     normalize_user_plan(db, user)
 
@@ -332,7 +301,7 @@ ROUTER_MODULES = [
     "payments_mp",
     "stats",
     "alerts",
-    "rules",
+    # ✅ "rules",  # <-- QUITADO por ahora (custom rules OFF)
     "reports",
     "admin",
     "analysis",
@@ -349,6 +318,10 @@ for name in ROUTER_MODULES:
         print(f"[routers] {name} OK")
     except Exception as e:
         print(f"[routers] {name} SKIPPED:", e)
+
+# ✅ MUY IMPORTANTE:
+# Montamos /reports DESPUÉS de incluir routers, para no interferir con /reports/list, /reports/open, etc.
+app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 
 # ============================================================
 # OpenAPI cookie auth
