@@ -151,10 +151,10 @@ def get_db():
         db.close()
 
 # ============================================================
-# Cookie domain helper (clave para que el idioma persista entre www y sin www)
+# Cookie domain helper (para que el idioma persista entre www y sin www)
 # ============================================================
 
-def _cookie_domain_for_request(request: Request) -> str | None:
+def _cookie_domain_for_request(request: Request):
     """
     Si el host es *.alerttrail.com o alerttrail.com, seteamos cookies en .alerttrail.com
     para que se compartan entre 'www' y el dominio raíz.
@@ -279,8 +279,7 @@ def login_action(
     email = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(400,
-        , "Credenciales inválidas")
+        raise HTTPException(status_code=400, detail="Credenciales inválidas")
 
     normalize_user_plan(db, user)
 
