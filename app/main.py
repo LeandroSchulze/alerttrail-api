@@ -24,7 +24,7 @@ from app.security import (
     clear_access_cookie,
     COOKIE_NAME,
     create_access_token,
-    normalize_user_plan,
+    normalize_user_plan,  # ✅ OK
 )
 from app.i18n import get_lang, t, translate_html
 
@@ -82,7 +82,7 @@ app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 class TemplatesWithDefaults(Jinja2Templates):
     """
     Inyecta variables default (lang) a TODAS las vistas que renderizan templates,
-    aunque el router no pase explícitamente `lang`.
+    aunque el router se "olvide" de pasar lang.
     """
     def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
         try:
@@ -90,6 +90,7 @@ class TemplatesWithDefaults(Jinja2Templates):
             if request and "lang" not in context:
                 context["lang"] = get_lang(request)
         except Exception:
+            # fallback seguro, no rompe producción
             context.setdefault("lang", "es")
         return super().TemplateResponse(name, context, *args, **kwargs)
 
@@ -97,11 +98,11 @@ class TemplatesWithDefaults(Jinja2Templates):
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
-# Traducción global disponible en TODOS los templates
+# Exponer traducción global (para que no vuelva a pasar 't undefined')
 templates.env.globals["t"] = t
 
 # ============================================================
-# i18n: traducir HTML final (solo EN)
+# i18n: traducir HTML final (modo rápido)
 # ============================================================
 
 @app.middleware("http")
@@ -112,8 +113,11 @@ async def i18n_html_middleware(request: Request, call_next):
         lang = get_lang(request)
         response.headers["Content-Language"] = lang
 
+        # Solo traducimos HTML y solo si EN
         ctype = (response.headers.get("content-type") or "").lower()
-        if lang != "en" or "text/html" not in ctype:
+        if lang != "en":
+            return response
+        if "text/html" not in ctype:
             return response
 
         body = b""
@@ -147,6 +151,23 @@ def get_db():
         db.close()
 
 # ============================================================
+# Cookie domain helper (clave para que el idioma persista entre www y sin www)
+# ============================================================
+
+def _cookie_domain_for_request(request: Request) -> str | None:
+    """
+    Si el host es *.alerttrail.com o alerttrail.com, seteamos cookies en .alerttrail.com
+    para que se compartan entre 'www' y el dominio raíz.
+    """
+    try:
+        host = (request.url.hostname or "").lower()
+    except Exception:
+        host = ""
+    if host == "alerttrail.com" or host.endswith(".alerttrail.com"):
+        return ".alerttrail.com"
+    return None
+
+# ============================================================
 # Idioma (cookie)
 # ============================================================
 
@@ -161,6 +182,12 @@ def set_lang(
         lang = "es"
 
     resp = RedirectResponse(next or "/", status_code=303)
+
+    cookie_domain = _cookie_domain_for_request(request)
+    cookie_kwargs = {}
+    if cookie_domain:
+        cookie_kwargs["domain"] = cookie_domain
+
     resp.set_cookie(
         "lang",
         lang,
@@ -168,6 +195,7 @@ def set_lang(
         httponly=False,
         samesite="lax",
         path="/",
+        **cookie_kwargs,
     )
     return resp
 
@@ -229,14 +257,13 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     normalize_user_plan(db, user)
 
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "current_user": user,
-            "user": user,
-        },
-    )
+    ctx = {
+        "request": request,
+        "current_user": user,
+        "user": user,
+        # lang lo inyecta TemplatesWithDefaults si faltara
+    }
+    return templates.TemplateResponse("dashboard.html", ctx)
 
 # ============================================================
 # Auth (form legacy)
@@ -252,7 +279,8 @@ def login_action(
     email = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(400, "Credenciales inválidas")
+        raise HTTPException(400,
+        , "Credenciales inválidas")
 
     normalize_user_plan(db, user)
 
