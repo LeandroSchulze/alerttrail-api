@@ -72,11 +72,6 @@ TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "template
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
 
-# IMPORTANTE:
-# NO montamos archivos estáticos en "/reports" porque ese prefijo lo usa el router
-# `app.routers.reports` (UI + endpoints). Si ambos comparten el mismo path,
-# Starlette puede matchear primero el Mount y dejar inaccesibles las rutas del router.
-# Por eso servimos los archivos PDF generados desde otra URL.
 REPORTS_STATIC_URL = "/reports-files"
 
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
@@ -104,7 +99,6 @@ class TemplatesWithDefaults(Jinja2Templates):
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
-# Exponer traducción global (para que no vuelva a pasar 't undefined')
 templates.env.globals["t"] = t
 
 # ============================================================
@@ -119,10 +113,13 @@ async def i18n_html_middleware(request: Request, call_next):
         lang = get_lang(request)
         response.headers["Content-Language"] = lang
 
-        # Solo tocamos HTML
         ctype = (response.headers.get("content-type") or "").lower()
         if "text/html" not in ctype:
             return response
+
+        # IMPORTANTÍSIMO: evitar que caches/CDN mezclen ES/EN
+        response.headers["Vary"] = "Accept-Language, Cookie"
+        response.headers["Cache-Control"] = "no-store"
 
         body = b""
         async for chunk in response.body_iterator:
@@ -131,7 +128,6 @@ async def i18n_html_middleware(request: Request, call_next):
         html = body.decode("utf-8", errors="ignore")
         html2 = translate_html(lang, html)
 
-        # Si no hay cambios, devolvemos igual (pero reconstruimos Response porque consumimos el iterator)
         new_resp = Response(
             content=html2.encode("utf-8"),
             status_code=response.status_code,
@@ -160,10 +156,6 @@ def get_db():
 # ============================================================
 
 def _cookie_domain_for_request(request: Request):
-    """
-    Si estás en www.alerttrail.com, setear domain=.alerttrail.com permite compartir cookie
-    con alerttrail.com (sin www) y viceversa.
-    """
     host = (request.headers.get("host") or "").split(":")[0].lower()
     if not host:
         return None
@@ -259,15 +251,15 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "request": request,
         "current_user": user,
         "user": user,
+        "lang": get_lang(request),  # (extra) forzamos consistencia en templates
     }
     return templates.TemplateResponse("dashboard.html", ctx)
 
-# Alias legacy: algunas versiones del dashboard linkean a /reports_browser.
 @app.get("/reports_browser", include_in_schema=False)
 def reports_browser_alias():
     return RedirectResponse(url="/reports/", status_code=307)
 
-# Custom Rules deshabilitado por ahora: evitamos errores si alguien entra por URL.
+# Custom Rules deshabilitado por ahora
 @app.get("/rules", include_in_schema=False)
 def rules_disabled_no_slash():
     return RedirectResponse(url="/dashboard", status_code=302)
@@ -319,7 +311,7 @@ ROUTER_MODULES = [
     "payments_mp",
     "stats",
     "alerts",
-    # "rules",  # deshabilitado temporalmente (custom rules)
+    # "rules",  # deshabilitado temporalmente
     "reports",
     "admin",
     "analysis",
