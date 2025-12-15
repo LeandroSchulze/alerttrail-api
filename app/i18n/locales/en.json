@@ -1,25 +1,16 @@
 {
-  "app.name": "AlertTrail",
+  "common.save": "Save",
+  "common.cancel": "Cancel",
+  "common.back": "Back",
 
-  "lang.en": "English",
-  "lang.es": "Spanish",
-
-  "nav.dashboard": "Dashboard",
-  "nav.logout": "Log out",
-
-  "auth.login.title": "Sign in to your account",
-  "auth.login.email": "Email",
-  "auth.login.password": "Password",
-  "auth.login.submit": "Sign in",
-
-  "dashboard.title": "Security dashboard",
-  "dashboard.scan_logs": "Scan logs",
-  "dashboard.scan_mail": "Scan mailboxes",
-
-  "pdf.report.title": "Security Report",
-  "pdf.report.section.summary": "Summary",
-  "pdf.report.section.findings": "Findings",
-
-  "toast.saved": "Changes saved successfully",
-  "error.generic": "Something went wrong. Please try again."
+  "mail.title": "Mailboxes",
+  "mail.open_scanner": "Open Scanner",
+  "mail.imap_config": "IMAP Configuration",
+  "mail.server": "IMAP Server",
+  "mail.port": "Port",
+  "mail.username": "Username",
+  "mail.password": "Password / App Password",
+  "mail.folder": "Folder",
+  "mail.use_ssl": "Use SSL",
+  "mail.mark_read": "Mark as read when scanning"
 }
