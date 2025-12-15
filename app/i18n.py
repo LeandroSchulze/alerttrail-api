@@ -1,11 +1,13 @@
 # app/i18n.py
 import os
 from functools import lru_cache
+from fastapi import Request
 
 SUPPORTED = {"es", "en"}
-DEFAULT_LANG = os.getenv("DEFAULT_LANG", "es")
+DEFAULT_LANG = os.getenv("DEFAULT_LANG", "es").lower()
+if DEFAULT_LANG not in SUPPORTED:
+    DEFAULT_LANG = "es"
 
-# Diccionario simple (puedes moverlo a JSON luego)
 TR = {
     "es": {
         "AlertTrail": "AlertTrail",
@@ -97,12 +99,6 @@ TR = {
     },
 }
 
-@lru_cache(maxsize=1024)
-def _translate(lang: str, key: str) -> str:
-    return TR.get(lang, {}).get(key, TR[DEFAULT_LANG].get(key, key))
-
-# === Extensiones de traducciones para auth / login ===
-
 EXTRA_TR = {
     "es": {
         "Sign in": "Iniciar sesión",
@@ -126,15 +122,36 @@ for _lang, _mapping in EXTRA_TR.items():
     if _lang in TR:
         TR[_lang].update(_mapping)
 
+@lru_cache(maxsize=1024)
+def _translate(lang: str, key: str) -> str:
+    lang = (lang or DEFAULT_LANG).lower()
+    if lang not in SUPPORTED:
+        lang = DEFAULT_LANG
+    # fallback: default lang -> key
+    return TR.get(lang, {}).get(key, TR.get(DEFAULT_LANG, {}).get(key, key))
+
 def pick_lang(cookie: str | None, query: str | None, accept: str | None) -> str:
-    # prioridad: ?lang=  > cookie > Accept-Language > default
-    if query and query in SUPPORTED: return query
-    if cookie and cookie in SUPPORTED: return cookie
+    if query and query in SUPPORTED:
+        return query
+    if cookie and cookie in SUPPORTED:
+        return cookie
     if accept:
         for part in accept.split(","):
             code = part.strip().split(";")[0].split("-")[0]
-            if code in SUPPORTED: return code
+            if code in SUPPORTED:
+                return code
     return DEFAULT_LANG
+
+def get_lang(request: Request) -> str:
+    cookie = (request.cookies.get("lang") or "").lower() or None
+    query = (request.query_params.get("lang") or "").lower() or None
+    accept = request.headers.get("accept-language")
+    return pick_lang(cookie, query, accept)
 
 def t(lang: str, key: str, **fmt):
     return _translate(lang, key).format(**fmt)
+
+# IMPORTANTE: con base ES, NO hacemos traducción automática del HTML.
+# Dejamos esta función como "no-op" para que main.py no se rompa.
+def translate_html(lang: str, html: str) -> str:
+    return html
