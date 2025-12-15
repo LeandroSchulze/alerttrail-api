@@ -2,12 +2,12 @@
 # AlertTrail API - Main
 # ============================================
 
-import os, re, json
+import os
 from pathlib import Path
 from importlib import import_module
 
 from fastapi import FastAPI, Request, Depends, status, HTTPException, Response, Form
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.openapi.utils import get_openapi
@@ -20,16 +20,13 @@ from app.database import SessionLocal
 from app.security import (
     issue_access_cookie,
     get_current_user_cookie,
-    get_password_hash,
     verify_password,
     clear_access_cookie,
-    decode_token,
     COOKIE_NAME,
     create_access_token,
-    normalize_user_plan,   # ✅ OK
+    normalize_user_plan,  # ✅ OK
 )
 from app.i18n import get_lang, t, translate_html
-
 
 # ============================================================
 # App
@@ -81,15 +78,33 @@ Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+class TemplatesWithDefaults(Jinja2Templates):
+    """
+    Inyecta variables default (lang) a TODAS las vistas que renderizan templates,
+    aunque el router se "olvide" de pasar lang.
+    """
+    def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
+        try:
+            request = context.get("request")
+            if request and "lang" not in context:
+                context["lang"] = get_lang(request)
+        except Exception:
+            # fallback seguro, no rompe producción
+            context.setdefault("lang", "es")
+        return super().TemplateResponse(name, context, *args, **kwargs)
+
+
+templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
-# Exponer traducción global
+# Exponer traducción global (para que no vuelva a pasar 't undefined')
 templates.env.globals["t"] = t
 
 # ============================================================
-# i18n: traducir HTML final (modo rápido sin romper templates)
+# i18n: traducir HTML final (modo rápido)
 # ============================================================
+
 @app.middleware("http")
 async def i18n_html_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -98,14 +113,13 @@ async def i18n_html_middleware(request: Request, call_next):
         lang = get_lang(request)
         response.headers["Content-Language"] = lang
 
-        # Solo traducimos HTML (y solo si EN)
+        # Solo traducimos HTML y solo si EN
         ctype = (response.headers.get("content-type") or "").lower()
         if lang != "en":
             return response
         if "text/html" not in ctype:
             return response
 
-        # Leer body y reescribirlo
         body = b""
         async for chunk in response.body_iterator:
             body += chunk
@@ -113,20 +127,17 @@ async def i18n_html_middleware(request: Request, call_next):
         html = body.decode("utf-8", errors="ignore")
         html2 = translate_html(lang, html)
 
-        # Re-crear response (evita problemas con body_iterator consumido)
         new_resp = Response(
             content=html2.encode("utf-8"),
             status_code=response.status_code,
             headers=dict(response.headers),
             media_type="text/html",
         )
-
         new_resp.headers["content-length"] = str(len(new_resp.body or b""))
         return new_resp
 
     except Exception:
         return response
-
 
 # ============================================================
 # DB
@@ -140,7 +151,7 @@ def get_db():
         db.close()
 
 # ============================================================
-# Idioma
+# Idioma (cookie)
 # ============================================================
 
 @app.get("/set-lang", include_in_schema=False)
@@ -165,26 +176,30 @@ def set_lang(
     return resp
 
 # ============================================================
-# i18n: lang global para TODOS los templates
+# Cookie hardener
 # ============================================================
 
-from app.i18n import get_lang
+@app.middleware("http")
+async def cookie_hardener(request: Request, call_next):
+    resp = await call_next(request)
+    sc = resp.headers.get("set-cookie")
+    if not sc:
+        return resp
 
-def _inject_lang(request: Request):
-    try:
-        return get_lang(request)
-    except Exception:
-        return "es"
+    def patch(c: str) -> str:
+        if COOKIE_NAME not in c:
+            return c
+        if "samesite" not in c.lower():
+            c += "; SameSite=Lax"
+        if "httponly" not in c.lower():
+            c += "; HttpOnly"
+        if request.url.scheme == "https" and "secure" not in c.lower():
+            c += "; Secure"
+        return c
 
-templates.env.globals["lang"] = None
-templates.env.globals["_get_lang"] = _inject_lang
-
-@templates.env.globals.setdefault("context_processor", lambda **kw: kw)
-def inject_globals(**context):
-    request = context.get("request")
-    if request:
-        context["lang"] = _get_lang(request)
-    return context
+    parts = [p.strip() for p in sc.split(",")]
+    resp.headers["set-cookie"] = ", ".join(patch(p) for p in parts)
+    return resp
 
 # ============================================================
 # Home / Login
@@ -192,7 +207,6 @@ def inject_globals(**context):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    # Si hay cookie válida, redirigimos al dashboard
     try:
         _ = get_current_user_cookie(request)
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
@@ -204,40 +218,31 @@ def home(request: Request):
     except TemplateNotFound:
         return HTMLResponse("<h1>AlertTrail</h1>")
 
-
 # ============================================================
-# Dashboard (NO SE TOCA EL TEMPLATE)
+# Dashboard
 # ============================================================
 
 from app.models import User
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    # ✅ IMPORTANTÍSIMO: si no hay cookie válida, NO 401 => redirigir a login
-    try:
-        payload = get_current_user_cookie(request)
-    except Exception:
-        return RedirectResponse("/auth/login", status_code=302)
-
+    payload = get_current_user_cookie(request)
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user:
         return RedirectResponse("/auth/login", status_code=302)
 
     normalize_user_plan(db, user)
 
-    lang = get_lang(request)
-
     ctx = {
         "request": request,
         "current_user": user,
         "user": user,
-        "lang": lang,
+        # lang lo inyecta TemplatesWithDefaults si faltara
     }
-
     return templates.TemplateResponse("dashboard.html", ctx)
 
 # ============================================================
-# Auth (fallback simple)
+# Auth (form legacy)
 # ============================================================
 
 @app.post("/login", include_in_schema=False)
@@ -264,7 +269,6 @@ def logout():
     r = RedirectResponse("/", status_code=303)
     clear_access_cookie(r)
     return r
-
 
 # ============================================================
 # Routers (carga segura)
@@ -298,7 +302,6 @@ for name in ROUTER_MODULES:
     except Exception as e:
         print(f"[routers] {name} SKIPPED:", e)
 
-
 # ============================================================
 # OpenAPI cookie auth
 # ============================================================
@@ -326,7 +329,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-
 # ============================================================
 # Health
 # ============================================================
@@ -339,7 +341,6 @@ def health():
 def head_root():
     return Response(status_code=200)
 
-
 # ============================================================
 # Startup log
 # ============================================================
@@ -351,4 +352,3 @@ def log_routes():
         if isinstance(r, APIRoute):
             print(r.path)
     print("==============\n")
-
