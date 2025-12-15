@@ -26,18 +26,7 @@ from app.security import (
     create_access_token,
     normalize_user_plan,
 )
-
-# Si ya tenés app.i18n con get_lang/t, lo usamos.
-# Si no, este main igual funciona porque get_lang fallbackea.
-try:
-    from app.i18n import get_lang, t
-except Exception:
-    def get_lang(request: Request) -> str:
-        return (request.cookies.get("lang") or "es").lower()
-
-    def t(key: str, lang: str = "es") -> str:
-        return key
-
+from app.i18n import get_lang, t, translate_html
 
 # ============================================================
 # App
@@ -47,7 +36,6 @@ app = FastAPI(title="AlertTrail API", version="1.0.0")
 app.router.redirect_slashes = False
 
 DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
-
 
 # ============================================================
 # Security Headers Middleware
@@ -76,7 +64,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-
 # ============================================================
 # Paths / Static / Templates
 # ============================================================
@@ -85,15 +72,18 @@ TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "template
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
 REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
 
+# IMPORTANTE:
+# NO montamos archivos estáticos en "/reports" porque ese prefijo lo usa el router
+# `app.routers.reports` (UI + endpoints). Si ambos comparten el mismo path,
+# Starlette puede matchear primero el Mount y dejar inaccesibles las rutas del router.
+# Por eso servimos los archivos PDF generados desde otra URL.
+REPORTS_STATIC_URL = "/reports-files"
+
 Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# ⚠️ IMPORTANTE:
-# NO montamos "/reports" como StaticFiles, porque pisa al router "/reports/"
-# y termina en 404 para "/reports/".
-# Los PDFs/archivos se sirven por tu router "/reports/open/{name}".
+app.mount(REPORTS_STATIC_URL, StaticFiles(directory=REPORTS_DIR), name="reports_files")
 
 
 class TemplatesWithDefaults(Jinja2Templates):
@@ -114,72 +104,24 @@ class TemplatesWithDefaults(Jinja2Templates):
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
-# Exponer traducción global en templates
+# Exponer traducción global (para que no vuelva a pasar 't undefined')
 templates.env.globals["t"] = t
 
-
 # ============================================================
-# i18n: traducir HTML final (modo rápido y SIN romper templates)
+# i18n: traducir HTML final (modo rápido, seguro)
 # ============================================================
-
-# Diccionario ES -> EN (podés ampliarlo cuando quieras)
-_ES_TO_EN = {
-    "Volver": "Back",
-    "Volver al dashboard": "Back to dashboard",
-    "Abrir Scanner": "Open Scanner",
-    "Configuración IMAP": "IMAP Settings",
-    "Servidor IMAP": "IMAP Server",
-    "Puerto": "Port",
-    "Usuario": "Username",
-    "Contraseña": "Password",
-    "Carpeta": "Folder",
-    "Usar SSL": "Use SSL",
-    "Marcar como leído al escanear": "Mark as read after scanning",
-    "Centro de Alertas": "Alerts Center",
-    "Buscar": "Search",
-    "Severidad (todas)": "Severity (all)",
-    "Estado (todos)": "Status (all)",
-    "Últimos 7 días": "Last 7 days",
-    "Aplicar": "Apply",
-    "Fecha": "Date",
-    "Asunto": "Subject",
-    "Remitente": "Sender",
-    "Autenticación": "Authentication",
-    "Severidad": "Severity",
-    "Estado": "Status",
-    "Receipt Analyzer": "Receipt Analyzer",  # (si querés dejarlo igual, borrá esta línea)
-    "Pegá el texto de un ticket": "Paste receipt text",
-    "Analizar": "Analyze",
-    "Resultado": "Result",
-    "Safe QR Scan": "Safe QR Scan",
-    "Iniciar cámara": "Start camera",
-    "Subir imagen": "Upload image",
-    "Abrir enlace": "Open link",
-    "Copiar enlace": "Copy link",
-}
-
-def _translate_html_es_to_en(html: str) -> str:
-    # reemplazo simple, estable y sin dependencias
-    out = html
-    for es, en in _ES_TO_EN.items():
-        out = out.replace(es, en)
-    return out
-
 
 @app.middleware("http")
 async def i18n_html_middleware(request: Request, call_next):
     response = await call_next(request)
 
     try:
-        lang = (get_lang(request) or "es").lower()
+        lang = get_lang(request)
         response.headers["Content-Language"] = lang
 
+        # Solo tocamos HTML
         ctype = (response.headers.get("content-type") or "").lower()
         if "text/html" not in ctype:
-            return response
-
-        # Solo traducimos cuando el usuario eligió EN.
-        if lang != "en":
             return response
 
         body = b""
@@ -187,8 +129,9 @@ async def i18n_html_middleware(request: Request, call_next):
             body += chunk
 
         html = body.decode("utf-8", errors="ignore")
-        html2 = _translate_html_es_to_en(html)
+        html2 = translate_html(lang, html)
 
+        # Si no hay cambios, devolvemos igual (pero reconstruimos Response porque consumimos el iterator)
         new_resp = Response(
             content=html2.encode("utf-8"),
             status_code=response.status_code,
@@ -201,7 +144,6 @@ async def i18n_html_middleware(request: Request, call_next):
     except Exception:
         return response
 
-
 # ============================================================
 # DB
 # ============================================================
@@ -213,10 +155,23 @@ def get_db():
     finally:
         db.close()
 
-
 # ============================================================
 # Idioma (cookie)
 # ============================================================
+
+def _cookie_domain_for_request(request: Request):
+    """
+    Si estás en www.alerttrail.com, setear domain=.alerttrail.com permite compartir cookie
+    con alerttrail.com (sin www) y viceversa.
+    """
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if not host:
+        return None
+    parts = host.split(".")
+    if len(parts) >= 2:
+        return "." + ".".join(parts[-2:])
+    return None
+
 
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(
@@ -229,57 +184,44 @@ def set_lang(
         lang = "es"
 
     resp = RedirectResponse(next or "/", status_code=303)
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
     resp.set_cookie(
         "lang",
         lang,
         max_age=60 * 60 * 24 * 365,
         httponly=False,
         samesite="lax",
+        secure=secure,
         path="/",
+        domain=_cookie_domain_for_request(request),
     )
     return resp
 
-
 # ============================================================
-# Cookie hardener (NO rompe múltiples Set-Cookie)
+# Cookie hardener
 # ============================================================
 
 @app.middleware("http")
 async def cookie_hardener(request: Request, call_next):
     resp = await call_next(request)
-
-    # Starlette soporta getlist; así no partimos por coma (que rompe Expires=Mon, ...)
-    try:
-        cookies = resp.headers.getlist("set-cookie")  # type: ignore[attr-defined]
-    except Exception:
-        cookies = []
-        sc = resp.headers.get("set-cookie")
-        if sc:
-            cookies = [sc]
-
-    if not cookies:
+    sc = resp.headers.get("set-cookie")
+    if not sc:
         return resp
 
     def patch(c: str) -> str:
         if COOKIE_NAME not in c:
             return c
-        low = c.lower()
-        if "samesite" not in low:
+        if "samesite" not in c.lower():
             c += "; SameSite=Lax"
-        if "httponly" not in low:
+        if "httponly" not in c.lower():
             c += "; HttpOnly"
-        if (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https") and "secure" not in low:
+        if (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https") and "secure" not in c.lower():
             c += "; Secure"
         return c
 
-    # borramos y re-agregamos
-    if "set-cookie" in resp.headers:
-        del resp.headers["set-cookie"]
-    for c in cookies:
-        resp.headers.append("set-cookie", patch(c))
-
+    parts = [p.strip() for p in sc.split(",")]
+    resp.headers["set-cookie"] = ", ".join(patch(p) for p in parts)
     return resp
-
 
 # ============================================================
 # Home / Login
@@ -297,7 +239,6 @@ def home(request: Request):
         return templates.TemplateResponse("landing.html", {"request": request})
     except TemplateNotFound:
         return HTMLResponse("<h1>AlertTrail</h1>")
-
 
 # ============================================================
 # Dashboard
@@ -321,6 +262,19 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     }
     return templates.TemplateResponse("dashboard.html", ctx)
 
+# Alias legacy: algunas versiones del dashboard linkean a /reports_browser.
+@app.get("/reports_browser", include_in_schema=False)
+def reports_browser_alias():
+    return RedirectResponse(url="/reports/", status_code=307)
+
+# Custom Rules deshabilitado por ahora: evitamos errores si alguien entra por URL.
+@app.get("/rules", include_in_schema=False)
+def rules_disabled_no_slash():
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+@app.get("/rules/", include_in_schema=False)
+def rules_disabled_slash():
+    return RedirectResponse(url="/dashboard", status_code=302)
 
 # ============================================================
 # Auth (form legacy)
@@ -345,13 +299,11 @@ def login_action(
     issue_access_cookie(r, token)
     return r
 
-
 @app.get("/logout", include_in_schema=False)
 def logout():
     r = RedirectResponse("/", status_code=303)
     clear_access_cookie(r)
     return r
-
 
 # ============================================================
 # Routers (carga segura)
@@ -367,8 +319,8 @@ ROUTER_MODULES = [
     "payments_mp",
     "stats",
     "alerts",
-    "rules",     # lo dejamos cargado (no rompe), pero lo ocultás del dashboard
-    "reports",   # vuelve a funcionar porque NO montamos /reports como static
+    # "rules",  # deshabilitado temporalmente (custom rules)
+    "reports",
     "admin",
     "analysis",
     "mail",
@@ -384,7 +336,6 @@ for name in ROUTER_MODULES:
         print(f"[routers] {name} OK")
     except Exception as e:
         print(f"[routers] {name} SKIPPED:", e)
-
 
 # ============================================================
 # OpenAPI cookie auth
@@ -413,7 +364,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-
 # ============================================================
 # Health
 # ============================================================
@@ -425,7 +375,6 @@ def health():
 @app.head("/")
 def head_root():
     return Response(status_code=200)
-
 
 # ============================================================
 # Startup log
