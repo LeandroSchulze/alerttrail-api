@@ -24,7 +24,7 @@ from app.security import (
     clear_access_cookie,
     COOKIE_NAME,
     create_access_token,
-    normalize_user_plan,  # ✅ OK
+    normalize_user_plan,
 )
 from app.i18n import get_lang, t, translate_html
 
@@ -82,7 +82,7 @@ app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 class TemplatesWithDefaults(Jinja2Templates):
     """
     Inyecta variables default (lang) a TODAS las vistas que renderizan templates,
-    aunque el router se "olvide" de pasar lang.
+    aunque el router no pase explícitamente `lang`.
     """
     def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
         try:
@@ -90,7 +90,6 @@ class TemplatesWithDefaults(Jinja2Templates):
             if request and "lang" not in context:
                 context["lang"] = get_lang(request)
         except Exception:
-            # fallback seguro, no rompe producción
             context.setdefault("lang", "es")
         return super().TemplateResponse(name, context, *args, **kwargs)
 
@@ -98,11 +97,11 @@ class TemplatesWithDefaults(Jinja2Templates):
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
-# Exponer traducción global (para que no vuelva a pasar 't undefined')
+# Traducción global disponible en TODOS los templates
 templates.env.globals["t"] = t
 
 # ============================================================
-# i18n: traducir HTML final (modo rápido)
+# i18n: traducir HTML final (solo EN)
 # ============================================================
 
 @app.middleware("http")
@@ -113,11 +112,8 @@ async def i18n_html_middleware(request: Request, call_next):
         lang = get_lang(request)
         response.headers["Content-Language"] = lang
 
-        # Solo traducimos HTML y solo si EN
         ctype = (response.headers.get("content-type") or "").lower()
-        if lang != "en":
-            return response
-        if "text/html" not in ctype:
+        if lang != "en" or "text/html" not in ctype:
             return response
 
         body = b""
@@ -233,13 +229,14 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     normalize_user_plan(db, user)
 
-    ctx = {
-        "request": request,
-        "current_user": user,
-        "user": user,
-        # lang lo inyecta TemplatesWithDefaults si faltara
-    }
-    return templates.TemplateResponse("dashboard.html", ctx)
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "current_user": user,
+            "user": user,
+        },
+    )
 
 # ============================================================
 # Auth (form legacy)
