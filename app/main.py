@@ -151,25 +151,22 @@ def get_db():
         db.close()
 
 # ============================================================
-# Cookie domain helper (para que el idioma persista entre www y sin www)
+# Idioma (cookie) - FIX COMPAT + DOMINIO
 # ============================================================
 
-def _cookie_domain_for_request(request: Request):
-    """
-    Si el host es *.alerttrail.com o alerttrail.com, seteamos cookies en .alerttrail.com
-    para que se compartan entre 'www' y el dominio raíz.
-    """
-    try:
-        host = (request.url.hostname or "").lower()
-    except Exception:
-        host = ""
-    if host == "alerttrail.com" or host.endswith(".alerttrail.com"):
-        return ".alerttrail.com"
-    return None
+def _is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
 
-# ============================================================
-# Idioma (cookie)
-# ============================================================
+def _lang_cookie_domain() -> str | None:
+    """
+    Para que funcione tanto en www.alerttrail.com como en alerttrail.com.
+    Si usás otro dominio en dev, dejalo en None.
+    """
+    base = os.getenv("APP_COOKIE_DOMAIN", "").strip()
+    if base:
+        return base
+    # default producción
+    return ".alerttrail.com"
 
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(
@@ -183,21 +180,48 @@ def set_lang(
 
     resp = RedirectResponse(next or "/", status_code=303)
 
-    cookie_domain = _cookie_domain_for_request(request)
-    cookie_kwargs = {}
-    if cookie_domain:
-        cookie_kwargs["domain"] = cookie_domain
-
-    resp.set_cookie(
-        "lang",
-        lang,
+    common = dict(
         max_age=60 * 60 * 24 * 365,
         httponly=False,
         samesite="lax",
         path="/",
-        **cookie_kwargs,
+        secure=_is_https(request),
+        domain=_lang_cookie_domain(),
     )
+
+    # ✅ COMPAT: el proyecto tiene partes leyendo alerttrail_lang y otras leyendo lang
+    resp.set_cookie("alerttrail_lang", lang, **common)
+    resp.set_cookie("lang", lang, **common)
+
     return resp
+
+# ============================================================
+# Redirects "puente" (evita 404 por slash / paths viejos)
+# ============================================================
+
+@app.get("/rules", include_in_schema=False)
+def _redir_rules():
+    return RedirectResponse("/rules/", status_code=307)
+
+@app.get("/reports_browser", include_in_schema=False)
+def _redir_reports_browser():
+    # En tu app real existe /reports/ (router reports)
+    return RedirectResponse("/reports/", status_code=307)
+
+@app.get("/billing/subscriptions", include_in_schema=False)
+def _redir_billing_subscriptions():
+    # En tus routes existe /admin/subscriptions (y /billing no tiene /subscriptions)
+    return RedirectResponse("/admin/subscriptions", status_code=307)
+
+@app.get("/billing/payments", include_in_schema=False)
+def _redir_billing_payments():
+    # En tus routes existe /billing/history
+    return RedirectResponse("/billing/history", status_code=307)
+
+@app.get("/orgs/admin", include_in_schema=False)
+def _redir_orgs_admin():
+    # Si tu UI vieja apuntaba a /orgs/admin
+    return RedirectResponse("/org/admin", status_code=307)
 
 # ============================================================
 # Cookie hardener
@@ -217,7 +241,7 @@ async def cookie_hardener(request: Request, call_next):
             c += "; SameSite=Lax"
         if "httponly" not in c.lower():
             c += "; HttpOnly"
-        if request.url.scheme == "https" and "secure" not in c.lower():
+        if _is_https(request) and "secure" not in c.lower():
             c += "; Secure"
         return c
 
