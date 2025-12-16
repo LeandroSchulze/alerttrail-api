@@ -5,6 +5,7 @@
   "common.save": "Guardar",
   "common.cancel": "Cancelar",
   "common.back": "Volver",
+  "common.alerts": "Alertas",
 
   "alerts.title": "Centro de Alertas",
   "alerts.search_placeholder": "Buscar (texto, remitente, asunto)",
@@ -60,4 +61,83 @@
   "mail.folder": "Carpeta",
   "mail.use_ssl": "Usar SSL",
   "mail.mark_read": "Marcar como leído al escanear"
+
+  "dashboard.page_title": "Dashboard — AlertTrail",
+  "dashboard.hello": "Hola",
+  "dashboard.user_fallback": "Usuario",
+  "dashboard.subtitle": "Tu cockpit de seguridad para correos, accesos y reportes.",
+  "dashboard.plan": "Plan",
+
+  "dashboard.trial_active_title": "Estás en tu periodo de prueba PRO.",
+  "dashboard.trial_active_body": "Vas a mantener las funciones avanzadas de AlertTrail hasta que termine la prueba. Desde \"Planes y facturación\" podés pasar a PRO o volver al plan Free sin sorpresas.",
+  "dashboard.trial_manage": "Gestionar mi prueba",
+
+  "dashboard.trial_ended_title": "Tu prueba PRO terminó.",
+  "dashboard.trial_ended_body": "Seguís usando AlertTrail en plan Free. Cuando quieras recuperar las funciones avanzadas, podés pasar a PRO o un plan de empresas.",
+  "dashboard.trial_see_pro": "Ver opciones de PRO",
+
+  "dashboard.trial_available_title": "Tenés una prueba PRO gratuita disponible.",
+  "dashboard.trial_available_body": "Probá las alertas automáticas, reglas personalizadas y reportes avanzados pensados para pymes sin equipo de IT.",
+  "dashboard.trial_activate": "Activar prueba PRO",
+
+  "dashboard.account_status_title": "Estado de tu cuenta",
+  "dashboard.account_status_subtitle": "Atajos a los módulos que más vas a usar en el día a día.",
+  "dashboard.quick_start": "Inicio rápido",
+
+  "dashboard.chip_log_scanner": "Log scanner",
+  "dashboard.chip_mail_scanner": "Mail scanner",
+  "dashboard.chip_pdf_reports": "Reportes PDF",
+  "dashboard.chip_auto_alerts": "Alertas automáticas",
+
+  "dashboard.go_log_scanner": "Ir al Log Scanner",
+  "dashboard.go_mail_scanner": "Scanner de correos",
+  "dashboard.go_reports": "Reportes guardados",
+
+  "dashboard.tip_logs": "Subí archivos de logs y generá reportes en segundos.",
+  "dashboard.tip_imap": "Conectá una casilla IMAP para revisar correos sospechosos.",
+
+  "dashboard.pro_title": "Funciones PRO / Empresas",
+  "dashboard.pro_subtitle": "Extras pensados para reducir el riesgo y sumar visibilidad.",
+  "dashboard.see_plans": "Ver planes",
+
+  "dashboard.go_alerts": "Ver alertas",
+  "dashboard.go_reports_short": "Reportes",
+  "dashboard.go_audit": "Auditoría de ciberseguridad",
+
+  "dashboard.pro_tip_audit": "Auditoría manual asistida (solo PRO / Empresas).",
+  "dashboard.pro_tip_checklist": "Te contactamos por mail con un checklist concreto de mejoras.",
+
+  "dashboard.tools_title": "Herramientas nuevas",
+  "dashboard.tools_subtitle": "Experimentos de AlertTrail para simplificar tu día a día.",
+  "dashboard.beta": "Beta",
+
+  "dashboard.tools_qr": "QR Scan Seguro",
+  "dashboard.tools_receipt": "Analizador de Tickets",
+
+  "dashboard.tools_tip_qr": "Verificá links de códigos QR antes de abrirlos.",
+  "dashboard.tools_tip_receipt": "Extraé info básica de tickets / comprobantes.",
+
+  "dashboard.billing_title": "Planes y facturación",
+  "dashboard.billing_subtitle": "Consultá tu suscripción, prueba PRO y gestión de organización.",
+  "dashboard.billing_view_sub": "Ver mi suscripción",
+  "dashboard.billing_org_panel": "Panel de organización",
+
+  "dashboard.billing_tip_1": "Cambiá de plan, actualizá tarjeta y mirá tu próximo ciclo.",
+  "dashboard.billing_tip_2": "Invitá miembros de tu equipo y gestioná accesos.",
+
+  "dashboard.payments_title": "Últimos pagos",
+  "dashboard.payments_subtitle": "Historial de cobros y facturas asociadas a tu cuenta.",
+  "dashboard.payments_view": "Ver historial de pagos",
+  "dashboard.payments_empty": "Si todavía no tenés pagos registrados, esta sección va a estar vacía.",
+
+  "dashboard.security_health_title": "Salud de tu seguridad",
+  "dashboard.security_health_subtitle": "Próximamente vas a ver un resumen de cuentas, alertas y accesos.",
+  "dashboard.coming_soon": "Próximamente",
+
+  "dashboard.security_tip_1": "Resumen de alertas críticas de la semana.",
+  "dashboard.security_tip_2": "Recomendaciones rápidas para bajar el riesgo.",
+  "dashboard.security_tip_3": "Indicadores visuales para ver si vas mejorando.",
+
+  "dashboard.footer": "AlertTrail · Protección de correos y accesos, sin complicarte la vida."
 }
+
