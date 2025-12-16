@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="{{ (lang or 'es')|lower }}">
 <head>
   <meta charset="utf-8">
   <title>{% block title %}AlertTrail{% endblock %}</title>
@@ -76,7 +76,7 @@
               border-radius:999px;border:1px solid rgba(148,163,184,0.5);
               padding:3px 6px;display:flex;align-items:center;gap:4px;
               box-shadow:0 8px 20px rgba(15,23,42,0.08);">
-    <span style="margin-right:4px;color:#64748b;">Lang</span>
+    <span style="margin-right:4px;color:#64748b;">{{ t(current_lang, "common.language") }}</span>
     <a href="/set-lang?lang=es&next={{ request.url.path }}"
        style="padding:2px 8px;border-radius:999px;text-decoration:none;
               {% if current_lang == 'es' %}
@@ -106,7 +106,7 @@
     <span>
       🔔 <span id="alerts-fab-count"
         style="background:#ef4444;border-radius:999px;padding:2px 8px;min-width:18px;text-align:center">0</span>
-      <span>Alertas</span>
+      <span>{{ t(current_lang, "common.alerts") }}</span>
     </span>
   </a>
   <script>
