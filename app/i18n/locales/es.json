@@ -60,7 +60,7 @@
   "mail.password": "Contraseña / App Password",
   "mail.folder": "Carpeta",
   "mail.use_ssl": "Usar SSL",
-  "mail.mark_read": "Marcar como leído al escanear"
+  "mail.mark_read": "Marcar como leído al escanear",
 
   "dashboard.page_title": "Dashboard — AlertTrail",
   "dashboard.hello": "Hola",
@@ -140,4 +140,3 @@
 
   "dashboard.footer": "AlertTrail · Protección de correos y accesos, sin complicarte la vida."
 }
-
