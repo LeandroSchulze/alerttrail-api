@@ -24,13 +24,10 @@ from app.security import (
     normalize_user_plan,
 )
 
-# 👇 i18n por KEYS (sin traducir HTML final)
 from app.i18n import get_lang, t
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 app.router.redirect_slashes = False
-
-DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -77,14 +74,11 @@ class TemplatesWithDefaults(Jinja2Templates):
 
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
-
-# (para futuro uso por keys) t(lang, "Key")
 templates.env.globals["t"] = t
 
 
 @app.middleware("http")
 async def content_language_header(request: Request, call_next):
-    """Set Content-Language without mutating the response body."""
     response = await call_next(request)
     try:
         response.headers.setdefault("Content-Language", get_lang(request))
@@ -101,16 +95,6 @@ def get_db():
         db.close()
 
 
-def _cookie_domain_for_request(request: Request):
-    host = (request.headers.get("host") or "").split(":")[0].lower()
-    if not host:
-        return None
-    parts = host.split(".")
-    if len(parts) >= 2:
-        return "." + ".".join(parts[-2:])
-    return None
-
-
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(request: Request, lang: str = "es", next: str = "/"):
     lang = (lang or "es").lower()
@@ -118,16 +102,17 @@ def set_lang(request: Request, lang: str = "es", next: str = "/"):
         lang = "es"
 
     resp = RedirectResponse(next or "/", status_code=303)
-    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+    # ✅ En producción HTTPS: forzamos secure=True para que el cookie se guarde.
     resp.set_cookie(
         "lang",
         lang,
         max_age=60 * 60 * 24 * 365,
         httponly=False,
         samesite="lax",
-        secure=secure,
+        secure=True,
         path="/",
-        domain=_cookie_domain_for_request(request),
+        # NO usar domain=... (evita problemas con www/apex en Render)
     )
     return resp
 
@@ -230,7 +215,6 @@ ROUTER_MODULES = [
     "payments_mp",
     "stats",
     "alerts",
-    # "rules",  # deshabilitado temporalmente
     "reports",
     "admin",
     "analysis",
