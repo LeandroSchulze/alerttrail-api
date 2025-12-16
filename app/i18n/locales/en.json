@@ -60,7 +60,7 @@
   "mail.password": "Password / App Password",
   "mail.folder": "Folder",
   "mail.use_ssl": "Use SSL",
-  "mail.mark_read": "Mark as read when scanning"
+  "mail.mark_read": "Mark as read when scanning",
 
   "dashboard.page_title": "Dashboard — AlertTrail",
   "dashboard.hello": "Hello",
