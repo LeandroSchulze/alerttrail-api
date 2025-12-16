@@ -1,11 +1,8 @@
-<div style="position:fixed;bottom:10px;right:10px;background:#000;color:#fff;padding:6px 10px;border-radius:8px;z-index:9999">
-  lang={{ lang }}
-</div>
 <!doctype html>
 <html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
 <head>
   <meta charset="utf-8">
-  <title>Dashboard — AlertTrail</title>
+  <title>{{ t(lang, "dashboard.page_title") }}</title>
   <link rel="stylesheet" href="/static/style.css">
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <style>
@@ -303,13 +300,6 @@
       margin-top: 2px;
     }
 
-    .small-label {
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: .1em;
-      color: var(--text-soft);
-    }
-
     .payments-empty {
       font-size: 0.85rem;
       color: var(--text-muted);
@@ -339,6 +329,28 @@
       color: var(--text-soft);
       text-align: center;
     }
+
+    /* Selector idioma (simple, alineado al header) */
+    .lang-switcher form{
+      display:flex;
+      gap:6px;
+      justify-content:flex-end;
+      margin-top:8px;
+    }
+    .lang-pill{
+      border:1px solid rgba(148,163,184,0.7);
+      background:rgba(255,255,255,0.75);
+      padding:6px 10px;
+      border-radius:999px;
+      cursor:pointer;
+      font-size:12px;
+    }
+    .lang-pill.active{
+      background:#0f172a;
+      color:#f9fafb;
+      border-color:#0f172a;
+      font-weight:600;
+    }
   </style>
 </head>
 <body>
@@ -347,16 +359,16 @@
       <div>
         <div class="page-title">
           <span class="wave">👋</span>
-          <span>Hola, {{ user.name or current_user.name or current_user.email or "Usuario" }}</span>
+          <span>{{ t(lang, "dashboard.hello") }}, {{ user.name or current_user.name or current_user.email or t(lang, "dashboard.user_fallback") }}</span>
         </div>
         <p class="page-subtitle">
-          Tu cockpit de seguridad para correos, accesos y reportes.
+          {{ t(lang, "dashboard.subtitle") }}
         </p>
       </div>
       <div>
         {% set plan = (user.plan or current_user.plan or "FREE")|upper %}
         <div class="pill-plan">
-          <span class="pill-plan-label">Plan</span>
+          <span class="pill-plan-label">{{ t(lang, "dashboard.plan") }}</span>
           {% if (current_user.is_pro or user.is_pro) or plan in ["PRO", "BIZ", "EMPRESA", "EMPRESAS"] %}
             <span class="pill-plan-badge">{{ plan }}</span>
           {% else %}
@@ -384,18 +396,18 @@
       </div>
     </header>
 
-
     {# Banner de prueba PRO / downgrade #}
     {% set pro_source = (current_user.pro_source or '')|lower if current_user is defined else '' %}
     {% set had_trial = current_user.had_trial if current_user is defined and current_user.had_trial is not none else false %}
+
     {% if current_user.is_pro and pro_source == 'trial' %}
       <section class="trial-banner">
         <div class="trial-dot"></div>
         <div>
-          <div class="trial-title">Estás en tu periodo de prueba PRO.</div>
-          <div>Vas a mantener las funciones avanzadas de AlertTrail hasta que termine la prueba. Desde "Planes y facturación" podés pasar a PRO o volver al plan Free sin sorpresas.</div>
+          <div class="trial-title">{{ t(lang, "dashboard.trial_active_title") }}</div>
+          <div>{{ t(lang, "dashboard.trial_active_body") }}</div>
           <div class="trial-actions">
-            <a class="trial-link" href="/billing/subscriptions">Gestionar mi prueba</a>
+            <a class="trial-link" href="/billing/subscriptions">{{ t(lang, "dashboard.trial_manage") }}</a>
           </div>
         </div>
       </section>
@@ -403,10 +415,10 @@
       <section class="trial-banner" style="border-color:#fecaca;background:linear-gradient(120deg,#fee2e2,#fee2e2);">
         <div class="trial-dot" style="background:#ef4444;"></div>
         <div>
-          <div class="trial-title">Tu prueba PRO terminó.</div>
-          <div>Seguís usando AlertTrail en plan Free. Cuando quieras recuperar las funciones avanzadas, podés pasar a PRO o un plan de empresas.</div>
+          <div class="trial-title">{{ t(lang, "dashboard.trial_ended_title") }}</div>
+          <div>{{ t(lang, "dashboard.trial_ended_body") }}</div>
           <div class="trial-actions">
-            <a class="trial-link" href="/billing/subscriptions">Ver opciones de PRO</a>
+            <a class="trial-link" href="/billing/subscriptions">{{ t(lang, "dashboard.trial_see_pro") }}</a>
           </div>
         </div>
       </section>
@@ -414,10 +426,10 @@
       <section class="trial-banner">
         <div class="trial-dot"></div>
         <div>
-          <div class="trial-title">Tenés una prueba PRO gratuita disponible.</div>
-          <div>Probá las alertas automáticas, reglas personalizadas y reportes avanzados pensados para pymes sin equipo de IT.</div>
+          <div class="trial-title">{{ t(lang, "dashboard.trial_available_title") }}</div>
+          <div>{{ t(lang, "dashboard.trial_available_body") }}</div>
           <div class="trial-actions">
-            <a class="trial-link" href="/billing/subscriptions">Activar prueba PRO</a>
+            <a class="trial-link" href="/billing/subscriptions">{{ t(lang, "dashboard.trial_activate") }}</a>
           </div>
         </div>
       </section>
@@ -429,30 +441,30 @@
       <article class="card">
         <div class="section-title">
           <div>
-            <div class="heading">Estado de tu cuenta</div>
+            <div class="heading">{{ t(lang, "dashboard.account_status_title") }}</div>
             <p class="muted">
-              Atajos a los módulos que más vas a usar en el día a día.
+              {{ t(lang, "dashboard.account_status_subtitle") }}
             </p>
           </div>
-          <span class="badge badge-pill">Inicio rápido</span>
+          <span class="badge badge-pill">{{ t(lang, "dashboard.quick_start") }}</span>
         </div>
 
         <div class="chips">
-          <span class="chip">Log scanner</span>
-          <span class="chip">Mail scanner</span>
-          <span class="chip">Reportes PDF</span>
-          <span class="chip">Alertas automáticas</span>
+          <span class="chip">{{ t(lang, "dashboard.chip_log_scanner") }}</span>
+          <span class="chip">{{ t(lang, "dashboard.chip_mail_scanner") }}</span>
+          <span class="chip">{{ t(lang, "dashboard.chip_pdf_reports") }}</span>
+          <span class="chip">{{ t(lang, "dashboard.chip_auto_alerts") }}</span>
         </div>
 
         <div class="btn-row" style="margin-top:12px;">
-          <a class="btn btn-primary" href="/analysis">Ir al Log Scanner</a>
-          <a class="btn" href="/mail/">Scanner de correos</a>
-          <a class="btn" href="/reports_browser">Reportes guardados</a>
+          <a class="btn btn-primary" href="/analysis">{{ t(lang, "dashboard.go_log_scanner") }}</a>
+          <a class="btn" href="/mail/">{{ t(lang, "dashboard.go_mail_scanner") }}</a>
+          <a class="btn" href="/reports_browser">{{ t(lang, "dashboard.go_reports") }}</a>
         </div>
 
         <ul class="list-compact">
-          <li>Subí archivos de logs y generá reportes en segundos.</li>
-          <li>Conectá una casilla IMAP para revisar correos sospechosos.</li>
+          <li>{{ t(lang, "dashboard.tip_logs") }}</li>
+          <li>{{ t(lang, "dashboard.tip_imap") }}</li>
         </ul>
       </article>
 
@@ -460,23 +472,23 @@
       <article class="card card-soft">
         <div class="section-title">
           <div>
-            <div class="heading">Funciones PRO / Empresas</div>
+            <div class="heading">{{ t(lang, "dashboard.pro_title") }}</div>
             <p class="muted">
-              Extras pensados para reducir el riesgo y sumar visibilidad.
+              {{ t(lang, "dashboard.pro_subtitle") }}
             </p>
           </div>
-          <a href="/billing/subscriptions" class="badge">Ver planes</a>
+          <a href="/billing/subscriptions" class="badge">{{ t(lang, "dashboard.see_plans") }}</a>
         </div>
 
         <div class="btn-row">
-          <a class="btn" href="/alerts">Ver alertas</a>
-          <a class="btn" href="/reports_browser">Reportes</a>
-          <a class="btn btn-outline" href="/audit">Auditoría de ciberseguridad</a>
+          <a class="btn" href="/alerts">{{ t(lang, "dashboard.go_alerts") }}</a>
+          <a class="btn" href="/reports_browser">{{ t(lang, "dashboard.go_reports_short") }}</a>
+          <a class="btn btn-outline" href="/audit">{{ t(lang, "dashboard.go_audit") }}</a>
         </div>
 
         <ul class="list-compact">
-          <li>Auditoría manual asistida (solo PRO / Empresas).</li>
-          <li>Te contactamos por mail con un checklist concreto de mejoras.</li>
+          <li>{{ t(lang, "dashboard.pro_tip_audit") }}</li>
+          <li>{{ t(lang, "dashboard.pro_tip_checklist") }}</li>
         </ul>
       </article>
     </section>
@@ -487,22 +499,22 @@
       <article class="card card-soft">
         <div class="section-title">
           <div>
-            <div class="heading">Herramientas nuevas</div>
+            <div class="heading">{{ t(lang, "dashboard.tools_title") }}</div>
             <p class="muted">
-              Experimentos de AlertTrail para simplificar tu día a día.
+              {{ t(lang, "dashboard.tools_subtitle") }}
             </p>
           </div>
-          <span class="badge">Beta</span>
+          <span class="badge">{{ t(lang, "dashboard.beta") }}</span>
         </div>
 
         <div class="btn-row">
-          <a class="btn" href="/tools/qr-scan">QR Scan Seguro</a>
-          <a class="btn" href="/tools/receipt-analyzer">Analizador de Tickets</a>
+          <a class="btn" href="/tools/qr-scan">{{ t(lang, "dashboard.tools_qr") }}</a>
+          <a class="btn" href="/tools/receipt-analyzer">{{ t(lang, "dashboard.tools_receipt") }}</a>
         </div>
 
         <ul class="list-compact">
-          <li>Verificá links de códigos QR antes de abrirlos.</li>
-          <li>Extraé info básica de tickets / comprobantes.</li>
+          <li>{{ t(lang, "dashboard.tools_tip_qr") }}</li>
+          <li>{{ t(lang, "dashboard.tools_tip_receipt") }}</li>
         </ul>
       </article>
 
@@ -510,23 +522,23 @@
       <article class="card">
         <div class="section-title">
           <div>
-            <div class="heading">Planes y facturación</div>
+            <div class="heading">{{ t(lang, "dashboard.billing_title") }}</div>
             <p class="muted">
-              Consultá tu suscripción, prueba PRO y gestión de organización.
+              {{ t(lang, "dashboard.billing_subtitle") }}
             </p>
           </div>
         </div>
 
         <div class="btn-row">
-          <a class="btn btn-primary" href="/billing/subscriptions">Ver mi suscripción</a>
+          <a class="btn btn-primary" href="/billing/subscriptions">{{ t(lang, "dashboard.billing_view_sub") }}</a>
           {% if user.is_org_admin or is_admin %}
-            <a class="btn" href="/orgs/admin">Panel de organización</a>
+            <a class="btn" href="/orgs/admin">{{ t(lang, "dashboard.billing_org_panel") }}</a>
           {% endif %}
         </div>
 
         <ul class="list-compact">
-          <li>Cambiá de plan, actualizá tarjeta y mirá tu próximo ciclo.</li>
-          <li>Invitá miembros de tu equipo y gestioná accesos.</li>
+          <li>{{ t(lang, "dashboard.billing_tip_1") }}</li>
+          <li>{{ t(lang, "dashboard.billing_tip_2") }}</li>
         </ul>
       </article>
     </section>
@@ -537,16 +549,16 @@
       <article class="card card-soft">
         <div class="section-title">
           <div>
-            <div class="heading">Últimos pagos</div>
+            <div class="heading">{{ t(lang, "dashboard.payments_title") }}</div>
             <p class="muted">
-              Historial de cobros y facturas asociadas a tu cuenta.
+              {{ t(lang, "dashboard.payments_subtitle") }}
             </p>
           </div>
         </div>
 
-        <a class="btn" href="/billing/payments">Ver historial de pagos</a>
+        <a class="btn" href="/billing/payments">{{ t(lang, "dashboard.payments_view") }}</a>
         <p class="payments-empty">
-          Si todavía no tenés pagos registrados, esta sección va a estar vacía.
+          {{ t(lang, "dashboard.payments_empty") }}
         </p>
       </article>
 
@@ -554,24 +566,24 @@
       <article class="card card-soft">
         <div class="section-title">
           <div>
-            <div class="heading">Salud de tu seguridad</div>
+            <div class="heading">{{ t(lang, "dashboard.security_health_title") }}</div>
             <p class="muted">
-              Próximamente vas a ver un resumen de cuentas, alertas y accesos.
+              {{ t(lang, "dashboard.security_health_subtitle") }}
             </p>
           </div>
-          <span class="badge">Próximamente</span>
+          <span class="badge">{{ t(lang, "dashboard.coming_soon") }}</span>
         </div>
 
         <ul class="list-compact">
-          <li>Resumen de alertas críticas de la semana.</li>
-          <li>Recomendaciones rápidas para bajar el riesgo.</li>
-          <li>Indicadores visuales para ver si vas mejorando.</li>
+          <li>{{ t(lang, "dashboard.security_tip_1") }}</li>
+          <li>{{ t(lang, "dashboard.security_tip_2") }}</li>
+          <li>{{ t(lang, "dashboard.security_tip_3") }}</li>
         </ul>
       </article>
     </section>
 
     <footer class="footer">
-      AlertTrail · Protección de correos y accesos, sin complicarte la vida.
+      {{ t(lang, "dashboard.footer") }}
     </footer>
   </div>
 </body>
