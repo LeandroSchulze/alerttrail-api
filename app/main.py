@@ -1,7 +1,4 @@
-# ============================================
-# AlertTrail API - Main
-# ============================================
-
+# app/main.py
 import os
 from pathlib import Path
 from importlib import import_module
@@ -26,20 +23,14 @@ from app.security import (
     create_access_token,
     normalize_user_plan,
 )
-from app.i18n import get_lang, t, translate_html
 
-# ============================================================
-# App
-# ============================================================
+# 👇 ahora app.i18n es un PAQUETE (app/i18n/__init__.py)
+from app.i18n import get_lang, t, translate_html
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 app.router.redirect_slashes = False
 
 DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
-
-# ============================================================
-# Security Headers Middleware
-# ============================================================
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -56,17 +47,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
         if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
-            resp.headers.setdefault(
-                "Strict-Transport-Security",
-                "max-age=31536000; includeSubDomains; preload",
-            )
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
         return resp
 
 app.add_middleware(SecurityHeadersMiddleware)
-
-# ============================================================
-# Paths / Static / Templates
-# ============================================================
 
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
@@ -82,10 +66,6 @@ app.mount(REPORTS_STATIC_URL, StaticFiles(directory=REPORTS_DIR), name="reports_
 
 
 class TemplatesWithDefaults(Jinja2Templates):
-    """
-    Inyecta variables default (lang) a TODAS las vistas que renderizan templates,
-    aunque el router se "olvide" de pasar lang.
-    """
     def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
         try:
             request = context.get("request")
@@ -95,20 +75,16 @@ class TemplatesWithDefaults(Jinja2Templates):
             context.setdefault("lang", "es")
         return super().TemplateResponse(name, context, *args, **kwargs)
 
-
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
 
+# (para futuro uso por keys) t(lang, "Key")
 templates.env.globals["t"] = t
 
-# ============================================================
-# i18n: traducir HTML final (modo rápido, seguro)
-# ============================================================
 
 @app.middleware("http")
 async def i18n_html_middleware(request: Request, call_next):
     response = await call_next(request)
-
     try:
         lang = get_lang(request)
         response.headers["Content-Language"] = lang
@@ -116,10 +92,6 @@ async def i18n_html_middleware(request: Request, call_next):
         ctype = (response.headers.get("content-type") or "").lower()
         if "text/html" not in ctype:
             return response
-
-        # IMPORTANTÍSIMO: evitar que caches/CDN mezclen ES/EN
-        response.headers["Vary"] = "Accept-Language, Cookie"
-        response.headers["Cache-Control"] = "no-store"
 
         body = b""
         async for chunk in response.body_iterator:
@@ -136,13 +108,9 @@ async def i18n_html_middleware(request: Request, call_next):
         )
         new_resp.headers["content-length"] = str(len(new_resp.body or b""))
         return new_resp
-
     except Exception:
         return response
 
-# ============================================================
-# DB
-# ============================================================
 
 def get_db():
     db = SessionLocal()
@@ -151,9 +119,6 @@ def get_db():
     finally:
         db.close()
 
-# ============================================================
-# Idioma (cookie)
-# ============================================================
 
 def _cookie_domain_for_request(request: Request):
     host = (request.headers.get("host") or "").split(":")[0].lower()
@@ -166,11 +131,7 @@ def _cookie_domain_for_request(request: Request):
 
 
 @app.get("/set-lang", include_in_schema=False)
-def set_lang(
-    request: Request,
-    lang: str = "es",
-    next: str = "/",
-):
+def set_lang(request: Request, lang: str = "es", next: str = "/"):
     lang = (lang or "es").lower()
     if lang not in ("es", "en"):
         lang = "es"
@@ -189,9 +150,6 @@ def set_lang(
     )
     return resp
 
-# ============================================================
-# Cookie hardener
-# ============================================================
 
 @app.middleware("http")
 async def cookie_hardener(request: Request, call_next):
@@ -215,9 +173,6 @@ async def cookie_hardener(request: Request, call_next):
     resp.headers["set-cookie"] = ", ".join(patch(p) for p in parts)
     return resp
 
-# ============================================================
-# Home / Login
-# ============================================================
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -232,9 +187,6 @@ def home(request: Request):
     except TemplateNotFound:
         return HTMLResponse("<h1>AlertTrail</h1>")
 
-# ============================================================
-# Dashboard
-# ============================================================
 
 from app.models import User
 
@@ -247,19 +199,15 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
     normalize_user_plan(db, user)
 
-    ctx = {
-        "request": request,
-        "current_user": user,
-        "user": user,
-        "lang": get_lang(request),  # (extra) forzamos consistencia en templates
-    }
+    ctx = {"request": request, "current_user": user, "user": user}
     return templates.TemplateResponse("dashboard.html", ctx)
+
 
 @app.get("/reports_browser", include_in_schema=False)
 def reports_browser_alias():
     return RedirectResponse(url="/reports/", status_code=307)
 
-# Custom Rules deshabilitado por ahora
+
 @app.get("/rules", include_in_schema=False)
 def rules_disabled_no_slash():
     return RedirectResponse(url="/dashboard", status_code=302)
@@ -268,17 +216,9 @@ def rules_disabled_no_slash():
 def rules_disabled_slash():
     return RedirectResponse(url="/dashboard", status_code=302)
 
-# ============================================================
-# Auth (form legacy)
-# ============================================================
 
 @app.post("/login", include_in_schema=False)
-def login_action(
-    response: Response,
-    email: str = Form(...),
-    password: str = Form(...),
-    db: Session = Depends(get_db),
-):
+def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(password, user.hashed_password):
@@ -291,15 +231,13 @@ def login_action(
     issue_access_cookie(r, token)
     return r
 
+
 @app.get("/logout", include_in_schema=False)
 def logout():
     r = RedirectResponse("/", status_code=303)
     clear_access_cookie(r)
     return r
 
-# ============================================================
-# Routers (carga segura)
-# ============================================================
 
 ROUTER_MODULES = [
     "auth",
@@ -329,9 +267,6 @@ for name in ROUTER_MODULES:
     except Exception as e:
         print(f"[routers] {name} SKIPPED:", e)
 
-# ============================================================
-# OpenAPI cookie auth
-# ============================================================
 
 def custom_openapi():
     if app.openapi_schema:
@@ -356,9 +291,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# ============================================================
-# Health
-# ============================================================
 
 @app.get("/health")
 def health():
@@ -368,9 +300,6 @@ def health():
 def head_root():
     return Response(status_code=200)
 
-# ============================================================
-# Startup log
-# ============================================================
 
 @app.on_event("startup")
 def log_routes():
