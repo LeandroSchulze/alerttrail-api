@@ -5,6 +5,7 @@
   "common.save": "Save",
   "common.cancel": "Cancel",
   "common.back": "Back",
+  "common.alerts": "Alerts",
 
   "alerts.title": "Alerts Center",
   "alerts.search_placeholder": "Search (text, sender, subject)",
@@ -60,4 +61,82 @@
   "mail.folder": "Folder",
   "mail.use_ssl": "Use SSL",
   "mail.mark_read": "Mark as read when scanning"
+
+  "dashboard.page_title": "Dashboard — AlertTrail",
+  "dashboard.hello": "Hello",
+  "dashboard.user_fallback": "User",
+  "dashboard.subtitle": "Your security cockpit for email, access, and reports.",
+  "dashboard.plan": "Plan",
+
+  "dashboard.trial_active_title": "You're in your PRO trial period.",
+  "dashboard.trial_active_body": "You'll keep AlertTrail's advanced features until the trial ends. From \"Plans & billing\" you can upgrade to PRO or go back to Free with no surprises.",
+  "dashboard.trial_manage": "Manage my trial",
+
+  "dashboard.trial_ended_title": "Your PRO trial ended.",
+  "dashboard.trial_ended_body": "You're using AlertTrail on the Free plan. Whenever you want advanced features back, you can upgrade to PRO or a business plan.",
+  "dashboard.trial_see_pro": "See PRO options",
+
+  "dashboard.trial_available_title": "You have a free PRO trial available.",
+  "dashboard.trial_available_body": "Try automated alerts, custom rules, and advanced reports built for small teams without IT staff.",
+  "dashboard.trial_activate": "Activate PRO trial",
+
+  "dashboard.account_status_title": "Account status",
+  "dashboard.account_status_subtitle": "Shortcuts to the modules you'll use most day-to-day.",
+  "dashboard.quick_start": "Quick start",
+
+  "dashboard.chip_log_scanner": "Log scanner",
+  "dashboard.chip_mail_scanner": "Mail scanner",
+  "dashboard.chip_pdf_reports": "PDF reports",
+  "dashboard.chip_auto_alerts": "Automated alerts",
+
+  "dashboard.go_log_scanner": "Open Log Scanner",
+  "dashboard.go_mail_scanner": "Mail scanner",
+  "dashboard.go_reports": "Saved reports",
+
+  "dashboard.tip_logs": "Upload log files and generate reports in seconds.",
+  "dashboard.tip_imap": "Connect an IMAP mailbox to review suspicious emails.",
+
+  "dashboard.pro_title": "PRO / Business features",
+  "dashboard.pro_subtitle": "Extras designed to reduce risk and improve visibility.",
+  "dashboard.see_plans": "View plans",
+
+  "dashboard.go_alerts": "View alerts",
+  "dashboard.go_reports_short": "Reports",
+  "dashboard.go_audit": "Cybersecurity audit",
+
+  "dashboard.pro_tip_audit": "Assisted manual audit (PRO / Business only).",
+  "dashboard.pro_tip_checklist": "We’ll email you a practical checklist of improvements.",
+
+  "dashboard.tools_title": "New tools",
+  "dashboard.tools_subtitle": "AlertTrail experiments to simplify your day-to-day.",
+  "dashboard.beta": "Beta",
+
+  "dashboard.tools_qr": "Safe QR Scan",
+  "dashboard.tools_receipt": "Receipt analyzer",
+
+  "dashboard.tools_tip_qr": "Check QR links before opening them.",
+  "dashboard.tools_tip_receipt": "Extract basic info from receipts / invoices.",
+
+  "dashboard.billing_title": "Plans & billing",
+  "dashboard.billing_subtitle": "Review your subscription, PRO trial, and organization management.",
+  "dashboard.billing_view_sub": "View my subscription",
+  "dashboard.billing_org_panel": "Organization panel",
+
+  "dashboard.billing_tip_1": "Change plan, update your card, and see your next billing cycle.",
+  "dashboard.billing_tip_2": "Invite teammates and manage access.",
+
+  "dashboard.payments_title": "Latest payments",
+  "dashboard.payments_subtitle": "Charges and invoices linked to your account.",
+  "dashboard.payments_view": "View payment history",
+  "dashboard.payments_empty": "If you don't have payments yet, this section will be empty.",
+
+  "dashboard.security_health_title": "Security health",
+  "dashboard.security_health_subtitle": "Soon you'll see a summary of accounts, alerts, and access.",
+  "dashboard.coming_soon": "Coming soon",
+
+  "dashboard.security_tip_1": "Weekly summary of critical alerts.",
+  "dashboard.security_tip_2": "Quick recommendations to reduce risk.",
+  "dashboard.security_tip_3": "Visual indicators to track improvement over time.",
+
+  "dashboard.footer": "AlertTrail · Email and access protection, without the hassle."
 }
