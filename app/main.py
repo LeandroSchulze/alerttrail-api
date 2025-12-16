@@ -24,8 +24,8 @@ from app.security import (
     normalize_user_plan,
 )
 
-# 👇 ahora app.i18n es un PAQUETE (app/i18n/__init__.py)
-from app.i18n import get_lang, t, translate_html
+# 👇 i18n por KEYS (sin traducir HTML final)
+from app.i18n import get_lang, t
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 app.router.redirect_slashes = False
@@ -83,33 +83,14 @@ templates.env.globals["t"] = t
 
 
 @app.middleware("http")
-async def i18n_html_middleware(request: Request, call_next):
+async def content_language_header(request: Request, call_next):
+    """Set Content-Language without mutating the response body."""
     response = await call_next(request)
     try:
-        lang = get_lang(request)
-        response.headers["Content-Language"] = lang
-
-        ctype = (response.headers.get("content-type") or "").lower()
-        if "text/html" not in ctype:
-            return response
-
-        body = b""
-        async for chunk in response.body_iterator:
-            body += chunk
-
-        html = body.decode("utf-8", errors="ignore")
-        html2 = translate_html(lang, html)
-
-        new_resp = Response(
-            content=html2.encode("utf-8"),
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            media_type="text/html",
-        )
-        new_resp.headers["content-length"] = str(len(new_resp.body or b""))
-        return new_resp
+        response.headers.setdefault("Content-Language", get_lang(request))
     except Exception:
-        return response
+        pass
+    return response
 
 
 def get_db():
