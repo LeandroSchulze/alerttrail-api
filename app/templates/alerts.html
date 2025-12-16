@@ -23,31 +23,31 @@
 
 <div class="alerts-container">
   <div class="alerts-header">
-    <h1>Centro de Alertas</h1>
-    <div><a class="btn" href="/dashboard">Volver al dashboard</a></div>
+    <h1>{{ t(lang, "alerts.title") }}</h1>
+    <div><a class="btn" href="/dashboard">{{ t(lang, "common.back_dashboard") }}</a></div>
   </div>
 
   <div class="filters">
-    <input id="q" placeholder="Buscar (texto, remitente, asunto)"/>
+    <input id="q" placeholder="{{ t(lang, "alerts.search_placeholder") }}"/>
     <select id="sev">
-      <option value="">Severidad (todas)</option>
-      <option value="high">Alta</option>
-      <option value="medium">Media</option>
-      <option value="low">Baja</option>
+      <option value="">{{ t(lang, "alerts.severity_all") }}</option>
+      <option value="high">{{ t(lang, "alerts.severity_high") }}</option>
+      <option value="medium">{{ t(lang, "alerts.severity_medium") }}</option>
+      <option value="low">{{ t(lang, "alerts.severity_low") }}</option>
     </select>
     <select id="status">
-      <option value="">Estado (todos)</option>
-      <option value="pending">Pendiente</option>
-      <option value="ack">Leída</option>
+      <option value="">{{ t(lang, "alerts.status_all") }}</option>
+      <option value="pending">{{ t(lang, "alerts.status_pending") }}</option>
+      <option value="ack">{{ t(lang, "alerts.status_ack") }}</option>
     </select>
     <select id="days">
-      <option value="7" selected>Últimos 7 días</option>
-      <option value="30">Últimos 30 días</option>
-      <option value="90">Últimos 90 días</option>
-      <option value="365">Último año</option>
-      <option value="">Todo</option>
+      <option value="7" selected>{{ t(lang, "alerts.range_7d") }}</option>
+      <option value="30">{{ t(lang, "alerts.range_30d") }}</option>
+      <option value="90">{{ t(lang, "alerts.range_90d") }}</option>
+      <option value="365">{{ t(lang, "alerts.range_365d") }}</option>
+      <option value="">{{ t(lang, "alerts.range_all") }}</option>
     </select>
-    <button class="btn" id="applyBtn">Aplicar</button>
+    <button class="btn" id="applyBtn">{{ t(lang, "alerts.apply") }}</button>
   </div>
 
   <div id="summary" class="muted" style="margin:10px 0 6px;"></div>
@@ -55,12 +55,12 @@
   <table class="table" id="alerts-table">
     <thead>
       <tr>
-        <th style="width:150px;">Fecha</th>
-        <th>Asunto</th>
-        <th style="width:220px;">Remitente</th>
-        <th style="width:280px;">Autenticación</th>
-        <th style="width:120px;">Severidad</th>
-        <th style="width:110px;">Estado</th>
+        <th style="width:150px;">{{ t(lang, "alerts.table_date") }}</th>
+        <th>{{ t(lang, "alerts.table_subject") }}</th>
+        <th style="width:220px;">{{ t(lang, "alerts.table_from") }}</th>
+        <th style="width:280px;">{{ t(lang, "alerts.table_auth") }}</th>
+        <th style="width:120px;">{{ t(lang, "alerts.table_severity") }}</th>
+        <th style="width:110px;">{{ t(lang, "alerts.table_status") }}</th>
         <th style="width:120px;"></th>
       </tr>
     </thead>
@@ -71,6 +71,19 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
+const I18N = {
+  sev_low: {{ t(lang, "alerts.severity_low")|tojson }},
+  sev_medium: {{ t(lang, "alerts.severity_medium")|tojson }},
+  sev_high: {{ t(lang, "alerts.severity_high")|tojson }},
+  state_ack: {{ t(lang, "alerts.status_ack")|tojson }},
+  state_pending: {{ t(lang, "alerts.status_pending")|tojson }},
+  mark_ack: {{ t(lang, "alerts.mark_ack")|tojson }},
+  no_subject: {{ t(lang, "alerts.no_subject")|tojson }},
+  summary_tpl: {{ t(lang, "alerts.summary")|tojson }},
+  summary_total_tpl: {{ t(lang, "alerts.summary_total")|tojson }},
+  error_loading: {{ t(lang, "alerts.error_loading")|tojson }},
+};
+
 async function api(path, params={}) {
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(qs ? path + "?" + qs : path, {credentials:"include"});
@@ -79,12 +92,12 @@ async function api(path, params={}) {
 }
 
 function sevPill(score){
-  let cls="sev-low", txt="Baja";
-  if(score>=70){cls="sev-high"; txt="Alta"}
-  else if(score>=40){cls="sev-med"; txt="Media"}
+  let cls="sev-low", txt=I18N.sev_low;
+  if(score>=70){cls="sev-high"; txt=I18N.sev_high}
+  else if(score>=40){cls="sev-med"; txt=I18N.sev_medium}
   return `<span class="severity ${cls}">${txt}</span>`;
 }
-function stateBadge(s){return s==="ack" ? '<span class="badge">Leída</span>' : '<span class="badge">Pendiente</span>'}
+function stateBadge(s){return s==="ack" ? `<span class="badge">${I18N.state_ack}</span>` : `<span class="badge">${I18N.state_pending}</span>`}
 
 function authPill(a){
   const ov = (a && a.overall) || "warn";
@@ -106,7 +119,7 @@ function row(a){
   const dt = a.created_at ? new Date(a.created_at) : null;
   const when = dt ? dt.toLocaleString() : "";
   const link = a.link || "#";
-  const subject = a.subject || "(sin asunto)";
+  const subject = a.subject || I18N.no_subject;
   const snippet = a.snippet || "";
 
   return `
@@ -120,7 +133,7 @@ function row(a){
     <td>${authPill(a.auth || null)}</td>
     <td>${sevPill(a.score || 0)}</td>
     <td>${stateBadge(a.state || "pending")}</td>
-    <td>${a.state!=="ack" ? `<button class="btn" onclick="ack(${a.id})">Marcar leída</button>` : ``}</td>
+    <td>${a.state!=="ack" ? `<button class="btn" onclick="ack(${a.id})">${I18N.mark_ack}</button>` : ``}</td>
   </tr>`;
 }
 
@@ -135,10 +148,15 @@ async function loadAlerts(){
     const data = await api("/alerts/list", params);
     const tbody = document.querySelector("#alerts-table tbody");
     tbody.innerHTML = (data.items || []).map(row).join("");
-    $("summary").textContent = `Mostrando ${data.items?.length || 0} alertas${typeof data.total==="number" ? " (total: "+data.total+")" : ""}`;
+    const shown = data.items?.length || 0;
+    const tot = (typeof data.total==="number") ? data.total : null;
+    const totalPart = tot!==null ? I18N.summary_total_tpl.replace("{total}", String(tot)) : "";
+    $("summary").textContent = I18N.summary_tpl
+      .replace("{shown}", String(shown))
+      .replace("{total}", totalPart);
   }catch(e){
     console.error(e);
-    $("summary").textContent = "Error cargando alertas.";
+    $("summary").textContent = I18N.error_loading;
   }
 }
 
