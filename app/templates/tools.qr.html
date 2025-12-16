@@ -2,7 +2,7 @@
 <html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
 <head>
   <meta charset="utf-8">
-  <title>QR Scan — AlertTrail</title>
+  <title>{{ t(lang, "tools.qr.page_title") }}</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:24px;color:#0f172a}
@@ -19,14 +19,14 @@
   </style>
 </head>
 <body>
-  <h1 style="margin-top:0">Escáner de QR Phishing <span class="chip yellow">BETA</span></h1>
-  <p class="muted">Funciona mejor en HTTPS y móviles. Si la cámara no está disponible, subí una imagen del QR.</p>
+  <h1 style="margin-top:0">{{ t(lang, "tools.qr.title") }} <span class="chip yellow">{{ t(lang, "tools.qr.beta") }}</span></h1>
+  <p class="muted">{{ t(lang, "tools.qr.desc") }}</p>
 
   <div class="card">
     <div class="row" style="margin-bottom:10px">
-      <button id="openCam" class="btn primary" {% if mode=='file' %}disabled{% endif %}>Abrir cámara</button>
+      <button id="openCam" class="btn primary" {% if mode=='file' %}disabled{% endif %}>{{ t(lang, "tools.qr.open_camera") }}</button>
       <input id="fileInput" type="file" accept="image/*" class="btn">
-      <a href="/dashboard" class="btn">Volver</a>
+      <a href="/dashboard" class="btn">{{ t(lang, "common.back") }}</a>
     </div>
 
     <video id="video" playsinline muted></video>
@@ -42,6 +42,19 @@
   const result = document.getElementById('result');
   const debug = document.getElementById('debug');
 
+  const I18N = {
+    no_cam_support: {{ t(lang, "tools.qr.no_cam_support")|tojson }},
+    qr_content: {{ t(lang, "tools.qr.qr_content")|tojson }},
+    risk: {{ t(lang, "tools.qr.risk")|tojson }},
+    reasons: {{ t(lang, "tools.qr.reasons")|tojson }},
+    r_shortener: {{ t(lang, "tools.qr.reason_shortener")|tojson }},
+    r_bad_tld: {{ t(lang, "tools.qr.reason_bad_tld")|tojson }},
+    r_sensitive_words: {{ t(lang, "tools.qr.reason_sensitive_words")|tojson }},
+    image_loaded: {{ t(lang, "tools.qr.image_loaded")|tojson }},
+    unknown_type: {{ t(lang, "tools.qr.unknown_type")|tojson }},
+    tip: {{ t(lang, "tools.qr.tip")|tojson }},
+  };
+
   function riskBadge(level){
     if(level==='high') return '<span class="chip red">HIGH</span>';
     if(level==='medium') return '<span class="chip yellow">MEDIUM</span>';
@@ -51,9 +64,9 @@
     const L = u.toLowerCase();
     let hits = [];
     const badTLD = /(zip|mov|tk|top|gq|ml|ga|cf)$/;
-    if (L.includes("bit.ly") || L.includes("tinyurl") || L.includes("t.co")) hits.push("acortador");
-    if (badTLD.test((new URL(u)).hostname.split(".").pop()||"")) hits.push("tld riesgoso");
-    if (/(login|verify|update|reset)/.test(L)) hits.push("palabras sensibles");
+    if (L.includes("bit.ly") || L.includes("tinyurl") || L.includes("t.co")) hits.push(I18N.r_shortener);
+    if (badTLD.test((new URL(u)).hostname.split(".").pop()||"")) hits.push(I18N.r_bad_tld);
+    if (/(login|verify|update|reset)/.test(L)) hits.push(I18N.r_sensitive_words);
     let level = "low";
     if (hits.length>=2) level="medium";
     if (hits.length>=3) level="high";
@@ -62,7 +75,7 @@
 
   async function startCam(){
     if (!('BarcodeDetector' in window)) {
-      result.innerHTML = '<div class="muted">Tu navegador no soporta lectura de QR por cámara. Usá “Subir imagen”.</div>';
+      result.innerHTML = `<div class="muted">${I18N.no_cam_support}</div>`;
       return;
     }
     const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
@@ -75,12 +88,12 @@
         const codes = await detector.detect(video);
         if (codes && codes[0]) {
           const raw = codes[0].rawValue || "";
-          let html = `<div><b>Contenido QR:</b> ${raw}</div>`;
+          let html = `<div><b>${I18N.qr_content}</b> ${raw}</div>`;
           try{
             const u = new URL(raw);
             const sc = scoreUrl(u.href);
-            html += `<div style="margin-top:6px">Riesgo: ${riskBadge(sc.level)}</div>`;
-            if(sc.reasons.length) html += `<div class="muted">Motivos: ${sc.reasons.join(", ")}</div>`;
+            html += `<div style="margin-top:6px">${I18N.risk} ${riskBadge(sc.level)}</div>`;
+            if(sc.reasons.length) html += `<div class="muted">${I18N.reasons} ${sc.reasons.join(", ")}</div>`;
           }catch(_){}
           result.innerHTML = html;
         }
@@ -97,8 +110,8 @@
     if(!f){return}
     // Sin librerías externas, intentamos leer texto de la imagen con <canvas> y QR es MUY limitado.
     // Para la beta, mostramos metadata y sugerimos abrir en otra pestaña si contiene URL en EXIF no está disponible.
-    result.innerHTML = `<div>Imagen cargada: <b>${f.name}</b> (${f.type || 'tipo desconocido'})</div>
-                        <div class="muted" style="margin-top:6px">Sugerencia: si el QR abre una URL, verás la advertencia del navegador antes de continuar.</div>`;
+    result.innerHTML = `<div>${I18N.image_loaded} <b>${f.name}</b> (${f.type || I18N.unknown_type})</div>
+                        <div class="muted" style="margin-top:6px">${I18N.tip}</div>`;
   });
 </script>
 </body>
