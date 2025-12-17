@@ -10,25 +10,26 @@ from typing import Any, Dict
 from fastapi import Request
 
 SUPPORTED_LANGS = ("es", "en")
-
-DEFAULT_LANG = (os.getenv("DEFAULT_LANG", "es") or "es").strip().lower()[:2]
+DEFAULT_LANG = (os.getenv("DEFAULT_LANG", "es") or "es").lower()[:2]
 if DEFAULT_LANG not in SUPPORTED_LANGS:
     DEFAULT_LANG = "es"
 
+_LOCALES_DIR = Path(__file__).resolve().parent / "locales"
+
 
 def get_lang(request: Request, default: str | None = None) -> str:
-    """Idioma efectivo:
-
-    1) query param ?lang=
-    2) cookie "lang"
-    3) Accept-Language (en/es)
-    4) DEFAULT_LANG (o `default`)
     """
-    fallback = (default or DEFAULT_LANG).strip().lower()[:2]
+    Idioma efectivo:
+    1) query ?lang=
+    2) cookie "lang"
+    3) Accept-Language
+    4) DEFAULT_LANG
+    """
+    fallback = (default or DEFAULT_LANG).lower()[:2]
     if fallback not in SUPPORTED_LANGS:
         fallback = DEFAULT_LANG
 
-    # 1) query param
+    # 1) query
     try:
         q = (request.query_params.get("lang") or "").strip().lower()[:2]
         if q in SUPPORTED_LANGS:
@@ -47,7 +48,6 @@ def get_lang(request: Request, default: str | None = None) -> str:
     # 3) accept-language
     try:
         al = (request.headers.get("accept-language") or "").lower()
-        # ejemplo: "en-US,en;q=0.9,es;q=0.8"
         for part in al.split(","):
             code = part.strip().split(";")[0].split("-")[0][:2]
             if code in SUPPORTED_LANGS:
@@ -58,33 +58,45 @@ def get_lang(request: Request, default: str | None = None) -> str:
     return fallback
 
 
-def _locales_dir() -> Path:
-    return Path(__file__).parent / "locales"
-
-
 def _load_json(path: Path) -> Dict[str, str]:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    if not path.exists():
         return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            out: Dict[str, str] = {}
+            for k, v in data.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    out[k] = v
+            return out
+    except Exception:
+        # si el JSON está roto, no rompemos la app
+        return {}
+    return {}
 
 
 @lru_cache(maxsize=8)
 def _load_translations() -> Dict[str, Dict[str, str]]:
-    """Carga diccionarios desde app/i18n/locales/*.json"""
-    d = _locales_dir()
-    es = _load_json(d / "es.json")
-    en = _load_json(d / "en.json")
-    return {"es": dict(es), "en": dict(en)}
-
-
-def t(lang: str, key: str, **fmt: Any) -> str:
-    """Traducción por KEY.
-
-    - fallback a DEFAULT_LANG
-    - si no existe la key, devuelve la key (para detectar faltantes rápido)
     """
-    lang2 = (lang or DEFAULT_LANG).strip().lower()[:2]
+    Carga diccionarios desde:
+      app/i18n/locales/es.json
+      app/i18n/locales/en.json
+    """
+    es = _load_json(_LOCALES_DIR / "es.json")
+    en = _load_json(_LOCALES_DIR / "en.json")
+    return {"es": es, "en": en}
+
+
+def t(lang: Any, key: str, **fmt: Any) -> str:
+    """
+    Traducción por KEY.
+    - fallback a DEFAULT_LANG
+    - si falta la key, devuelve la key (así detectás faltantes rápido)
+    """
+    try:
+        lang2 = str(lang or DEFAULT_LANG).lower()[:2]
+    except Exception:
+        lang2 = DEFAULT_LANG
     if lang2 not in SUPPORTED_LANGS:
         lang2 = DEFAULT_LANG
 
@@ -100,11 +112,10 @@ def t(lang: str, key: str, **fmt: Any) -> str:
 
 
 def get_i18n_bundle(lang: str, prefix: str | None = None) -> Dict[str, str]:
-    """Útil para pasar a JS: devuelve {key: value}.
-
-    Si `prefix` está presente (ej: "tools.qr."), filtra por prefijo.
     """
-    lang2 = (lang or DEFAULT_LANG).strip().lower()[:2]
+    Útil para pasar a JS: devuelve {key: value} para un prefijo (ej: "tools.qr.")
+    """
+    lang2 = (lang or DEFAULT_LANG).lower()[:2]
     if lang2 not in SUPPORTED_LANGS:
         lang2 = DEFAULT_LANG
 
