@@ -10,7 +10,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.i18n import get_lang_from_request, jinja_t, set_lang_cookie
+from app.database import create_db_and_tables
+from app.i18n import get_lang, jinja_t, set_lang_cookie
 from app.security import get_current_user_cookie
 
 # Routers
@@ -40,18 +41,24 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-session-secret")
 REPORTS_DIR = os.getenv("REPORTS_DIR", "/var/data/reports")
 
 
+# -------------------------------------------------------------------
+# Templates con defaults globales (lang + t)
+# -------------------------------------------------------------------
 class TemplatesWithDefaults(Jinja2Templates):
-    """TemplateResponse() que SIEMPRE agrega lang y expone t() en contexto."""
+    """
+    TemplateResponse que:
+    - inyecta lang automáticamente
+    - expone t() siempre
+    """
 
     def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
         try:
             request = context.get("request")
             if request and "lang" not in context:
-                context["lang"] = get_lang_from_request(request)
+                context["lang"] = get_lang(request)
         except Exception:
             pass
 
-        # t disponible aunque un template no lo pase manualmente
         context.setdefault("t", jinja_t)
         return super().TemplateResponse(name, context, *args, **kwargs)
 
@@ -59,27 +66,27 @@ class TemplatesWithDefaults(Jinja2Templates):
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 
-# t global para que base.html / cualquier template lo tenga aunque no esté en context
-try:
-    templates.env.globals["t"] = jinja_t
-except Exception:
-    pass
+# t global para cualquier template
+templates.env.globals["t"] = jinja_t
 
 
+# -------------------------------------------------------------------
+# App
+# -------------------------------------------------------------------
 app = FastAPI(title=APP_NAME)
 
-# Sesiones (si usás flash messages u otros)
+# Sesiones
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
 
+# -------------------------------------------------------------------
+# Middleware idioma (Content-Language)
+# -------------------------------------------------------------------
 class LangHeaderMiddleware(BaseHTTPMiddleware):
-    """Agrega Content-Language según cookie/query lang."""
-
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         try:
-            lang = get_lang_from_request(request)
-            response.headers["Content-Language"] = lang
+            response.headers["Content-Language"] = get_lang(request)
         except Exception:
             pass
         return response
@@ -88,79 +95,102 @@ class LangHeaderMiddleware(BaseHTTPMiddleware):
 app.add_middleware(LangHeaderMiddleware)
 
 
-# Static
+# -------------------------------------------------------------------
+# Startup
+# -------------------------------------------------------------------
+@app.on_event("startup")
+def on_startup():
+    try:
+        create_db_and_tables()
+    except Exception:
+        pass
+
+
+# -------------------------------------------------------------------
+# Static y reports
+# -------------------------------------------------------------------
 STATIC_DIR = Path("app/static") if Path("app/static").exists() else Path("static")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Reports folder
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 
 
+# -------------------------------------------------------------------
+# Health
+# -------------------------------------------------------------------
 @app.get("/health", include_in_schema=False)
 def health():
     return {"ok": True}
 
 
+# -------------------------------------------------------------------
+# Root
+# -------------------------------------------------------------------
 @app.get("/", include_in_schema=False)
 def root():
-    return RedirectResponse(url="/dashboard", status_code=302)
+    return RedirectResponse("/dashboard", status_code=302)
 
 
+# -------------------------------------------------------------------
+# Dashboard
+# -------------------------------------------------------------------
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
-    user = None
     try:
         user = get_current_user_cookie(request)
     except Exception:
         user = None
 
     if not user:
-        return RedirectResponse(url="/login", status_code=302)
+        return RedirectResponse("/login", status_code=302)
 
-    # Si tu dashboard.html usa t(lang, "dashboard.xxx"), ya queda resuelto.
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "user": user},
+        {
+            "request": request,
+            "user": user,
+        },
     )
 
 
+# -------------------------------------------------------------------
+# Cambiar idioma
+# -------------------------------------------------------------------
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(request: Request, lang: str = "es", next: str = "/"):
     """
-    Cambia idioma con:
-      /set-lang?lang=en&next=/dashboard
-      /set-lang?lang=es&next=/mail/
+    Ej:
+    /set-lang?lang=en&next=/dashboard
+    /set-lang?lang=es&next=/mail
     """
     resp = RedirectResponse(next or "/", status_code=303)
-
-    # cookie oficial + compatibilidad si antes usabas "lang"
     set_lang_cookie(resp, request, lang)
-    resp.set_cookie("lang", (lang or "es").lower(), path="/", max_age=60 * 60 * 24 * 365)
-
     return resp
 
 
-# Alias: /reports_browser -> /reports (SIN slash final)
+# -------------------------------------------------------------------
+# Aliases
+# -------------------------------------------------------------------
 @app.get("/reports_browser", include_in_schema=False)
 def reports_browser_alias():
-    return RedirectResponse(url="/reports", status_code=307)
+    return RedirectResponse("/reports", status_code=307)
 
 
-# Alias: /reports/ -> /reports
 @app.get("/reports/", include_in_schema=False)
 def reports_trailing_slash_alias():
-    return RedirectResponse(url="/reports", status_code=307)
+    return RedirectResponse("/reports", status_code=307)
 
 
-# Alias: /billing/subscriptions -> /billing
 @app.get("/billing/subscriptions", include_in_schema=False)
 def billing_subscriptions_alias():
-    return RedirectResponse(url="/billing", status_code=307)
+    return RedirectResponse("/billing", status_code=307)
 
 
+# -------------------------------------------------------------------
 # Routers
+# -------------------------------------------------------------------
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(analysis.router)
