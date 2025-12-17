@@ -10,7 +10,6 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.database import create_db_and_tables
 from app.i18n import get_lang_from_request, jinja_t, set_lang_cookie
 from app.security import get_current_user_cookie
 
@@ -87,14 +86,6 @@ class LangHeaderMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(LangHeaderMiddleware)
-
-# DB init (si tu create_db_and_tables es idempotente)
-@app.on_event("startup")
-def on_startup():
-    try:
-        create_db_and_tables()
-    except Exception:
-        pass
 
 
 # Static
