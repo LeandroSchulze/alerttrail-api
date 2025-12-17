@@ -14,52 +14,29 @@ from sqlalchemy import func
 from jinja2 import TemplateNotFound
 
 from app.database import SessionLocal
+from app.database import get_db
+from app.models import User
 from app.security import (
-    issue_access_cookie,
     get_current_user_cookie,
-    verify_password,
+    issue_access_cookie,
     clear_access_cookie,
     COOKIE_NAME,
     create_access_token,
     normalize_user_plan,
 )
 
+# 👇 i18n por keys (JSON)
 from app.i18n import get_lang, t
 
 app = FastAPI(title="AlertTrail API", version="1.0.0")
 app.router.redirect_slashes = False
 
+DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
+
 from starlette.middleware.base import BaseHTTPMiddleware
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        resp = await call_next(request)
-        resp.headers.setdefault("X-Frame-Options", "DENY")
-        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        resp.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self'; font-src 'self' data:"
-        )
-        resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-        if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
-            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-        return resp
-
-app.add_middleware(SecurityHeadersMiddleware)
-
+BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-STATIC_DIR    = "app/static"    if Path("app/static").exists()    else "static"
-REPORTS_DIR   = "app/reports"   if Path("app/reports").exists()   else "reports"
-
-REPORTS_STATIC_URL = "/reports-files"
-
-Path(STATIC_DIR).mkdir(parents=True, exist_ok=True)
-Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
-
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount(REPORTS_STATIC_URL, StaticFiles(directory=REPORTS_DIR), name="reports_files")
 
 
 class TemplatesWithDefaults(Jinja2Templates):
@@ -72,38 +49,83 @@ class TemplatesWithDefaults(Jinja2Templates):
             context.setdefault("lang", "es")
         return super().TemplateResponse(name, context, *args, **kwargs)
 
+
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 app.state.templates = templates
+
+# t(lang, "key")
 templates.env.globals["t"] = t
+
+
+def _cookie_domain_for_request(request: Request) -> str | None:
+    # podés ajustar esto si usás dominio custom y subdominios
+    return None
+
+
+class AddRequestToStateMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request.state.lang = get_lang(request)
+        resp = await call_next(request)
+        return resp
+
+
+app.add_middleware(AddRequestToStateMiddleware)
 
 
 @app.middleware("http")
 async def content_language_header(request: Request, call_next):
     response = await call_next(request)
     try:
-        response.headers.setdefault("Content-Language", get_lang(request))
+        response.headers["Content-Language"] = get_lang(request)
     except Exception:
         pass
     return response
 
 
-def get_db():
-    db = SessionLocal()
+@app.middleware("http")
+async def cookie_hardener(request: Request, call_next):
+    resp = await call_next(request)
     try:
-        yield db
-    finally:
-        db.close()
+        # Refuerza cookies existentes si aplica (opcional)
+        pass
+    except Exception:
+        pass
+    return resp
+
+
+# Static
+STATIC_DIR = BASE_DIR / "app" / "static"
+if not STATIC_DIR.exists():
+    STATIC_DIR = BASE_DIR / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+REPORTS_DIR = os.getenv("REPORTS_DIR", str(BASE_DIR / "reports"))
+Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
+app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+@app.get("/", include_in_schema=False)
+def root(request: Request):
+    # si hay sesión => dashboard, si no => login
+    try:
+        get_current_user_cookie(request)
+        return RedirectResponse("/dashboard", status_code=302)
+    except Exception:
+        return RedirectResponse("/auth/login", status_code=302)
 
 
 @app.get("/set-lang", include_in_schema=False)
-def set_lang(request: Request, lang: str = "es", next: str = "/"):
-    lang = (lang or "es").lower()
+def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
+    lang = (lang or "es").lower()[:2]
     if lang not in ("es", "en"):
         lang = "es"
 
-    resp = RedirectResponse(next or "/", status_code=303)
-
-    # ✅ En producción HTTPS: forzamos secure=True para que el cookie se guarde.
+    resp = RedirectResponse(next or "/dashboard", status_code=303)
     resp.set_cookie(
         "lang",
         lang,
@@ -111,50 +133,10 @@ def set_lang(request: Request, lang: str = "es", next: str = "/"):
         httponly=False,
         samesite="lax",
         secure=True,
-        path="/",
-        # NO usar domain=... (evita problemas con www/apex en Render)
+        domain=_cookie_domain_for_request(request),
     )
     return resp
 
-
-@app.middleware("http")
-async def cookie_hardener(request: Request, call_next):
-    resp = await call_next(request)
-    sc = resp.headers.get("set-cookie")
-    if not sc:
-        return resp
-
-    def patch(c: str) -> str:
-        if COOKIE_NAME not in c:
-            return c
-        if "samesite" not in c.lower():
-            c += "; SameSite=Lax"
-        if "httponly" not in c.lower():
-            c += "; HttpOnly"
-        if (request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https") and "secure" not in c.lower():
-            c += "; Secure"
-        return c
-
-    parts = [p.strip() for p in sc.split(",")]
-    resp.headers["set-cookie"] = ", ".join(patch(p) for p in parts)
-    return resp
-
-
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    try:
-        _ = get_current_user_cookie(request)
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
-    except Exception:
-        pass
-
-    try:
-        return templates.TemplateResponse("landing.html", {"request": request})
-    except TemplateNotFound:
-        return HTMLResponse("<h1>AlertTrail</h1>")
-
-
-from app.models import User
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
@@ -178,6 +160,7 @@ def reports_browser_alias():
 def rules_disabled_no_slash():
     return RedirectResponse(url="/dashboard", status_code=302)
 
+
 @app.get("/rules/", include_in_schema=False)
 def rules_disabled_slash():
     return RedirectResponse(url="/dashboard", status_code=302)
@@ -187,89 +170,73 @@ def rules_disabled_slash():
 def login_action(response: Response, email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     email = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
-    if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(400, "Credenciales inválidas")
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    normalize_user_plan(db, user)
-
-    token = create_access_token({"sub": str(user.id), "email": user.email})
-    r = RedirectResponse("/dashboard", status_code=303)
-    issue_access_cookie(r, token)
-    return r
+    # login real está en /auth/login/web (esto es alias legacy)
+    return RedirectResponse("/auth/login", status_code=302)
 
 
 @app.get("/logout", include_in_schema=False)
-def logout():
-    r = RedirectResponse("/", status_code=303)
-    clear_access_cookie(r)
-    return r
+def logout_alias(request: Request):
+    resp = RedirectResponse("/auth/login", status_code=302)
+    clear_access_cookie(resp)
+    return resp
 
 
-ROUTER_MODULES = [
-    "auth",
-    "billing",
-    "billing_ui",
-    "billing_subscriptions",
-    "payments",
-    "payments_history",
-    "payments_mp",
-    "stats",
-    "alerts",
-    "reports",
-    "admin",
-    "analysis",
-    "mail",
-    "profile",
-    "tools",
-    "audit",
-]
+# Routers
+def _include_router(path: str, router_name: str, prefix: str = ""):
+    mod = import_module(path)
+    router = getattr(mod, router_name)
+    app.include_router(router, prefix=prefix)
 
-for name in ROUTER_MODULES:
-    try:
-        mod = import_module(f"app.routers.{name}")
-        app.include_router(mod.router)
-        print(f"[routers] {name} OK")
-    except Exception as e:
-        print(f"[routers] {name} SKIPPED:", e)
+
+_include_router("app.routers.auth", "router", prefix="/auth")
+print("[routers] auth OK")
+
+for module, name, prefix in [
+    ("app.routers.billing", "router", ""),
+    ("app.routers.billing_ui", "router", ""),
+    ("app.routers.billing_subscriptions", "router", ""),
+    ("app.routers.payments", "router", ""),
+    ("app.routers.payments_history", "router", ""),
+    ("app.routers.payments_mp", "router", ""),
+    ("app.routers.stats", "router", ""),
+    ("app.routers.alerts", "router", ""),
+    ("app.routers.reports", "router", ""),
+    ("app.routers.admin", "router", ""),
+    ("app.routers.analysis", "router", ""),
+    ("app.routers.mail", "router", ""),
+    ("app.routers.profile", "router", ""),
+    ("app.routers.tools", "router", ""),
+    ("app.routers.audit", "router", ""),
+    ("app.routers.legal", "router", ""),
+]:
+    _include_router(module, name, prefix=prefix)
+    print(f"[routers] {module.split('.')[-1]} OK")
 
 
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+
     schema = get_openapi(
         title=app.title,
         version=app.version,
         description="AlertTrail API",
         routes=app.routes,
     )
-    schema.setdefault("components", {}).setdefault("securitySchemes", {})["cookieAuth"] = {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": COOKIE_NAME,
-    }
-    for p in schema.get("paths", {}).values():
-        for m in p.values():
-            if isinstance(m, dict):
-                m.setdefault("security", [{"cookieAuth": []}])
     app.openapi_schema = schema
-    return schema
+    return app.openapi_schema
+
 
 app.openapi = custom_openapi
 
 
-@app.get("/health")
-def health():
-    return {"ok": True}
-
-@app.head("/")
-def head_root():
-    return Response(status_code=200)
-
-
-@app.on_event("startup")
-def log_routes():
+# Debug rutas (opcional)
+if os.getenv("DEBUG_ROUTES", "").lower() in ("1", "true", "yes", "on"):
     print("\n=== ROUTES ===")
-    for r in app.routes:
-        if isinstance(r, APIRoute):
-            print(r.path)
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            print(route.path)
     print("==============\n")
