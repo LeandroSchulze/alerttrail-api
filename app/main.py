@@ -1,3 +1,4 @@
+# app/main.py
 from __future__ import annotations
 
 import os
@@ -6,12 +7,14 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.i18n import get_lang, t
 from app.security import get_current_user_cookie
+from app.ui import templates  # ✅ templates único, fuera de main (evita circular import)
+
+# i18n (usamos get_lang que sí existe en tu proyecto)
+from app.i18n import get_lang
 
 # Routers
 from app.routers import (
@@ -40,35 +43,20 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-session-secret")
 REPORTS_DIR = os.getenv("REPORTS_DIR", "/var/data/reports")
 
 
-class TemplatesWithDefaults(Jinja2Templates):
-    """TemplateResponse() que SIEMPRE agrega lang y expone t() en contexto."""
+def _set_lang_cookie(resp: RedirectResponse, request: Request, lang: str) -> None:
+    """
+    Wrapper tolerante: si existe set_lang_cookie en tu i18n, lo usa.
+    Si no existe, setea cookie 'at_lang' igualmente.
+    """
+    lang = (lang or "es").lower()
 
-    def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
-        try:
-            request = context.get("request")
-            if request and "lang" not in context:
-                context["lang"] = get_lang(request)
-        except Exception:
-            pass
-
-        # t disponible aunque un template no lo pase manualmente
-        context.setdefault("t", t)
-        return super().TemplateResponse(name, context, *args, **kwargs)
-
-
-TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
-
-# t global para que base.html / cualquier template lo tenga aunque no esté en context
-try:
-    templates.env.globals["t"] = t
-except Exception:
-    pass
-
-app = FastAPI(title=APP_NAME)
-
-# Sesiones (si usás flash messages u otros)
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
+    try:
+        from app.i18n import set_lang_cookie  # type: ignore
+        set_lang_cookie(resp, request, lang)  # tu implementación si existe
+        return
+    except Exception:
+        # fallback simple
+        resp.set_cookie("at_lang", lang, path="/", max_age=60 * 60 * 24 * 365)
 
 
 class LangHeaderMiddleware(BaseHTTPMiddleware):
@@ -84,7 +72,35 @@ class LangHeaderMiddleware(BaseHTTPMiddleware):
         return response
 
 
+app = FastAPI(title=APP_NAME)
+
+# Sesiones (si usás flash messages u otros)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 app.add_middleware(LangHeaderMiddleware)
+
+
+@app.on_event("startup")
+def on_startup():
+    """
+    DB init (tolerante):
+    - Si existe create_db_and_tables(), lo usa.
+    - Si no, intenta create_all().
+    - Si no hay nada, no rompe el deploy (porque ya corrés alembic + init_db en Start Command).
+    """
+    try:
+        from app.database import create_db_and_tables  # type: ignore
+        create_db_and_tables()
+        return
+    except Exception:
+        pass
+
+    try:
+        from app.database import create_all  # type: ignore
+        create_all()
+        return
+    except Exception:
+        pass
+
 
 # Static
 STATIC_DIR = Path("app/static") if Path("app/static").exists() else Path("static")
@@ -117,6 +133,7 @@ def dashboard(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
+    # templates (de app.ui) ya agrega t() y lang por default
     return templates.TemplateResponse(
         "dashboard.html",
         {"request": request, "user": user},
@@ -130,11 +147,14 @@ def set_lang(request: Request, lang: str = "es", next: str = "/"):
       /set-lang?lang=en&next=/dashboard
       /set-lang?lang=es&next=/mail/
     """
-    lang = (lang or "es").lower().strip()
     resp = RedirectResponse(next or "/", status_code=303)
 
-    # Cookie de idioma (compatible con lo que usa get_lang)
-    resp.set_cookie("lang", lang, path="/", max_age=60 * 60 * 24 * 365)
+    # cookie oficial (si existe) + fallback
+    _set_lang_cookie(resp, request, lang)
+
+    # compatibilidad si antes usabas "lang"
+    resp.set_cookie("lang", (lang or "es").lower(), path="/", max_age=60 * 60 * 24 * 365)
+
     return resp
 
 
