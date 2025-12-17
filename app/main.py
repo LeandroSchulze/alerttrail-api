@@ -1,249 +1,193 @@
-# app/main.py
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from importlib import import_module
 
-from fastapi import FastAPI, Request, Depends, HTTPException, Response, Form
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.openapi.utils import get_openapi
-from fastapi.routing import APIRoute
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
-from app.database import get_db
-from app.models import User
-from app.security import (
-    get_current_user_cookie,
-    clear_access_cookie,
-    normalize_user_plan,
+from app.database import create_db_and_tables
+from app.i18n import get_lang_from_request, jinja_t, set_lang_cookie
+from app.security import get_current_user_cookie
+
+# Routers
+from app.routers import (
+    admin,
+    alerts,
+    analysis,
+    audit,
+    auth,
+    billing,
+    billing_subscriptions,
+    billing_ui,
+    i18n as i18n_router,
+    legal,
+    mail,
+    payments,
+    payments_history,
+    payments_mp,
+    profile,
+    reports,
+    stats,
+    tools,
 )
 
-# ✅ i18n por keys (JSON) + debug
-from app.i18n import get_lang, t, i18n_debug
+APP_NAME = os.getenv("APP_NAME", "AlertTrail")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-session-secret")
+REPORTS_DIR = os.getenv("REPORTS_DIR", "/var/data/reports")
 
 
-# -----------------------------------------------------------------------------
-# App
-# -----------------------------------------------------------------------------
-app = FastAPI(title="AlertTrail API", version="1.0.0")
-app.router.redirect_slashes = False
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-
-
-# -----------------------------------------------------------------------------
-# Templates (con defaults + globals)
-# -----------------------------------------------------------------------------
 class TemplatesWithDefaults(Jinja2Templates):
+    """TemplateResponse() que SIEMPRE agrega lang y expone t() en contexto."""
+
     def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
-        # Siempre asegurar request + lang en context
-        request = context.get("request")
-        if request:
-            context.setdefault("lang", get_lang(request))
-        else:
-            context.setdefault("lang", "es")
+        try:
+            request = context.get("request")
+            if request and "lang" not in context:
+                context["lang"] = get_lang_from_request(request)
+        except Exception:
+            pass
+
+        # t disponible aunque un template no lo pase manualmente
+        context.setdefault("t", jinja_t)
         return super().TemplateResponse(name, context, *args, **kwargs)
 
 
+TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
 templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
 
-# ✅ hacer disponibles las helpers globales en Jinja
-templates.env.globals["t"] = t
-
-# ✅ opcional: t_key("dashboard.hello") dentro del template sin pasar lang manualmente
-def t_key(request: Request, key: str, **fmt):
-    return t(get_lang(request), key, **fmt)
-
-templates.env.globals["t_key"] = t_key
-
-# ✅ dejar templates accesible desde routers via request.app.state.templates
-app.state.templates = templates
+# t global para que base.html / cualquier template lo tenga aunque no esté en context
+try:
+    templates.env.globals["t"] = jinja_t
+except Exception:
+    pass
 
 
-# -----------------------------------------------------------------------------
-# Middlewares (lang + Content-Language)
-# -----------------------------------------------------------------------------
-class AddLangToRequestStateMiddleware(BaseHTTPMiddleware):
+app = FastAPI(title=APP_NAME)
+
+# Sesiones (si usás flash messages u otros)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
+
+
+class LangHeaderMiddleware(BaseHTTPMiddleware):
+    """Agrega Content-Language según cookie/query lang."""
+
     async def dispatch(self, request: Request, call_next):
-        request.state.lang = get_lang(request)
-        return await call_next(request)
+        response = await call_next(request)
+        try:
+            lang = get_lang_from_request(request)
+            response.headers["Content-Language"] = lang
+        except Exception:
+            pass
+        return response
 
 
-app.add_middleware(AddLangToRequestStateMiddleware)
+app.add_middleware(LangHeaderMiddleware)
 
-
-@app.middleware("http")
-async def content_language_header(request: Request, call_next):
-    response = await call_next(request)
+# DB init (si tu create_db_and_tables es idempotente)
+@app.on_event("startup")
+def on_startup():
     try:
-        response.headers["Content-Language"] = get_lang(request)
+        create_db_and_tables()
     except Exception:
         pass
-    return response
 
 
-# -----------------------------------------------------------------------------
 # Static
-# -----------------------------------------------------------------------------
-STATIC_DIR = BASE_DIR / "app" / "static"
-if not STATIC_DIR.exists():
-    STATIC_DIR = BASE_DIR / "static"
+STATIC_DIR = Path("app/static") if Path("app/static").exists() else Path("static")
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-REPORTS_DIR = os.getenv("REPORTS_DIR", str(BASE_DIR / "reports"))
+# Reports folder
 Path(REPORTS_DIR).mkdir(parents=True, exist_ok=True)
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 
 
-# -----------------------------------------------------------------------------
-# Health (con debug i18n para no volver a "volver atrás")
-# -----------------------------------------------------------------------------
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health():
-    # Si i18n counts es/en dan 0 => no están leyendo JSON o JSON roto
-    return {"ok": True, "i18n": i18n_debug()}
-
-
-# -----------------------------------------------------------------------------
-# Root / Language
-# -----------------------------------------------------------------------------
-def _cookie_domain_for_request(_request: Request) -> str | None:
-    # Ajustá si querés dominio compartido/subdominios.
-    return None
+    return {"ok": True}
 
 
 @app.get("/", include_in_schema=False)
-def root(request: Request):
-    # Si hay sesión => dashboard, si no => login
+def root():
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+def dashboard(request: Request):
+    user = None
     try:
-        get_current_user_cookie(request)
-        return RedirectResponse("/dashboard", status_code=302)
+        user = get_current_user_cookie(request)
     except Exception:
-        return RedirectResponse("/auth/login", status_code=302)
+        user = None
+
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Si tu dashboard.html usa t(lang, "dashboard.xxx"), ya queda resuelto.
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "user": user},
+    )
 
 
 @app.get("/set-lang", include_in_schema=False)
-def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
-    lang = (lang or "es").lower()[:2]
-    if lang not in ("es", "en"):
-        lang = "es"
+def set_lang(request: Request, lang: str = "es", next: str = "/"):
+    """
+    Cambia idioma con:
+      /set-lang?lang=en&next=/dashboard
+      /set-lang?lang=es&next=/mail/
+    """
+    resp = RedirectResponse(next or "/", status_code=303)
 
-    resp = RedirectResponse(next or "/dashboard", status_code=303)
-    resp.set_cookie(
-        "lang",
-        lang,
-        max_age=60 * 60 * 24 * 365,
-        httponly=False,
-        samesite="lax",
-        secure=True,
-        domain=_cookie_domain_for_request(request),
-    )
+    # cookie oficial + compatibilidad si antes usabas "lang"
+    set_lang_cookie(resp, request, lang)
+    resp.set_cookie("lang", (lang or "es").lower(), path="/", max_age=60 * 60 * 24 * 365)
+
     return resp
 
 
-# -----------------------------------------------------------------------------
-# Dashboard
-# -----------------------------------------------------------------------------
-@app.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
-    payload = get_current_user_cookie(request)
-    user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
-        return RedirectResponse("/auth/login", status_code=302)
-
-    normalize_user_plan(db, user)
-
-    ctx = {
-        "request": request,
-        "current_user": user,
-        "user": user,
-        "lang": get_lang(request),
-    }
-    return templates.TemplateResponse("dashboard.html", ctx)
-
-
-# Aliases legacy
+# Alias: /reports_browser -> /reports (SIN slash final)
 @app.get("/reports_browser", include_in_schema=False)
 def reports_browser_alias():
-    return RedirectResponse(url="/reports/", status_code=307)
+    return RedirectResponse(url="/reports", status_code=307)
 
 
-@app.get("/logout", include_in_schema=False)
-def logout_alias():
-    resp = RedirectResponse("/auth/login", status_code=302)
-    clear_access_cookie(resp)
-    return resp
+# Alias: /reports/ -> /reports
+@app.get("/reports/", include_in_schema=False)
+def reports_trailing_slash_alias():
+    return RedirectResponse(url="/reports", status_code=307)
 
 
-# -----------------------------------------------------------------------------
-# Routers (auto include)
-# -----------------------------------------------------------------------------
-def _include_router(module_path: str, router_name: str = "router", prefix: str = ""):
-    mod = import_module(module_path)
-    router = getattr(mod, router_name)
-    app.include_router(router, prefix=prefix)
+# Alias: /billing/subscriptions -> /billing
+@app.get("/billing/subscriptions", include_in_schema=False)
+def billing_subscriptions_alias():
+    return RedirectResponse(url="/billing", status_code=307)
 
 
-# auth
-_include_router("app.routers.auth", "router", prefix="/auth")
-print("[routers] auth OK")
+# Routers
+app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(analysis.router)
+app.include_router(mail.router)
+app.include_router(tools.router)
+app.include_router(profile.router)
 
-# resto
-for module, name, prefix in [
-    ("app.routers.billing", "router", ""),
-    ("app.routers.billing_ui", "router", ""),
-    ("app.routers.billing_subscriptions", "router", ""),
-    ("app.routers.payments", "router", ""),
-    ("app.routers.payments_history", "router", ""),
-    ("app.routers.payments_mp", "router", ""),
-    ("app.routers.stats", "router", ""),
-    ("app.routers.alerts", "router", ""),
-    ("app.routers.reports", "router", ""),
-    ("app.routers.admin", "router", ""),
-    ("app.routers.analysis", "router", ""),
-    ("app.routers.mail", "router", ""),
-    ("app.routers.profile", "router", ""),
-    ("app.routers.tools", "router", ""),
-    ("app.routers.audit", "router", ""),
-    ("app.routers.legal", "router", ""),
-]:
-    _include_router(module, name, prefix=prefix)
-    print(f"[routers] {module.split('.')[-1]} OK")
+app.include_router(alerts.router)
+app.include_router(reports.router)
+app.include_router(audit.router)
+app.include_router(legal.router)
 
+app.include_router(billing.router)
+app.include_router(billing_ui.router)
+app.include_router(billing_subscriptions.router)
 
-# -----------------------------------------------------------------------------
-# OpenAPI
-# -----------------------------------------------------------------------------
-def custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
-    schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description="AlertTrail API",
-        routes=app.routes,
-    )
-    app.openapi_schema = schema
-    return app.openapi_schema
-
-
-app.openapi = custom_openapi
-
-
-# -----------------------------------------------------------------------------
-# (Opcional) Debug rutas si activás env DEBUG_ROUTES=1
-# -----------------------------------------------------------------------------
-if os.getenv("DEBUG_ROUTES", "").lower() in ("1", "true", "yes", "on"):
-    print("\n=== ROUTES ===")
-    for route in app.routes:
-        if isinstance(route, APIRoute):
-            print(route.path)
-    print("==============\n")
+app.include_router(payments.router)
+app.include_router(payments_history.router)
+app.include_router(payments_mp.router)
+app.include_router(stats.router)
+app.include_router(i18n_router.router)
