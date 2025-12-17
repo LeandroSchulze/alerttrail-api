@@ -116,8 +116,14 @@ def dashboard(request: Request):
 
     return templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "user": user},
+        {
+            "request": request,
+            "user": user,
+            "current_user": user,   # ✅ para que no explote el template
+            "app_name": APP_NAME,
+        },
     )
+
 
 
 # ✅ Alias /login -> /auth/login
