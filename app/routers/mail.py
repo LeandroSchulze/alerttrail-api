@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
 
 from app.security import get_current_user_cookie
-from app.main import templates   # 🔥 USAMOS EL ÚNICO templates
+from app.ui import templates
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
