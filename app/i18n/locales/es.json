@@ -139,4 +139,36 @@
   "dashboard.security_tip_3": "Indicadores visuales para ver si vas mejorando.",
 
   "dashboard.footer": "AlertTrail · Protección de correos y accesos, sin complicarte la vida."
+
+  "common.yes": "Sí",
+  "common.no": "No",
+
+  "mail.page_title": "Casillas de correo — AlertTrail",
+  "mail.subtitle": "Gestioná tu casilla IMAP para escanear correos sospechosos.",
+  "mail.linked_label": "Casilla guardada:",
+  "mail.replace": "Reemplazar",
+  "mail.link": "Vincular casilla",
+  "mail.try_scanner": "Probar Scanner",
+  "mail.no_linked": "No hay ninguna casilla guardada para tu usuario.",
+
+  "mail.save_config": "Guardar configuración",
+  "mail.config_hint": "Tu configuración se guarda cifrada en el servidor. El scanner usará estos datos para conectarse automáticamente.",
+  "mail.view_defaults": "Ver parámetros IMAP por defecto",
+  "mail.effective_params": "Parámetros efectivos",
+
+  "mail.connect_title": "Vincular casilla — AlertTrail",
+  "mail.connect_heading": "Vincular casilla (IMAP)",
+  "mail.connect_subtitle": "Completá los datos para conectar tu casilla y habilitar el Mail Scanner.",
+  "mail.connect_success": "¡Listo! Casilla {email} vinculada. Probá el ",
+  "mail.gmail_hint_1": "Gmail requiere",
+  "mail.gmail_hint_2": "App Password",
+  "mail.gmail_hint_3": "(2FA activo). Otros proveedores aceptan la clave normal o su propio “app password”.",
+  "mail.connect_action": "Vincular",
+
+  "mail.scanner_page_title": "Mail Scanner — AlertTrail",
+  "mail.scanner_title": "Mail Scanner",
+  "mail.scanner_subtitle_env": "Usa las variables de entorno IMAP. Para cambiar host/usuario/clave, editá ENV y volvé a desplegar.",
+  "mail.scanner_no_saved_prefix": "No hay casilla guardada en",
+  "mail.scanner_no_saved_suffix": "(opcional).",
+  "mail.scan_now": "Ejecutar scan ahora"
 }
