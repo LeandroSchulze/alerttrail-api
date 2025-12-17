@@ -139,4 +139,37 @@
   "dashboard.security_tip_3": "Visual indicators to track improvement over time.",
 
   "dashboard.footer": "AlertTrail · Email and access protection, without the hassle."
+
+  "common.yes": "Yes",
+  "common.no": "No",
+
+  "mail.page_title": "Mailboxes — AlertTrail",
+  "mail.subtitle": "Manage your IMAP mailbox to scan suspicious emails.",
+  "mail.linked_label": "Saved mailbox:",
+  "mail.replace": "Replace",
+  "mail.link": "Link mailbox",
+  "mail.try_scanner": "Try Scanner",
+  "mail.no_linked": "No mailbox is saved for your user.",
+
+  "mail.save_config": "Save configuration",
+  "mail.config_hint": "Your configuration is stored encrypted on the server. The scanner will use these settings automatically.",
+  "mail.view_defaults": "View default IMAP settings",
+  "mail.effective_params": "Effective settings",
+
+  "mail.connect_title": "Link mailbox — AlertTrail",
+  "mail.connect_heading": "Link mailbox (IMAP)",
+  "mail.connect_subtitle": "Fill in the details to connect your mailbox and enable the Mail Scanner.",
+  "mail.connect_success": "Done! Mailbox {email} linked. Try the ",
+  "mail.gmail_hint_1": "Gmail requires an",
+  "mail.gmail_hint_2": "App Password",
+  "mail.gmail_hint_3": "(with 2FA). Other providers may accept your normal password or their own app password.",
+  "mail.connect_action": "Link",
+
+  "mail.scanner_page_title": "Mail Scanner — AlertTrail",
+  "mail.scanner_title": "Mail Scanner",
+  "mail.scanner_subtitle_env": "Uses IMAP environment variables. To change host/user/password, edit ENV and redeploy.",
+  "mail.scanner_no_saved_prefix": "No mailbox saved in",
+  "mail.scanner_no_saved_suffix": "(optional).",
+  "mail.scan_now": "Run scan now"
 }
+
