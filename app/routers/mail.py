@@ -1,30 +1,20 @@
 # app/routers/mail.py
-import os, json, socket, imaplib, email
-from datetime import datetime, timedelta
+import os, json, imaplib, email
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from urllib.parse import urlparse
+from typing import Dict, Any
 
-from fastapi import APIRouter, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from email.header import decode_header
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import HTMLResponse
 
-from app.i18n import get_lang, t
 from app.security import get_current_user_cookie
+from app.main import templates   # 🔥 USAMOS EL ÚNICO templates
 
 router = APIRouter(prefix="/mail", tags=["mail"])
-
-TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
-templates.env.globals["t"] = t
 
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
-SUMMARY_FILE = MAIL_DATA_DIR / "mail_last_summary.json"
 
 
 def _load_linked() -> Dict[str, Any]:
@@ -34,10 +24,6 @@ def _load_linked() -> Dict[str, Any]:
         return json.loads(LINKED_FILE.read_text(encoding="utf-8"))
     except Exception:
         return {}
-
-
-def _save_linked(data: Dict[str, Any]) -> None:
-    LINKED_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _defaults_from_env() -> Dict[str, Any]:
@@ -50,69 +36,47 @@ def _defaults_from_env() -> Dict[str, Any]:
     }
 
 
-def _connect_imap(server: str, port: int, use_ssl: bool):
-    if use_ssl:
-        return imaplib.IMAP4_SSL(server, port)
-    return imaplib.IMAP4(server, port)
-
-
-def _decode_mime_words(s: str) -> str:
-    try:
-        parts = decode_header(s or "")
-        out = ""
-        for part, enc in parts:
-            if isinstance(part, bytes):
-                out += part.decode(enc or "utf-8", errors="ignore")
-            else:
-                out += part
-        return out
-    except Exception:
-        return s or ""
-
-
-def get_current_user_cookie_dep(request: Request):
+def get_user(request: Request):
     return get_current_user_cookie(request)
 
 
 @router.get("/", response_class=HTMLResponse)
-def mail_index(request: Request, user=Depends(get_current_user_cookie_dep)):
+def mail_index(request: Request, user=Depends(get_user)):
     linked = _load_linked().get(str(user["sub"]))
-    ctx = {
-        "request": request,
-        "page_title": "Casillas de correo",
-        "current_user": user,
-        "defaults": _defaults_from_env(),
-        "linked": linked,
-    }
-    ctx["lang"] = get_lang(request)
-    return templates.TemplateResponse("mail.html", ctx)
+    return templates.TemplateResponse(
+        "mail.html",
+        {
+            "request": request,
+            "current_user": user,
+            "defaults": _defaults_from_env(),
+            "linked": linked,
+        },
+    )
 
 
 @router.get("/scanner", response_class=HTMLResponse)
-def mail_scanner(request: Request, user=Depends(get_current_user_cookie_dep)):
+def mail_scanner(request: Request, user=Depends(get_user)):
     linked = _load_linked().get(str(user["sub"]))
-    ctx = {
-        "request": request,
-        "page_title": "Scanner de correos",
-        "current_user": user,
-        "defaults": _defaults_from_env(),
-        "linked": linked,
-    }
-    ctx["lang"] = get_lang(request)
-    return templates.TemplateResponse("mail_scanner.html", ctx)
+    return templates.TemplateResponse(
+        "mail_scanner.html",
+        {
+            "request": request,
+            "current_user": user,
+            "defaults": _defaults_from_env(),
+            "linked": linked,
+        },
+    )
 
 
 @router.get("/settings", response_class=HTMLResponse)
-def mail_settings(request: Request, user=Depends(get_current_user_cookie_dep)):
+def mail_settings(request: Request, user=Depends(get_user)):
     linked = _load_linked().get(str(user["sub"]))
-    ctx = {
-        "request": request,
-        "page_title": "Configuración IMAP",
-        "current_user": user,
-        "defaults": _defaults_from_env(),
-        "linked": linked,
-    }
-    ctx["lang"] = get_lang(request)
-    return templates.TemplateResponse("mail_settings.html", ctx)
-
-# (el resto del archivo puede seguir igual que ya lo tenías)
+    return templates.TemplateResponse(
+        "mail_settings.html",
+        {
+            "request": request,
+            "current_user": user,
+            "defaults": _defaults_from_env(),
+            "linked": linked,
+        },
+    )
