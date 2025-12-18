@@ -1,3 +1,4 @@
+# app/i18n/__init__.py
 from __future__ import annotations
 
 import json
@@ -7,7 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from fastapi import Request
-from starlette.responses import Response
 
 SUPPORTED_LANGS: Tuple[str, ...] = ("es", "en")
 DEFAULT_LANG = (os.getenv("DEFAULT_LANG", "es") or "es").lower()[:2]
@@ -49,56 +49,17 @@ def get_lang(request: Request, default: str | None = None) -> str:
     return fallback
 
 
-def get_lang_from_request(request: Request, default: str | None = None) -> str:
-    return get_lang(request, default=default)
-
-
-def set_lang_cookie(response: Response, lang: str) -> None:
-    lang2 = (lang or DEFAULT_LANG).lower()[:2]
-    if lang2 not in SUPPORTED_LANGS:
-        lang2 = DEFAULT_LANG
-
-    response.set_cookie(
-        key="lang",
-        value=lang2,
-        max_age=60 * 60 * 24 * 365,
-        httponly=False,
-        samesite="lax",
-        secure=bool(os.getenv("COOKIE_SECURE", "1") in ("1", "true", "yes", "on")),
-        path="/",
-    )
-
-
 def _candidate_locale_dirs() -> list[Path]:
-    here = Path(__file__).resolve().parent
-    app_dir = here.parent  # app/
+    here = Path(__file__).resolve().parent  # app/i18n
+    app_dir = here.parent                   # app/
+    # directorios típicos
     return [
-        here / "locales",           # app/i18n/locales
-        app_dir / "locales",        # app/locales
+        here / "locales",          # app/i18n/locales
+        app_dir / "i18n/locales",  # app/i18n/locales (redundante pero ok)
+        app_dir / "locales",       # app/locales
         Path("app/i18n/locales"),
         Path("app/locales"),
     ]
-
-
-def _flatten_json(data: Any, prefix: str = "") -> Dict[str, str]:
-    """
-    Convierte JSON anidado a claves tipo dot:
-    { "dashboard": { "hello": "Hola" } } => { "dashboard.hello": "Hola" }
-    """
-    out: Dict[str, str] = {}
-
-    if isinstance(data, dict):
-        for k, v in data.items():
-            if not isinstance(k, str):
-                continue
-            new_prefix = f"{prefix}.{k}" if prefix else k
-            out.update(_flatten_json(v, new_prefix))
-        return out
-
-    # hojas (solo strings)
-    if isinstance(data, str) and prefix:
-        out[prefix] = data
-    return out
 
 
 def _read_json_file(path: Path) -> Dict[str, str]:
@@ -106,9 +67,14 @@ def _read_json_file(path: Path) -> Dict[str, str]:
         if not path.exists():
             return {}
         raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        # soporta dict plano o anidado
-        return _flatten_json(data)
+        data = json.loads(raw)  # <- si tu JSON está roto, cae acá y devuelve {}
+        if not isinstance(data, dict):
+            return {}
+        out: Dict[str, str] = {}
+        for k, v in data.items():
+            if isinstance(k, str) and isinstance(v, str):
+                out[k] = v
+        return out
     except Exception:
         return {}
 
@@ -126,11 +92,16 @@ def _load_translations() -> Dict[str, Dict[str, str]]:
     return {"es": {}, "en": {}}
 
 
+def clear_cache() -> None:
+    _load_translations.cache_clear()
+
+
 def t(lang: Any, key: str, **fmt: Any) -> str:
     try:
         lang2 = str(lang or DEFAULT_LANG).lower()[:2]
     except Exception:
         lang2 = DEFAULT_LANG
+
     if lang2 not in SUPPORTED_LANGS:
         lang2 = DEFAULT_LANG
 
@@ -145,10 +116,6 @@ def t(lang: Any, key: str, **fmt: Any) -> str:
     return text
 
 
-def jinja_t(lang: Any, key: str, **fmt: Any) -> str:
-    return t(lang, key, **fmt)
-
-
 def i18n_debug() -> Dict[str, Any]:
     tr = _load_translations()
     return {
@@ -156,6 +123,4 @@ def i18n_debug() -> Dict[str, Any]:
         "langs": list(SUPPORTED_LANGS),
         "counts": {k: len(v or {}) for k, v in tr.items()},
         "searched_dirs": [str(p) for p in _candidate_locale_dirs()],
-        "example_dashboard_hello_es": tr.get("es", {}).get("dashboard.hello"),
-        "example_dashboard_hello_en": tr.get("en", {}).get("dashboard.hello"),
     }
