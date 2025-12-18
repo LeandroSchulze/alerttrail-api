@@ -1,118 +1,95 @@
 # app/main.py
+from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
+from starlette.middleware.cors import CORSMiddleware
 
-# Seguridad (cookie JWT)
+from app.i18n import get_lang_from_request, jinja_t, set_lang_cookie
 from app.security import get_current_user_cookie
 
-# i18n (ajustá estos imports si tu módulo usa otro nombre)
-# La idea es que existan: get_lang_from_request(request) -> "es"/"en"
-#                        set_lang_cookie(response, "es"/"en")
-#                        jinja_t(lang, key, **kwargs) -> str
-from app.i18n import get_lang_from_request, set_lang_cookie, jinja_t
-
-# Routers (ajustá los que existan en tu proyecto)
-from app.routers import auth, analysis, mail, admin
-# si tenés org/payments/push, agregalos:
-# from app.routers import org, payments, push
+# Routers
+from app.routers import auth, analysis, mail, admin  # ajustá si tenés otros
 
 
-BASE_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = BASE_DIR / "templates"
-STATIC_DIR = BASE_DIR / "static"
+APP_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = APP_DIR / "templates"
+STATIC_DIR = APP_DIR / "static"
 
-
-def _reports_dir() -> Path:
-    # Ideal para Render: /var/data/reports
-    return Path(os.getenv("REPORTS_DIR", str(BASE_DIR / ".." / "reports"))).resolve()
-
+REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="AlertTrail", version="1.0.0")
 
-# -------------------------
-# Templates (CLAVE para auth.py)
-# -------------------------
+# CORS (si lo necesitás)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Templates + globals Jinja
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates.env.globals["t"] = jinja_t  # en Jinja: {{ t(lang, "key") }}
 
-# Exponemos helpers a Jinja
-templates.env.globals["t"] = jinja_t  # en Jinja vas a usar: {{ t(lang, "key") }}
-templates.env.globals["jinja_t"] = jinja_t
-
-# Guardamos templates en app.state para que los routers NO importen main.py
+# Guardamos templates en app.state para routers (evita circular imports)
 app.state.templates = templates
 
-
-# -------------------------
-# Static + Reports
-# -------------------------
+# Static y Reports
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-REPORTS_DIR = _reports_dir()
-REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
-
-# -------------------------
-# Middleware simple: lang en request.state
-# -------------------------
-@app.middleware("http")
-async def lang_middleware(request: Request, call_next):
-    lang = get_lang_from_request(request) or "es"
-    request.state.lang = lang
-    response = await call_next(request)
-    return response
+# Include routers
+app.include_router(auth.router)
+app.include_router(analysis.router)
+app.include_router(mail.router)
+app.include_router(admin.router)
 
 
-# -------------------------
-# Rutas base
-# -------------------------
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"status": "ok"}
 
 
 @app.get("/")
 def root():
-    # Si hay sesión, al dashboard; si no, al login
     return RedirectResponse(url="/dashboard", status_code=302)
 
 
+# Alias /login -> /auth/login (porque el browser estaba yendo a /login)
 @app.get("/login")
 def login_alias():
-    # Alias para evitar 404 si algún redirect viejo apunta a /login
     return RedirectResponse(url="/auth/login", status_code=302)
 
 
 @app.get("/set-lang/{lang}")
-def set_lang(lang: str, request: Request):
-    # Alternativa simple para toggle (si ya tenés una ruta en auth.py, podés borrar esto)
-    if lang not in ("es", "en"):
-        lang = "es"
-    resp = RedirectResponse(url=request.headers.get("referer", "/dashboard"), status_code=302)
+def set_lang(lang: str):
+    resp = RedirectResponse(url="/dashboard", status_code=302)
     set_lang_cookie(resp, lang)
     return resp
 
 
 @app.get("/dashboard")
 def dashboard(request: Request):
-    user = get_current_user_cookie(request)
-
-    if not user:
+    # si no está logueado => redirect a login
+    try:
+        user = get_current_user_cookie(request)
+    except Exception:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    lang = getattr(request.state, "lang", "es")
+    lang = get_lang_from_request(request)
 
-    # IMPORTANTE:
-    # Tu dashboard.html usa `user` y también a veces `current_user`.
-    # Para evitar el error 'current_user is undefined', pasamos ambos.
-    return templates.TemplateResponse(
+    # Si el lang vino por query, seteamos cookie para persistir
+    qlang = (request.query_params.get("lang") or "").strip().lower()[:2]
+    resp = templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
@@ -121,20 +98,13 @@ def dashboard(request: Request):
             "current_user": user,
         },
     )
+    if qlang in ("es", "en"):
+        set_lang_cookie(resp, qlang)
+    return resp
 
 
-# -------------------------
-# Routers
-# -------------------------
-# Auth (login web, API auth, logout, etc.)
-app.include_router(auth.router)
-
-# Resto (ajustá según tu proyecto)
-app.include_router(analysis.router)
-app.include_router(mail.router)
-app.include_router(admin.router)
-
-# si existen:
-# app.include_router(org.router)
-# app.include_router(payments.router)
-# app.include_router(push.router)
+# Debug rápido para ver si cargan traducciones
+@app.get("/_debug/i18n")
+def debug_i18n():
+    from app.i18n import i18n_debug
+    return JSONResponse(i18n_debug())
