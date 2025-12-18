@@ -107,6 +107,11 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie)):
     plan = (user or {}).get("plan") or "FREE"
     if str(role).lower() == "admin":
         plan = "PRO"
+        # 👇 clave para que el template no muestre FREE
+        try:
+            user["plan"] = "PRO"
+        except Exception:
+            pass
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -116,10 +121,10 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie)):
             "t": t,
             "current_user": user,
             "user": user,
-            "me": user,
             "plan": plan,
         },
     )
+
 
 
 @app.get("/health", include_in_schema=False)
