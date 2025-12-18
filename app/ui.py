@@ -1,31 +1,14 @@
 # app/ui.py
-from __future__ import annotations
-
 from pathlib import Path
-from fastapi.templating import Jinja2Templates
+from starlette.templating import Jinja2Templates
 
-from app.i18n import get_lang, t
+from app.i18n import t, get_lang, SUPPORTED_LANGS, DEFAULT_LANG
 
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-class TemplatesWithDefaults(Jinja2Templates):
-    """TemplateResponse() que SIEMPRE agrega lang y expone t() en contexto."""
-
-    def TemplateResponse(self, name: str, context: dict, *args, **kwargs):
-        try:
-            request = context.get("request")
-            if request and "lang" not in context:
-                context["lang"] = get_lang(request)
-        except Exception:
-            pass
-
-        context.setdefault("t", t)
-        return super().TemplateResponse(name, context, *args, **kwargs)
-
-
-TEMPLATES_DIR = "app/templates" if Path("app/templates").exists() else "templates"
-templates = TemplatesWithDefaults(directory=TEMPLATES_DIR)
-
-try:
-    templates.env.globals["t"] = t
-except Exception:
-    pass
+# Globals disponibles en todos los templates Jinja:
+templates.env.globals["t"] = t
+templates.env.globals["get_lang"] = get_lang
+templates.env.globals["SUPPORTED_LANGS"] = SUPPORTED_LANGS
+templates.env.globals["DEFAULT_LANG"] = DEFAULT_LANG
