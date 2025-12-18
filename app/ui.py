@@ -7,7 +7,6 @@ from app.i18n import t, get_lang, SUPPORTED_LANGS, DEFAULT_LANG
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Globals disponibles en todos los templates Jinja:
 templates.env.globals["t"] = t
 templates.env.globals["get_lang"] = get_lang
 templates.env.globals["SUPPORTED_LANGS"] = SUPPORTED_LANGS
