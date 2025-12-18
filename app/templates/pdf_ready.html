@@ -1,9 +1,22 @@
-<!doctype html><html><head><meta charset="utf-8"><title>PDF listo</title>
-<link rel="stylesheet" href="/static/style.css"></head><body>
-<div class="card">
-  <h1>PDF generado ✅</h1>
-  <p>Tu reporte está listo para descargar.</p>
-  <p><a class="btn" href="{{ url }}">Descargar PDF</a></p>
-  <p><a href="/dashboard">Volver al dashboard</a></p>
-</div>
-</body></html>
+<!doctype html>
+<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ "PDF ready" if (lang or "es") == "en" else "PDF listo" }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="card">
+    <h1>{{ "PDF generated ✅" if (lang or "es") == "en" else "PDF generado ✅" }}</h1>
+
+    <p>
+      {{ "Your report is ready to download." if (lang or "es") == "en"
+         else "Tu reporte está listo para descargar." }}
+    </p>
+
+    <p><a class="btn" href="{{ url }}">{{ "Download PDF" if (lang or "es") == "en" else "Descargar PDF" }}</a></p>
+    <p><a href="/dashboard">{{ "Back to dashboard" if (lang or "es") == "en" else "Volver al dashboard" }}</a></p>
+  </div>
+</body>
+</html>
