@@ -1,5 +1,5 @@
 # app/routers/mail.py
-import os, json, imaplib, email
+import os, json
 from pathlib import Path
 from typing import Dict, Any
 
@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
 
 from app.security import get_current_user_cookie
-from app.ui import templates
+from app.i18n import get_lang_from_request
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
@@ -15,6 +15,13 @@ MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
+
+
+def _templates(request: Request):
+    tpl = getattr(request.app.state, "templates", None)
+    if tpl is None:
+        raise RuntimeError("templates no inicializado en app.state (main.py)")
+    return tpl
 
 
 def _load_linked() -> Dict[str, Any]:
@@ -42,11 +49,15 @@ def get_user(request: Request):
 
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_user)):
-    linked = _load_linked().get(str(user["sub"]))
-    return templates.TemplateResponse(
+    tpl = _templates(request)
+    lang = get_lang_from_request(request) or "es"
+    linked = _load_linked().get(str(user.get("sub")))
+    return tpl.TemplateResponse(
         "mail.html",
         {
             "request": request,
+            "lang": lang,
+            "user": user,
             "current_user": user,
             "defaults": _defaults_from_env(),
             "linked": linked,
@@ -56,11 +67,15 @@ def mail_index(request: Request, user=Depends(get_user)):
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
-    linked = _load_linked().get(str(user["sub"]))
-    return templates.TemplateResponse(
+    tpl = _templates(request)
+    lang = get_lang_from_request(request) or "es"
+    linked = _load_linked().get(str(user.get("sub")))
+    return tpl.TemplateResponse(
         "mail_scanner.html",
         {
             "request": request,
+            "lang": lang,
+            "user": user,
             "current_user": user,
             "defaults": _defaults_from_env(),
             "linked": linked,
@@ -70,11 +85,15 @@ def mail_scanner(request: Request, user=Depends(get_user)):
 
 @router.get("/settings", response_class=HTMLResponse)
 def mail_settings(request: Request, user=Depends(get_user)):
-    linked = _load_linked().get(str(user["sub"]))
-    return templates.TemplateResponse(
+    tpl = _templates(request)
+    lang = get_lang_from_request(request) or "es"
+    linked = _load_linked().get(str(user.get("sub")))
+    return tpl.TemplateResponse(
         "mail_settings.html",
         {
             "request": request,
+            "lang": lang,
+            "user": user,
             "current_user": user,
             "defaults": _defaults_from_env(),
             "linked": linked,
