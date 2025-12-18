@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from fastapi import Request
+from starlette.responses import Response
 
 SUPPORTED_LANGS: Tuple[str, ...] = ("es", "en")
 DEFAULT_LANG = (os.getenv("DEFAULT_LANG", "es") or "es").lower()[:2]
@@ -49,16 +50,38 @@ def get_lang(request: Request, default: str | None = None) -> str:
     return fallback
 
 
+# --- Compat: nombres viejos usados por main.py / templates antiguos ---
+def get_lang_from_request(request: Request, default: str | None = None) -> str:
+    return get_lang(request, default=default)
+
+
+def set_lang_cookie(resp: Response, lang: str) -> Response:
+    lang2 = (lang or "").lower()[:2]
+    if lang2 in SUPPORTED_LANGS:
+        resp.set_cookie(
+            "lang",
+            lang2,
+            httponly=False,
+            samesite="lax",
+            max_age=60 * 60 * 24 * 365,
+        )
+    return resp
+
+
+def jinja_t(lang: Any, key: str, **fmt: Any) -> str:
+    # wrapper amigable para Jinja
+    return t(lang, key, **fmt)
+
+
 def _candidate_locale_dirs() -> list[Path]:
-    here = Path(__file__).resolve().parent  # app/i18n
-    app_dir = here.parent                   # app/
-    # directorios típicos
+    here = Path(__file__).resolve().parent
+    project_root_guess = here.parent.parent  # app/
     return [
-        here / "locales",          # app/i18n/locales
-        app_dir / "i18n/locales",  # app/i18n/locales (redundante pero ok)
-        app_dir / "locales",       # app/locales
-        Path("app/i18n/locales"),
-        Path("app/locales"),
+        here / "locales",                         # app/i18n/locales
+        project_root_guess / "i18n" / "locales",  # app/i18n/locales (alternativa)
+        project_root_guess / "locales",           # app/locales
+        Path("app/i18n/locales"),                 # relativo
+        Path("app/locales"),                      # relativo
     ]
 
 
@@ -67,7 +90,7 @@ def _read_json_file(path: Path) -> Dict[str, str]:
         if not path.exists():
             return {}
         raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)  # <- si tu JSON está roto, cae acá y devuelve {}
+        data = json.loads(raw)
         if not isinstance(data, dict):
             return {}
         out: Dict[str, str] = {}
@@ -85,15 +108,10 @@ def _load_translations() -> Dict[str, Dict[str, str]]:
         es_path = d / "es.json"
         en_path = d / "en.json"
         if es_path.exists() or en_path.exists():
-            return {
-                "es": _read_json_file(es_path),
-                "en": _read_json_file(en_path),
-            }
+            es = _read_json_file(es_path)
+            en = _read_json_file(en_path)
+            return {"es": es, "en": en}
     return {"es": {}, "en": {}}
-
-
-def clear_cache() -> None:
-    _load_translations.cache_clear()
 
 
 def t(lang: Any, key: str, **fmt: Any) -> str:
@@ -101,7 +119,6 @@ def t(lang: Any, key: str, **fmt: Any) -> str:
         lang2 = str(lang or DEFAULT_LANG).lower()[:2]
     except Exception:
         lang2 = DEFAULT_LANG
-
     if lang2 not in SUPPORTED_LANGS:
         lang2 = DEFAULT_LANG
 
@@ -122,5 +139,7 @@ def i18n_debug() -> Dict[str, Any]:
         "default_lang": DEFAULT_LANG,
         "langs": list(SUPPORTED_LANGS),
         "counts": {k: len(v or {}) for k, v in tr.items()},
+        "sample_es": {k: tr["es"].get(k) for k in list(tr["es"].keys())[:5]},
+        "sample_en": {k: tr["en"].get(k) for k in list(tr["en"].keys())[:5]},
         "searched_dirs": [str(p) for p in _candidate_locale_dirs()],
     }
