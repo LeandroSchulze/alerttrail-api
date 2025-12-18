@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from fastapi import Request
+from starlette.responses import Response
 
 SUPPORTED_LANGS: Tuple[str, ...] = ("es", "en")
 DEFAULT_LANG = (os.getenv("DEFAULT_LANG", "es") or "es").lower()[:2]
@@ -15,6 +16,9 @@ if DEFAULT_LANG not in SUPPORTED_LANGS:
     DEFAULT_LANG = "es"
 
 
+# -------------------------
+# Lectura de idioma
+# -------------------------
 def get_lang(request: Request, default: str | None = None) -> str:
     fallback = (default or DEFAULT_LANG).lower()[:2]
     if fallback not in SUPPORTED_LANGS:
@@ -49,19 +53,43 @@ def get_lang(request: Request, default: str | None = None) -> str:
     return fallback
 
 
+# Alias con el nombre que espera main.py
+def get_lang_from_request(request: Request, default: str | None = None) -> str:
+    return get_lang(request, default=default)
+
+
+# -------------------------
+# Cookie de idioma
+# -------------------------
+def set_lang_cookie(response: Response, lang: str) -> None:
+    lang2 = (lang or DEFAULT_LANG).lower()[:2]
+    if lang2 not in SUPPORTED_LANGS:
+        lang2 = DEFAULT_LANG
+
+    # 1 año, Lax, seguro solo en https
+    response.set_cookie(
+        key="lang",
+        value=lang2,
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="lax",
+        secure=bool(os.getenv("COOKIE_SECURE", "1") in ("1", "true", "yes", "on")),
+        path="/",
+    )
+
+
+# -------------------------
+# Carga de traducciones (JSON)
+# -------------------------
 def _candidate_locale_dirs() -> list[Path]:
-    """
-    Buscamos en varias rutas comunes para evitar 'volvimos para atrás'
-    cuando el deploy cambia el cwd o la estructura.
-    """
     here = Path(__file__).resolve().parent
     project_root_guess = here.parent.parent  # app/
     return [
         here / "locales",                         # app/i18n/locales
-        project_root_guess / "i18n" / "locales",  # app/i18n/locales (alternativa)
+        project_root_guess / "i18n" / "locales",  # app/i18n/locales (alt)
         project_root_guess / "locales",           # app/locales
-        Path("app/i18n/locales"),                 # relativo
-        Path("app/locales"),                      # relativo
+        Path("app/i18n/locales"),
+        Path("app/locales"),
     ]
 
 
@@ -79,15 +107,11 @@ def _read_json_file(path: Path) -> Dict[str, str]:
                 out[k] = v
         return out
     except Exception:
-        # JSON roto => vacío (t() devuelve key)
         return {}
 
 
 @lru_cache(maxsize=8)
 def _load_translations() -> Dict[str, Dict[str, str]]:
-    """
-    Carga es.json/en.json desde el primer dir válido encontrado.
-    """
     for d in _candidate_locale_dirs():
         es_path = d / "es.json"
         en_path = d / "en.json"
@@ -95,11 +119,12 @@ def _load_translations() -> Dict[str, Dict[str, str]]:
             es = _read_json_file(es_path)
             en = _read_json_file(en_path)
             return {"es": es, "en": en}
-
-    # no encontramos nada
     return {"es": {}, "en": {}}
 
 
+# -------------------------
+# Traducción (lo que usás en Jinja)
+# -------------------------
 def t(lang: Any, key: str, **fmt: Any) -> str:
     try:
         lang2 = str(lang or DEFAULT_LANG).lower()[:2]
@@ -117,6 +142,11 @@ def t(lang: Any, key: str, **fmt: Any) -> str:
         except Exception:
             return text
     return text
+
+
+# Alias con el nombre que tu main.py mete como global en Jinja
+def jinja_t(lang: Any, key: str, **fmt: Any) -> str:
+    return t(lang, key, **fmt)
 
 
 def i18n_debug() -> Dict[str, Any]:
