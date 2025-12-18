@@ -75,7 +75,6 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     )
 
 
-# Si no tenés mail_settings.html, mejor no romper:
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
     return RedirectResponse(url="/mail", status_code=302)
