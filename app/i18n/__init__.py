@@ -1,4 +1,3 @@
-# app/i18n/__init__.py
 from __future__ import annotations
 
 import json
@@ -16,9 +15,6 @@ if DEFAULT_LANG not in SUPPORTED_LANGS:
     DEFAULT_LANG = "es"
 
 
-# -------------------------
-# Lectura de idioma
-# -------------------------
 def get_lang(request: Request, default: str | None = None) -> str:
     fallback = (default or DEFAULT_LANG).lower()[:2]
     if fallback not in SUPPORTED_LANGS:
@@ -53,20 +49,15 @@ def get_lang(request: Request, default: str | None = None) -> str:
     return fallback
 
 
-# Alias con el nombre que espera main.py
 def get_lang_from_request(request: Request, default: str | None = None) -> str:
     return get_lang(request, default=default)
 
 
-# -------------------------
-# Cookie de idioma
-# -------------------------
 def set_lang_cookie(response: Response, lang: str) -> None:
     lang2 = (lang or DEFAULT_LANG).lower()[:2]
     if lang2 not in SUPPORTED_LANGS:
         lang2 = DEFAULT_LANG
 
-    # 1 año, Lax, seguro solo en https
     response.set_cookie(
         key="lang",
         value=lang2,
@@ -78,19 +69,36 @@ def set_lang_cookie(response: Response, lang: str) -> None:
     )
 
 
-# -------------------------
-# Carga de traducciones (JSON)
-# -------------------------
 def _candidate_locale_dirs() -> list[Path]:
     here = Path(__file__).resolve().parent
-    project_root_guess = here.parent.parent  # app/
+    app_dir = here.parent  # app/
     return [
-        here / "locales",                         # app/i18n/locales
-        project_root_guess / "i18n" / "locales",  # app/i18n/locales (alt)
-        project_root_guess / "locales",           # app/locales
+        here / "locales",           # app/i18n/locales
+        app_dir / "locales",        # app/locales
         Path("app/i18n/locales"),
         Path("app/locales"),
     ]
+
+
+def _flatten_json(data: Any, prefix: str = "") -> Dict[str, str]:
+    """
+    Convierte JSON anidado a claves tipo dot:
+    { "dashboard": { "hello": "Hola" } } => { "dashboard.hello": "Hola" }
+    """
+    out: Dict[str, str] = {}
+
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if not isinstance(k, str):
+                continue
+            new_prefix = f"{prefix}.{k}" if prefix else k
+            out.update(_flatten_json(v, new_prefix))
+        return out
+
+    # hojas (solo strings)
+    if isinstance(data, str) and prefix:
+        out[prefix] = data
+    return out
 
 
 def _read_json_file(path: Path) -> Dict[str, str]:
@@ -99,13 +107,8 @@ def _read_json_file(path: Path) -> Dict[str, str]:
             return {}
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}
-        out: Dict[str, str] = {}
-        for k, v in data.items():
-            if isinstance(k, str) and isinstance(v, str):
-                out[k] = v
-        return out
+        # soporta dict plano o anidado
+        return _flatten_json(data)
     except Exception:
         return {}
 
@@ -116,15 +119,13 @@ def _load_translations() -> Dict[str, Dict[str, str]]:
         es_path = d / "es.json"
         en_path = d / "en.json"
         if es_path.exists() or en_path.exists():
-            es = _read_json_file(es_path)
-            en = _read_json_file(en_path)
-            return {"es": es, "en": en}
+            return {
+                "es": _read_json_file(es_path),
+                "en": _read_json_file(en_path),
+            }
     return {"es": {}, "en": {}}
 
 
-# -------------------------
-# Traducción (lo que usás en Jinja)
-# -------------------------
 def t(lang: Any, key: str, **fmt: Any) -> str:
     try:
         lang2 = str(lang or DEFAULT_LANG).lower()[:2]
@@ -144,7 +145,6 @@ def t(lang: Any, key: str, **fmt: Any) -> str:
     return text
 
 
-# Alias con el nombre que tu main.py mete como global en Jinja
 def jinja_t(lang: Any, key: str, **fmt: Any) -> str:
     return t(lang, key, **fmt)
 
@@ -155,7 +155,7 @@ def i18n_debug() -> Dict[str, Any]:
         "default_lang": DEFAULT_LANG,
         "langs": list(SUPPORTED_LANGS),
         "counts": {k: len(v or {}) for k, v in tr.items()},
-        "sample_es": {k: tr["es"].get(k) for k in list(tr["es"].keys())[:5]},
-        "sample_en": {k: tr["en"].get(k) for k in list(tr["en"].keys())[:5]},
         "searched_dirs": [str(p) for p in _candidate_locale_dirs()],
+        "example_dashboard_hello_es": tr.get("es", {}).get("dashboard.hello"),
+        "example_dashboard_hello_en": tr.get("en", {}).get("dashboard.hello"),
     }
