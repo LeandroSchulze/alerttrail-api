@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.security import get_current_user_cookie
 from app.ui import templates
@@ -41,31 +41,41 @@ def get_user(request: Request):
     return get_current_user_cookie(request)
 
 
-def _ctx(request: Request, user: dict, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    lang = get_lang(request)
-    base = {
-        "request": request,
-        "lang": lang,
-        "t": t,
-        "current_user": user,
-        "defaults": _defaults_from_env(),
-        "linked": _load_linked().get(str(user.get("sub"))),
-    }
-    if extra:
-        base.update(extra)
-    return base
-
-
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_user)):
-    return templates.TemplateResponse("mail.html", _ctx(request, user))
+    lang = get_lang(request)
+    linked = _load_linked().get(str(user["sub"]))
+    return templates.TemplateResponse(
+        "mail.html",
+        {
+            "request": request,
+            "lang": lang,
+            "t": t,
+            "current_user": user,
+            "defaults": _defaults_from_env(),
+            "linked": linked,
+        },
+    )
 
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
-    return templates.TemplateResponse("mail_scanner.html", _ctx(request, user))
+    lang = get_lang(request)
+    linked = _load_linked().get(str(user["sub"]))
+    return templates.TemplateResponse(
+        "mail_scanner.html",
+        {
+            "request": request,
+            "lang": lang,
+            "t": t,
+            "current_user": user,
+            "defaults": _defaults_from_env(),
+            "linked": linked,
+        },
+    )
 
 
-@router.get("/settings", response_class=HTMLResponse)
-def mail_settings(request: Request, user=Depends(get_user)):
-    return templates.TemplateResponse("mail_settings.html", _ctx(request, user))
+# Si no tenés mail_settings.html, mejor no romper:
+@router.get("/settings", include_in_schema=False)
+def mail_settings_compat():
+    return RedirectResponse(url="/mail", status_code=302)
