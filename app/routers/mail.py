@@ -37,6 +37,17 @@ def _defaults_from_env() -> Dict[str, Any]:
     }
 
 
+def _compute_plan(user: Dict[str, Any]) -> str:
+    role = (user or {}).get("role") or ""
+    if str(role).lower() == "admin":
+        try:
+            user["plan"] = "PRO"
+        except Exception:
+            pass
+        return "PRO"
+    return (user or {}).get("plan") or "FREE"
+
+
 def get_user(request: Request):
     return get_current_user_cookie(request)
 
@@ -44,6 +55,7 @@ def get_user(request: Request):
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_user)):
     lang = get_lang(request)
+    plan = _compute_plan(user)
     linked = _load_linked().get(str(user["sub"]))
     return templates.TemplateResponse(
         "mail.html",
@@ -52,6 +64,8 @@ def mail_index(request: Request, user=Depends(get_user)):
             "lang": lang,
             "t": t,
             "current_user": user,
+            "user": user,
+            "plan": plan,
             "defaults": _defaults_from_env(),
             "linked": linked,
         },
@@ -61,6 +75,7 @@ def mail_index(request: Request, user=Depends(get_user)):
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
     lang = get_lang(request)
+    plan = _compute_plan(user)
     linked = _load_linked().get(str(user["sub"]))
     return templates.TemplateResponse(
         "mail_scanner.html",
@@ -69,6 +84,8 @@ def mail_scanner(request: Request, user=Depends(get_user)):
             "lang": lang,
             "t": t,
             "current_user": user,
+            "user": user,
+            "plan": plan,
             "defaults": _defaults_from_env(),
             "linked": linked,
         },
