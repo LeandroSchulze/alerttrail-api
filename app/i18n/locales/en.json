@@ -170,6 +170,7 @@
   "mail.scanner_subtitle_env": "Uses IMAP environment variables. To change host/user/password, edit ENV and redeploy.",
   "mail.scanner_no_saved_prefix": "No mailbox saved in",
   "mail.scanner_no_saved_suffix": "(optional).",
-  "mail.scan_now": "Run scan now"
+  "mail.scan_now": "Run scan now",
+  "mail.email": "Email address",
 }
 
