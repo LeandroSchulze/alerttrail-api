@@ -54,6 +54,16 @@ app.include_router(reports.router)
 def health():
     return {"ok": True}
 
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/", include_in_schema=False)
+@app.head("/", include_in_schema=False)
+def root():
+    # Root del dominio → mandamos al dashboard (que ya maneja login)
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+
 # -------------------------------------------------------------------
 # Language
 # -------------------------------------------------------------------
