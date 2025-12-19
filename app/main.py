@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from app.ui import templates
 from app.i18n import get_lang_from_request, jinja_t, set_lang_cookie
@@ -16,12 +17,26 @@ from app.routers import alerts, billing, tools, reports
 
 app = FastAPI(title="AlertTrail API")
 
-# Static
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-# IMPORTANT: acá se sirven los PDFs generados como archivos estáticos
-app.mount("/reports", StaticFiles(directory="app/reports"), name="reports")
+# -------------------------------------------------------------------
+# Static files
+# -------------------------------------------------------------------
 
+# Static assets (CSS, JS, images)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+# IMPORTANT:
+# En producción (Render) la carpeta puede no existir.
+# Hay que crearla antes de montar StaticFiles o Uvicorn crashea.
+REPORTS_DIR = Path("app/reports")
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# PDFs generados (servidos como archivos estáticos)
+app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+
+# -------------------------------------------------------------------
 # Routers
+# -------------------------------------------------------------------
+
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
@@ -31,16 +46,21 @@ app.include_router(tools.router)
 app.include_router(billing.router)
 app.include_router(reports.router)
 
+# -------------------------------------------------------------------
+# Health
+# -------------------------------------------------------------------
 
 @app.get("/health")
 def health():
     return {"ok": True}
 
+# -------------------------------------------------------------------
+# Language
+# -------------------------------------------------------------------
 
 @app.get("/set-lang/{lang}", include_in_schema=False)
 def set_lang(lang: str, next: str = "/dashboard"):
     """Set language cookie and redirect.
-
     Path variant: /set-lang/en?next=/dashboard
     """
     resp = RedirectResponse(url=next or "/dashboard", status_code=302)
@@ -55,6 +75,9 @@ def set_lang_q(lang: str = "es", next: str = "/dashboard"):
     set_lang_cookie(resp, lang)
     return resp
 
+# -------------------------------------------------------------------
+# Dashboard
+# -------------------------------------------------------------------
 
 @app.get("/dashboard")
 def dashboard(request: Request):
@@ -66,7 +89,7 @@ def dashboard(request: Request):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    # Enrich user info from DB (plan/is_pro/is_admin) so the UI can show the real plan.
+    # Enrich user info from DB (plan/is_pro/is_admin)
     db = SessionLocal()
     try:
         db_user = None
@@ -93,7 +116,7 @@ def dashboard(request: Request):
             else:
                 plan = "PRO" if (is_pro or db_plan == "PRO") else "FREE"
 
-            # Mejorar nombre/email si viene vacío en token
+            # Completar datos si el token vino incompleto
             if not user.get("name") and getattr(db_user, "name", None):
                 user["name"] = db_user.name
             if not user.get("email") and getattr(db_user, "email", None):
