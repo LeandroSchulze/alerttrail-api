@@ -12,12 +12,7 @@ except Exception:
     def get_current_user_cookie():
         return None
 
-# ✅ i18n
-try:
-    from app.i18n import get_lang
-except Exception:
-    def get_lang(request: Request, default=None) -> str:
-        return "es"
+from app.i18n import get_lang_from_request
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
@@ -114,11 +109,12 @@ def analyze_log(text: str) -> Dict[str, Any]:
     }
 
 
-def _render_html(summary: Dict[str, Any], lang: str) -> str:
-    en = (lang == "en")
+def _tr(lang: str, es: str, en: str) -> str:
+    return en if (lang or "").lower().startswith("en") else es
 
-    def row(k, v):
-        return f"<tr><td>{k}</td><td style='text-align:right'>{v}</td></tr>"
+
+def _render_html(summary: Dict[str, Any], lang: str = "es") -> str:
+    def row(k, v): return f"<tr><td>{k}</td><td style='text-align:right'>{v}</td></tr>"
 
     classes = "".join(row(k, v) for k, v in summary["classes"].items())
     status = "".join(row(k, v) for k, v in summary["by_status"].items())
@@ -129,19 +125,18 @@ def _render_html(summary: Dict[str, Any], lang: str) -> str:
     unauth = "".join(f"<tr><td>{ip}</td><td style='text-align:right'>{c}</td></tr>" for ip, c in summary["unauth_401"])
     admin403 = "".join(f"<tr><td>{ip}</td><td style='text-align:right'>{c}</td></tr>" for ip, c in summary["admin_403"])
 
-    title = "Analysis result" if en else "Resultado de análisis"
-    h1 = "AlertTrail Analysis" if en else "AlertTrail Análisis"
-    total_lbl = "Total requests" if en else "Total de requests"
-    classes_lbl = "Classes" if en else "Clases"
-    status_lbl = "Status codes" if en else "Estados"
-    top_paths_lbl = "Top paths" if en else "Top paths"
-    top_ips_lbl = "Top IPs" if en else "Top IPs"
-    unauth_lbl = "Failed logins (401) by IP" if en else "Intentos de login fallidos (401) por IP"
-    admin_lbl = "Access to /admin with 403 by IP" if en else "Accesos a /admin con 403 por IP"
-    errors_lbl = "Errors" if en else "Errores"
-    sqli_lbl = "Possible SQLi" if en else "Posibles SQLi"
-    probes_lbl = "Sensitive file probes" if en else "Probes de archivos sensibles"
-    back = "Back to dashboard" if en else "Volver al dashboard"
+    title = _tr(lang, "Resultado de análisis", "Analysis result")
+    badge = _tr(lang, "Análisis", "Analysis")
+    total_lbl = _tr(lang, "Total de requests", "Total requests")
+    classes_lbl = _tr(lang, "Clases", "Classes")
+    status_lbl = _tr(lang, "Estados", "Status codes")
+    top_paths_lbl = _tr(lang, "Top paths", "Top paths")
+    top_ips_lbl = _tr(lang, "Top IPs", "Top IPs")
+    unauth_lbl = _tr(lang, "Intentos de login fallidos (401) por IP", "Failed logins (401) per IP")
+    admin_lbl = _tr(lang, "Accesos a /admin con 403 por IP", "403 hits to /admin per IP")
+    errors_lbl = _tr(lang, "Errores", "Errors")
+    sqli_lbl = _tr(lang, "Posibles SQLi", "Possible SQLi")
+    probes_lbl = _tr(lang, "Probes de archivos sensibles", "Sensitive file probes")
 
     return f"""<!doctype html>
 <html lang="{lang}">
@@ -157,11 +152,9 @@ td,th{{padding:6px;border-bottom:1px solid rgba(255,255,255,.08)}}
 code{{white-space:pre-wrap}}
 .badge{{display:inline-block;padding:4px 8px;border-radius:10px;background:#0ea5e9;color:#03131c;font-weight:700}}
 .mono{{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}}
-a{{color:#7dd3fc}}
 </style>
 <div class="wrap">
-  <h1>{h1} <span class="badge">Report</span></h1>
-
+  <h1>AlertTrail <span class="badge">{badge}</span></h1>
   <div class="card">
     <div class="mono">{total_lbl}: <b>{summary["total"]}</b></div>
   </div>
@@ -185,15 +178,9 @@ a{{color:#7dd3fc}}
 
   <div class="card"><h2>{sqli_lbl}</h2><ul>{sqli or "<li>—</li>"}</ul></div>
   <div class="card"><h2>{probes_lbl}</h2><ul>{probes or "<li>—</li>"}</ul></div>
-
-  <div class="card">
-    <a href="/dashboard">← {back}</a>
-  </div>
 </div>
 </html>"""
 
-
-# -------------------- Rutas --------------------
 
 @router.get("", include_in_schema=False)
 @router.get("/", include_in_schema=False)
@@ -206,20 +193,21 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
     if current is None:
         return RedirectResponse("/login")
 
-    lang = get_lang(request)
-    en = (lang == "en")
+    lang = get_lang_from_request(request)
 
-    title = "Analyze logs" if en else "Analizar logs"
-    h1 = "Analyze logs and generate report" if en else "Analizar logs y generar reporte"
-    file_lbl = "Log file (Nginx/Apache combined)" if en else "Archivo de log (Nginx/Apache combined)"
-    pdf_lbl = "Download as PDF" if en else "Descargar como PDF"
-    btn = "Process" if en else "Procesar"
-    tip = "Need a sample file? You can use the one shared in chat." if en else "¿Necesitás un archivo de prueba? Podés usar el que te compartí en el chat."
-    back = "Back to dashboard" if en else "Volver al dashboard"
+    title = _tr(lang, "Analizar logs", "Analyze logs")
+    h1 = _tr(lang, "Analizar logs y generar reporte", "Analyze logs and generate report")
+    file_lbl = _tr(lang, "Archivo de log (Nginx/Apache combined)", "Log file (Nginx/Apache combined)")
+    pdf_lbl = _tr(lang, "Descargar como PDF", "Download as PDF")
+    btn = _tr(lang, "Procesar", "Process")
+    hint = _tr(
+        lang,
+        "¿Necesitás un archivo de prueba? Podés usar el que te compartí en el chat.",
+        "Need a sample file? You can use the one shared in the chat.",
+    )
 
-    html = f"""<!doctype html><html lang="{lang}"><head><meta charset="utf-8">
+    html = f"""<!doctype html><meta charset="utf-8">
     <title>{title}</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <style>
       body{{font-family:system-ui;background:#0b1620;color:#eaf2f7;margin:0}}
       .wrap{{max-width:800px;margin:0 auto;padding:24px}}
@@ -227,9 +215,7 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
       .btn{{background:#0ea5e9;color:#03131c;padding:10px 14px;border:0;border-radius:10px;font-weight:700;cursor:pointer}}
       input[type=file]{{padding:10px;background:#0e1c27;border:1px solid rgba(255,255,255,.2);border-radius:10px;color:#eaf2f7;width:100%}}
       label{{display:block;margin:10px 0}}
-      a{{color:#7dd3fc}}
-    </style></head>
-    <body>
+    </style>
     <div class="wrap">
       <h1>{h1}</h1>
       <div class="card">
@@ -240,11 +226,9 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
           <label><input type="checkbox" name="as_pdf" value="1"> {pdf_lbl}</label>
           <button class="btn" type="submit">{btn}</button>
         </form>
-        <p style="opacity:.8;margin-top:10px">{tip}</p>
-        <p style="margin-top:14px"><a href="/dashboard">← {back}</a></p>
+        <p style="opacity:.8;margin-top:10px">{hint}</p>
       </div>
-    </div>
-    </body></html>"""
+    </div>"""
     return HTMLResponse(html)
 
 
@@ -258,7 +242,7 @@ async def generate_post(
     if current is None:
         return RedirectResponse("/login")
 
-    lang = get_lang(request)
+    lang = get_lang_from_request(request)
 
     content = (await file.read()).decode("utf-8", errors="ignore")
     summary = analyze_log(content)
@@ -282,43 +266,26 @@ async def generate_post(
                     c.showPage()
                     y = h - 2*cm
 
-            en = (lang == "en")
             c.setFont("Helvetica-Bold", 14)
-            line("AlertTrail — Analysis Summary" if en else "AlertTrail — Resumen de análisis")
+            line("AlertTrail — Analysis summary" if lang.startswith("en") else "AlertTrail — Resumen de análisis")
             c.setFont("Helvetica", 10)
-            line(("Total requests: " if en else "Total requests: ") + str(summary["total"]))
-
+            line(f"Total requests: {summary['total']}")
             for k in ("2xx", "3xx", "4xx", "5xx"):
                 if k in summary["classes"]:
                     line(f"{k}: {summary['classes'][k]}")
-
-            line(("5xx errors: " if en else "Errores 5xx: ") + str(summary["errors_5xx"]) + "   •   429: " + str(summary["rate_429"]))
-
-            line("Top paths:" if en else "Top paths:")
+            line(f"5xx errors: {summary['errors_5xx']}   •   429: {summary['rate_429']}")
+            line("Top paths:")
             for p, cnt in summary["top_paths"][:8]:
                 line(f"  - {p}  :: {cnt}")
-
-            line("Top IPs:" if en else "Top IPs:")
+            line("Top IPs:")
             for ip, cnt in summary["top_ips"][:8]:
                 line(f"  - {ip}  :: {cnt}")
 
-            if summary["unauth_401"]:
-                line("401 by IP:" if en else "401 por IP:")
-                for ip, cnt in summary["unauth_401"][:8]:
-                    line(f"  - {ip}  :: {cnt}")
-
-            if summary["admin_403"]:
-                line("403 /admin by IP:" if en else "403 /admin por IP:")
-                for ip, cnt in summary["admin_403"][:8]:
-                    line(f"  - {ip}  :: {cnt}")
-
             c.showPage()
             c.save()
-
             pdf = buf.getvalue()
             headers = {"Content-Disposition": 'attachment; filename="alerttrail_report.pdf"'}
             return Response(pdf, headers=headers, media_type="application/pdf")
-
         except Exception:
             pass
 
