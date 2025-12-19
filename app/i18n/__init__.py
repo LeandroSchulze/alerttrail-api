@@ -95,3 +95,9 @@ def get_lang_from_request(request: Request) -> str:
 
 def jinja_t(lang: str, key: str, **kwargs: Any) -> str:
     return t(lang, key, **kwargs)
+
+# ---- Backward compatibility ----
+
+SUPPORTED_LANGS = tuple(_SUPPORTED)
+DEFAULT_LANG = "es"
+
