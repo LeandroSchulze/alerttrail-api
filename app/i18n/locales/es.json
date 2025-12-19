@@ -170,5 +170,6 @@
   "mail.scanner_subtitle_env": "Usa las variables de entorno IMAP. Para cambiar host/usuario/clave, editá ENV y volvé a desplegar.",
   "mail.scanner_no_saved_prefix": "No hay casilla guardada en",
   "mail.scanner_no_saved_suffix": "(opcional).",
-  "mail.scan_now": "Ejecutar scan ahora"
+  "mail.scan_now": "Ejecutar scan ahora",
+  "mail.email": "Dirección de correo",
 }
