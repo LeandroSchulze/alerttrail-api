@@ -9,7 +9,6 @@ from app.ui import templates
 from app.security import get_current_user_cookie
 from app.i18n import get_lang_from_request, jinja_t
 
-
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
@@ -23,23 +22,39 @@ def _float_env(name: str, default: float) -> float:
         return float(default)
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        v = os.getenv(name)
+        if v is None or v == "":
+            return int(default)
+        return int(float(v))
+    except Exception:
+        return int(default)
+
+
 @router.get("/subscriptions", response_class=HTMLResponse)
 def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
-    # Si no está logueado, mandamos al login web
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
     lang = get_lang_from_request(request)
 
-    # Defaults (podés sobreescribir con ENV en Render)
-    # Ej: PRO_PRICE_MONTH=10
+    # Defaults (se pueden pisar por ENV)
+    # PRO_PRICE_MONTH=10
+    # PRO_PRICE_YEAR=96
+    # PRO_YEAR_DISC_PCT=20
     price_month = _float_env("PRO_PRICE_MONTH", 10.0)
 
-    # Si el template usa más variables, las dejamos listas:
-    currency = os.getenv("BILLING_CURRENCY", "USD")
-    billing_period_label = os.getenv("BILLING_PERIOD_LABEL", "mes")  # "mes" / "month"
+    # Si no viene price_year, lo calculamos con descuento default 20%
+    disc_pct = _int_env("PRO_YEAR_DISC_PCT", 20)  # 0..90 recomendado
+    disc_pct = max(0, min(disc_pct, 90))
 
-    # Info útil para UI
+    computed_year = round(price_month * 12 * (1 - disc_pct / 100.0), 2)
+    price_year = _float_env("PRO_PRICE_YEAR", computed_year)
+
+    currency = os.getenv("BILLING_CURRENCY", "USD")
+    billing_period_label = os.getenv("BILLING_PERIOD_LABEL", "mes")
+
     plan = (user.get("plan") or "").upper() or ("PRO" if user.get("is_admin") else "FREE")
     is_pro = bool(user.get("is_pro") or plan == "PRO" or user.get("is_admin"))
     is_admin = bool(user.get("is_admin"))
@@ -52,10 +67,12 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
             "t": jinja_t,
             "current_user": user,
 
-            # ✅ FIX: variables que el template espera
+            # ✅ variables que el template usa
             "price_month": price_month,
+            "price_year": price_year,
+            "disc_pct": disc_pct,
 
-            # extras (por si el template las referencia ahora o después)
+            # extras (por si el template las referencia)
             "currency": currency,
             "billing_period_label": billing_period_label,
             "plan": plan,
