@@ -175,6 +175,10 @@ def mail_index(request: Request, user=Depends(get_user)):
 
 
 @router.get("/scanner", response_class=HTMLResponse)
+import traceback
+from fastapi.responses import PlainTextResponse
+
+@router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -193,21 +197,25 @@ def mail_scanner(request: Request, user=Depends(get_user)):
             last_scan = data
             scan_error = data.get("error")
 
-    return templates.TemplateResponse(
-        "mail_scanner.html",
-        {
-            "request": request,
-            "lang": lang,
-            "t": t,
-            "current_user": user,
-            "user": user,
-            "plan": plan,
-            "defaults": _defaults_from_env(),
-            "linked": linked,
-            "last_scan": last_scan,
-            "scan_error": scan_error,
-        },
-    )
+    try:
+        return templates.TemplateResponse(
+            "mail_scanner.html",
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "current_user": user,
+                "user": user,
+                "plan": plan,
+                "defaults": _defaults_from_env(),
+                "linked": linked,
+                "last_scan": last_scan,
+                "scan_error": scan_error,
+            },
+        )
+    except Exception:
+        # MOSTRAR el error directamente en pantalla (sin necesitar logs)
+        return PlainTextResponse(traceback.format_exc(), status_code=500)
 
 
 # Compat viejo
