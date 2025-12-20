@@ -3,7 +3,7 @@ import os, json
 from pathlib import Path
 from typing import Dict, Any
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.security import get_current_user_cookie
@@ -92,6 +92,77 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     )
 
 
+# -------------------------------------------------------------------
+# Compat: /mail/settings (GET) redirige a /mail
+# -------------------------------------------------------------------
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
     return RedirectResponse(url="/mail", status_code=302)
+
+
+# -------------------------------------------------------------------
+# Guardar configuración IMAP (esto arregla el Method Not Allowed)
+# -------------------------------------------------------------------
+@router.post("/settings", include_in_schema=False)
+def save_mail_settings(
+    request: Request,
+    user=Depends(get_user),
+    email: str = Form(...),
+    server: str = Form(...),
+    port: int = Form(993),
+    username: str = Form(...),
+    password: str = Form(...),
+    folder: str = Form("INBOX"),
+    use_ssl: str | None = Form(None),
+    mark_read: str | None = Form(None),
+):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
+    # Gmail App Password suele venir con espacios: los removemos
+    password_clean = (password or "").replace(" ", "")
+
+    data = _load_linked()
+    data[str(user["sub"])] = {
+        "email": (email or "").strip(),
+        "server": (server or "").strip(),
+        "port": int(port or 993),
+        "username": (username or "").strip(),
+        "password": password_clean,
+        "folder": (folder or "INBOX").strip() or "INBOX",
+        "use_ssl": bool(use_ssl),   # checkbox => "on" o None
+        "mark_read": bool(mark_read),
+    }
+
+    MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LINKED_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return RedirectResponse(url="/mail", status_code=302)
+
+
+# Alias por si el template usa action="/mail/link"
+@router.post("/link", include_in_schema=False)
+def save_mail_settings_link_alias(
+    request: Request,
+    user=Depends(get_user),
+    email: str = Form(...),
+    server: str = Form(...),
+    port: int = Form(993),
+    username: str = Form(...),
+    password: str = Form(...),
+    folder: str = Form("INBOX"),
+    use_ssl: str | None = Form(None),
+    mark_read: str | None = Form(None),
+):
+    return save_mail_settings(
+        request=request,
+        user=user,
+        email=email,
+        server=server,
+        port=port,
+        username=username,
+        password=password,
+        folder=folder,
+        use_ssl=use_ssl,
+        mark_read=mark_read,
+    )
