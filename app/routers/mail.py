@@ -1,7 +1,7 @@
 # app/routers/mail.py
 import os, json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -25,6 +25,11 @@ def _load_linked() -> Dict[str, Any]:
         return json.loads(LINKED_FILE.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _save_linked(data: Dict[str, Any]) -> None:
+    MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LINKED_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _defaults_from_env() -> Dict[str, Any]:
@@ -56,7 +61,9 @@ def get_user(request: Request):
 def mail_index(request: Request, user=Depends(get_user)):
     lang = get_lang(request)
     plan = _compute_plan(user)
-    linked = _load_linked().get(str(user["sub"]))
+    linked = None
+    if user:
+        linked = _load_linked().get(str(user.get("sub")))
     return templates.TemplateResponse(
         "mail.html",
         {
@@ -76,7 +83,9 @@ def mail_index(request: Request, user=Depends(get_user)):
 def mail_scanner(request: Request, user=Depends(get_user)):
     lang = get_lang(request)
     plan = _compute_plan(user)
-    linked = _load_linked().get(str(user["sub"]))
+    linked = None
+    if user:
+        linked = _load_linked().get(str(user.get("sub")))
     return templates.TemplateResponse(
         "mail_scanner.html",
         {
@@ -101,68 +110,117 @@ def mail_settings_compat():
 
 
 # -------------------------------------------------------------------
-# Guardar configuración IMAP (esto arregla el Method Not Allowed)
+# Guardar configuración IMAP
+# - Acepta distintos names de form (robusto ante cambios de template)
 # -------------------------------------------------------------------
 @router.post("/settings", include_in_schema=False)
-def save_mail_settings(
+async def save_mail_settings(
     request: Request,
     user=Depends(get_user),
-    email: str = Form(...),
-    server: str = Form(...),
-    port: int = Form(993),
-    username: str = Form(...),
-    password: str = Form(...),
-    folder: str = Form("INBOX"),
-    use_ssl: str | None = Form(None),
-    mark_read: str | None = Form(None),
+
+    # "names" más comunes (opcionales)
+    email: Optional[str] = Form(None),
+    server: Optional[str] = Form(None),
+    port: Optional[int] = Form(None),
+    username: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    folder: Optional[str] = Form(None),
+    use_ssl: Optional[str] = Form(None),
+    mark_read: Optional[str] = Form(None),
+
+    # aliases típicos (por si el template usa otros)
+    imap_email: Optional[str] = Form(None),
+    imap_server: Optional[str] = Form(None),
+    imap_port: Optional[int] = Form(None),
+    imap_user: Optional[str] = Form(None),
+    imap_username: Optional[str] = Form(None),
+    imap_password: Optional[str] = Form(None),
+    imap_folder: Optional[str] = Form(None),
+    imap_ssl: Optional[str] = Form(None),
+    imap_mark_read: Optional[str] = Form(None),
 ):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    # Gmail App Password suele venir con espacios: los removemos
-    password_clean = (password or "").replace(" ", "")
+    # Si algo vino vacío, leemos todo el form crudo y buscamos claves
+    form = {}
+    try:
+        form = dict(await request.form())
+    except Exception:
+        form = {}
+
+    def pick(*keys: str) -> Optional[str]:
+        for k in keys:
+            v = form.get(k)
+            if v is not None and str(v).strip() != "":
+                return str(v)
+        return None
+
+    def pick_int(*keys: str) -> Optional[int]:
+        v = pick(*keys)
+        if v is None:
+            return None
+        try:
+            return int(float(v))
+        except Exception:
+            return None
+
+    # Resolve valores finales (prioridad: params -> aliases -> form raw -> defaults)
+    final_email = (email or imap_email or pick("email", "imap_email")).strip() if (email or imap_email or pick("email", "imap_email")) else ""
+    final_server = (server or imap_server or pick("server", "imap_server")).strip() if (server or imap_server or pick("server", "imap_server")) else ""
+    final_port = port or imap_port or pick_int("port", "imap_port")
+    final_username = (username or imap_user or imap_username or pick("username", "imap_user", "imap_username")).strip() if (username or imap_user or imap_username or pick("username", "imap_user", "imap_username")) else ""
+    final_password = password or imap_password or pick("password", "imap_password")
+    final_folder = (folder or imap_folder or pick("folder", "imap_folder") or "INBOX").strip() or "INBOX"
+
+    # Checkboxes: si existe el campo viene "on" o similar
+    ssl_raw = use_ssl or imap_ssl or form.get("use_ssl") or form.get("imap_ssl")
+    mark_raw = mark_read or imap_mark_read or form.get("mark_read") or form.get("imap_mark_read")
+
+    # Defaults si falta algo
+    defaults = _defaults_from_env()
+    if not final_port:
+        final_port = int(defaults["port"])
+    if not final_server:
+        final_server = str(defaults["server"] or "")
+    if not final_folder:
+        final_folder = str(defaults["folder"] or "INBOX")
+
+    # Validación mínima (para evitar 422 y dar feedback claro)
+    if not final_email or not final_server or not final_username or not final_password:
+        # si querés, podés renderizar mail.html con error visible
+        return {
+            "ok": False,
+            "error": "Faltan campos requeridos",
+            "missing": {
+                "email": not bool(final_email),
+                "server": not bool(final_server),
+                "username": not bool(final_username),
+                "password": not bool(final_password),
+            },
+            "hint": "Revisá que el <form> tenga name=email, server, username, password (o aliases imap_*)",
+        }
+
+    # Gmail App Password suele venir con espacios
+    password_clean = (final_password or "").replace(" ", "")
 
     data = _load_linked()
     data[str(user["sub"])] = {
-        "email": (email or "").strip(),
-        "server": (server or "").strip(),
-        "port": int(port or 993),
-        "username": (username or "").strip(),
+        "email": final_email,
+        "server": final_server,
+        "port": int(final_port),
+        "username": final_username,
         "password": password_clean,
-        "folder": (folder or "INBOX").strip() or "INBOX",
-        "use_ssl": bool(use_ssl),   # checkbox => "on" o None
-        "mark_read": bool(mark_read),
+        "folder": final_folder,
+        "use_ssl": bool(ssl_raw),
+        "mark_read": bool(mark_raw),
     }
-
-    MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    LINKED_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _save_linked(data)
 
     return RedirectResponse(url="/mail", status_code=302)
 
 
-# Alias por si el template usa action="/mail/link"
+# Alias por si el template hace POST a /mail/link
 @router.post("/link", include_in_schema=False)
-def save_mail_settings_link_alias(
-    request: Request,
-    user=Depends(get_user),
-    email: str = Form(...),
-    server: str = Form(...),
-    port: int = Form(993),
-    username: str = Form(...),
-    password: str = Form(...),
-    folder: str = Form("INBOX"),
-    use_ssl: str | None = Form(None),
-    mark_read: str | None = Form(None),
-):
-    return save_mail_settings(
-        request=request,
-        user=user,
-        email=email,
-        server=server,
-        port=port,
-        username=username,
-        password=password,
-        folder=folder,
-        use_ssl=use_ssl,
-        mark_read=mark_read,
-    )
+async def save_mail_settings_link_alias(request: Request, user=Depends(get_user)):
+    return await save_mail_settings(request=request, user=user)
