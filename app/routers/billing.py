@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
 
@@ -61,9 +62,8 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
     # -----------------------------
     # BIZ defaults (para no romper template)
     # -----------------------------
-    # Ejemplo: BIZ incluye N cuentas y cobra extra por asiento adicional
     biz_included = _int_env("BIZ_INCLUDED", 5)
-    biz_extra = _float_env("BIZ_EXTRA_SEAT", 2.0)  # USD por mes por usuario extra
+    biz_extra = _float_env("BIZ_EXTRA_SEAT", 2.0)
 
     biz_price_month = _float_env("BIZ_PRICE_MONTH", 25.0)
     biz_disc_pct = _clamp_int(_int_env("BIZ_YEAR_DISC_PCT", 20), 0, 90)
@@ -71,7 +71,7 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
     biz_price_year = _float_env("BIZ_PRICE_YEAR", biz_year_computed)
 
     # -----------------------------
-    # Estado del usuario (para mostrar plan actual)
+    # Estado del usuario
     # -----------------------------
     plan = (user.get("plan") or "").upper()
     if not plan:
@@ -93,7 +93,7 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
             "t": jinja_t,
             "current_user": user,
 
-            # ---- PRO (legacy + explícito) ----
+            # ---- PRO ----
             "currency": currency,
             "price_month": price_month,
             "price_year": price_year,
@@ -114,9 +114,35 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
             "is_pro": is_pro,
             "is_admin": is_admin,
 
-            # ---- Trial (por si aparece en template) ----
+            # ---- Trial ----
             "trial_active": trial_active,
             "trial_ended": trial_ended,
             "trial_available": trial_available,
+        },
+    )
+
+
+# -------------------------------------------------------------------
+# ✅ NEW: Payments history page
+# -------------------------------------------------------------------
+@router.get("/payments", response_class=HTMLResponse)
+def payments(request: Request, user=Depends(get_current_user_cookie)):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
+    lang = get_lang_from_request(request)
+
+    # Por ahora: historial vacío (después lo conectamos a DB/Stripe/MercadoPago)
+    payments = []  # lista de dicts: {date, amount, currency, status, description}
+
+    return templates.TemplateResponse(
+        "billing_payments.html",
+        {
+            "request": request,
+            "lang": lang,
+            "t": jinja_t,
+            "current_user": user,
+            "payments": payments,
+            "now": datetime.utcnow(),
         },
     )
