@@ -7,6 +7,12 @@
   "common.back": "Volver",
   "common.alerts": "Alertas",
 
+
+  "billing.title": "Suscripciones",
+  "billing.subtitle": "Gestioná tu suscripción actual y el ciclo de facturación.",
+  "billing.change_pro": "Cambiar a PRO",
+  "billing.change_biz": "Cambiar a EMPRESAS",
+
   "alerts.title": "Centro de Alertas",
   "alerts.search_placeholder": "Buscar (texto, remitente, asunto)",
   "alerts.severity_all": "Severidad (todas)",
