@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t((lang or 'es')|lower, "dashboard.payments_title") }} — AlertTrail{% endblock %}
+
+{% block body %}
+  {% set L = (lang or 'es')|lower %}
+
+  <div style="max-width:900px;margin:52px auto 0;">
+    <h1 style="margin:0 0 6px 0;font-size:32px;letter-spacing:-0.02em;">
+      {{ t(L, "dashboard.payments_title") }}
+    </h1>
+    <p class="muted" style="margin:0 0 18px 0;">
+      {{ t(L, "dashboard.payments_subtitle") }}
+    </p>
+
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:18px;">
+      {% if payments and payments|length > 0 %}
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="text-align:left;color:#64748b;font-size:13px;">
+              <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Fecha</th>
+              <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Detalle</th>
+              <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Estado</th>
+              <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;text-align:right;">Monto</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in payments %}
+            <tr>
+              <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">{{ p.date }}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">{{ p.description }}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">{{ p.status }}</td>
+              <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">
+                {{ p.currency }} {{ "%.2f"|format(p.amount) }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted" style="margin:0;">
+          {{ t(L, "dashboard.payments_empty") }}
+        </p>
+      {% endif %}
+    </div>
+
+    <div style="margin-top:14px;">
+      <a href="/dashboard" style="text-decoration:none;color:#2563eb;font-weight:600;">&larr; {{ t(L, "common.back_dashboard") }}</a>
+    </div>
+  </div>
+{% endblock %}
