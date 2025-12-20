@@ -31,11 +31,20 @@ def _load_locale(lang: str) -> Dict[str, str]:
     lang = (lang or "es").lower()
     if lang not in _SUPPORTED:
         lang = "es"
+
     p = _LOCALES_DIR / f"{lang}.json"
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+        if not p.exists():
+            print(f"[i18n] Missing locale file: {p.resolve()}")
+            return {}
+
+        raw = p.read_text(encoding="utf-8")
+        return json.loads(raw)
+
+    except Exception as e:
+        print(f"[i18n] Failed to load locale '{lang}' from {p.resolve()}: {e}")
         return {}
+
 
 
 def get_lang(request: Request, default: str = "es") -> str:
