@@ -29,15 +29,88 @@
       {% endif %}
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <a href="/mail/scan"
+        <a href="/mail/scan?limit=20"
            style="text-decoration:none;border:none;padding:9px 14px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:700;">
-          {{ t(lang, "mail.scan_now") }}
+          {{ t(lang, "mail.scan_now") }} (20)
         </a>
+
+        <a href="/mail/scan?limit=50"
+           style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:9px 14px;border-radius:999px;background:#ffffff;color:#0f172a;font-weight:700;">
+          {{ t(lang, "mail.scan_now") }} (50)
+        </a>
+
         <a href="/mail"
            style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:9px 14px;border-radius:999px;background:#f8fafc;color:#0f172a;">
           {{ t(lang, "common.back") }}
         </a>
       </div>
+
+      {% if scan_error %}
+        <div style="margin-top:12px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:12px;padding:10px 12px;">
+          <b>Error:</b> {{ scan_error }}
+        </div>
+      {% endif %}
+
+      {% if last_scan %}
+        <div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:800;">Último scan</div>
+              <div style="color:#475569;font-size:.92rem;">{{ last_scan.ts }}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-weight:800;">{{ last_scan.found or 0 }} correos</div>
+              <div style="color:#475569;font-size:.92rem;">Carpeta: {{ last_scan.folder or 'INBOX' }}</div>
+            </div>
+          </div>
+
+          {% if last_scan.items and last_scan.items|length > 0 %}
+            <div style="margin-top:10px;overflow:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:.95rem;">
+                <thead>
+                  <tr style="text-align:left;">
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Fecha</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">De</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Asunto</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Riesgo</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">Motivos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for it in last_scan.items %}
+                    <tr>
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;color:#475569;white-space:nowrap;">
+                        {{ it.date or '—' }}
+                      </td>
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">
+                        {{ it.from or '—' }}
+                      </td>
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">
+                        {{ it.subject or '—' }}
+                      </td>
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;white-space:nowrap;">
+                        <span style="display:inline-block;padding:4px 10px;border-radius:999px;
+                          {% if (it.score or 0) >= 70 %} background:#fee2e2;color:#991b1b;border:1px solid #fecaca;
+                          {% elif (it.score or 0) >= 40 %} background:#ffedd5;color:#9a3412;border:1px solid #fed7aa;
+                          {% else %} background:#dcfce7;color:#166534;border:1px solid #bbf7d0;
+                          {% endif %}
+                        ">
+                          {{ it.score or 0 }}/100
+                        </span>
+                      </td>
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;color:#475569;">
+                        {{ (it.reasons or [])|join(", ") if it.reasons else "—" }}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div style="margin-top:10px;color:#475569;">No hay items para mostrar.</div>
+          {% endif %}
+        </div>
+      {% endif %}
 
       {% if defaults %}
         <div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;">
