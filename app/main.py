@@ -47,7 +47,7 @@ app.include_router(billing.router)
 app.include_router(reports.router)
 
 # -------------------------------------------------------------------
-# Health
+# Health + Root
 # -------------------------------------------------------------------
 
 @app.get("/health")
@@ -55,14 +55,18 @@ def health():
     return {"ok": True}
 
 
-from fastapi.responses import RedirectResponse
-
 @app.get("/", include_in_schema=False)
 @app.head("/", include_in_schema=False)
 def root():
     # Root del dominio → mandamos al dashboard (que ya maneja login)
     return RedirectResponse(url="/dashboard", status_code=302)
 
+
+# (Opcional recomendado) Alias para links viejos
+@app.get("/login", include_in_schema=False)
+@app.head("/login", include_in_schema=False)
+def login_alias():
+    return RedirectResponse(url="/auth/login", status_code=302)
 
 # -------------------------------------------------------------------
 # Language
@@ -114,6 +118,7 @@ def dashboard(request: Request):
         # Defaults
         plan = "FREE"
         is_admin = False
+        is_pro = False
 
         if db_user is not None:
             is_admin = bool(getattr(db_user, "is_admin", False))
@@ -134,15 +139,20 @@ def dashboard(request: Request):
 
         user["plan"] = plan
         user["is_admin"] = is_admin
+        # Para que dashboard.html no rompa si usa user.is_pro
+        user["is_pro"] = (plan == "PRO") or bool(is_pro) or bool(is_admin)
     finally:
         db.close()
 
     lang = get_lang_from_request(request)
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "user": user,
+            "current_user": user,              # FIX: el template usa current_user
+            "plan": user.get("plan", "FREE"),  # FIX: el template usa plan
             "lang": lang,
             "t": jinja_t,
         },
