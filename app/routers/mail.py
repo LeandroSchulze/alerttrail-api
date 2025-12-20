@@ -1,10 +1,13 @@
 # app/routers/mail.py
-import os, json
-from pathlib import Path
-from typing import Dict, Any, Optional
+from __future__ import annotations
 
-from fastapi import APIRouter, Request, Depends, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from app.security import get_current_user_cookie
 from app.ui import templates
@@ -18,6 +21,9 @@ MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
 
 
+# -----------------------------
+# Storage helpers
+# -----------------------------
 def _load_linked() -> Dict[str, Any]:
     if not LINKED_FILE.exists():
         return {}
@@ -28,7 +34,7 @@ def _load_linked() -> Dict[str, Any]:
 
 
 def _save_linked(data: Dict[str, Any]) -> None:
-    MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LINKED_FILE.parent.mkdir(parents=True, exist_ok=True)
     LINKED_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -57,13 +63,30 @@ def get_user(request: Request):
     return get_current_user_cookie(request)
 
 
+def _bool_from_form(v: Any) -> bool:
+    """
+    HTML checkboxes:
+    - if checked: usually 'on' or '1'
+    - if not checked: missing key
+    """
+    if v is None:
+        return False
+    s = str(v).strip().lower()
+    return s in ("1", "true", "yes", "on", "checked")
+
+
+# -----------------------------
+# Pages
+# -----------------------------
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_user)):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
     lang = get_lang(request)
     plan = _compute_plan(user)
-    linked = None
-    if user:
-        linked = _load_linked().get(str(user.get("sub")))
+    linked = _load_linked().get(str(user["sub"]))
+
     return templates.TemplateResponse(
         "mail.html",
         {
@@ -81,11 +104,13 @@ def mail_index(request: Request, user=Depends(get_user)):
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
     lang = get_lang(request)
     plan = _compute_plan(user)
-    linked = None
-    if user:
-        linked = _load_linked().get(str(user.get("sub")))
+    linked = _load_linked().get(str(user["sub"]))
+
     return templates.TemplateResponse(
         "mail_scanner.html",
         {
@@ -101,53 +126,28 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     )
 
 
-# -------------------------------------------------------------------
-# Compat: /mail/settings (GET) redirige a /mail
-# -------------------------------------------------------------------
-@router.get("/settings", include_in_schema=False)
-def mail_settings_compat():
-    return RedirectResponse(url="/mail", status_code=302)
-
-
-# -------------------------------------------------------------------
-# Guardar configuración IMAP
-# - Acepta distintos names de form (robusto ante cambios de template)
-# -------------------------------------------------------------------
+# -----------------------------
+# Save settings (POST)
+# -----------------------------
 @router.post("/settings", include_in_schema=False)
-async def save_mail_settings(
-    request: Request,
-    user=Depends(get_user),
+async def mail_save_settings(request: Request, user=Depends(get_user)):
+    """
+    Saves IMAP config per user.
 
-    # "names" más comunes (opcionales)
-    email: Optional[str] = Form(None),
-    server: Optional[str] = Form(None),
-    port: Optional[int] = Form(None),
-    username: Optional[str] = Form(None),
-    password: Optional[str] = Form(None),
-    folder: Optional[str] = Form(None),
-    use_ssl: Optional[str] = Form(None),
-    mark_read: Optional[str] = Form(None),
-
-    # aliases típicos (por si el template usa otros)
-    imap_email: Optional[str] = Form(None),
-    imap_server: Optional[str] = Form(None),
-    imap_port: Optional[int] = Form(None),
-    imap_user: Optional[str] = Form(None),
-    imap_username: Optional[str] = Form(None),
-    imap_password: Optional[str] = Form(None),
-    imap_folder: Optional[str] = Form(None),
-    imap_ssl: Optional[str] = Form(None),
-    imap_mark_read: Optional[str] = Form(None),
-):
+    Accepts common field aliases to avoid template/backend mismatches:
+      email: email, imap_email, mail, address, email_address, imap_email_address
+      server: server, imap_server, host, hostname, imap_host, imap_hostname
+      username: username, imap_user, imap_username, user, login
+      password: password, imap_password, pass, app_password
+      port: port, imap_port
+      folder: folder, imap_folder
+      use_ssl: use_ssl, imap_use_ssl, ssl
+      mark_read: mark_read, imap_mark_read
+    """
     if not user:
-        return RedirectResponse(url="/auth/login", status_code=302)
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
-    # Si algo vino vacío, leemos todo el form crudo y buscamos claves
-    form = {}
-    try:
-        form = dict(await request.form())
-    except Exception:
-        form = {}
+    form = await request.form()
 
     def pick(*keys: str) -> Optional[str]:
         for k in keys:
@@ -165,62 +165,77 @@ async def save_mail_settings(
         except Exception:
             return None
 
-    # Resolve valores finales (prioridad: params -> aliases -> form raw -> defaults)
-    final_email = (email or imap_email or pick("email", "imap_email")).strip() if (email or imap_email or pick("email", "imap_email")) else ""
-    final_server = (server or imap_server or pick("server", "imap_server")).strip() if (server or imap_server or pick("server", "imap_server")) else ""
-    final_port = port or imap_port or pick_int("port", "imap_port")
-    final_username = (username or imap_user or imap_username or pick("username", "imap_user", "imap_username")).strip() if (username or imap_user or imap_username or pick("username", "imap_user", "imap_username")) else ""
-    final_password = password or imap_password or pick("password", "imap_password")
-    final_folder = (folder or imap_folder or pick("folder", "imap_folder") or "INBOX").strip() or "INBOX"
+    # Pull with aliases
+    final_email = pick(
+        "email", "imap_email", "mail", "address", "email_address", "imap_email_address"
+    )
+    final_server = pick(
+        "server", "imap_server", "host", "hostname", "imap_host", "imap_hostname"
+    )
+    final_port = pick_int("port", "imap_port")
+    final_username = pick("username", "imap_user", "imap_username", "user", "login")
+    final_password = pick("password", "imap_password", "pass", "app_password")
+    final_folder = (pick("folder", "imap_folder") or "INBOX").strip() or "INBOX"
 
-    # Checkboxes: si existe el campo viene "on" o similar
-    ssl_raw = use_ssl or imap_ssl or form.get("use_ssl") or form.get("imap_ssl")
-    mark_raw = mark_read or imap_mark_read or form.get("mark_read") or form.get("imap_mark_read")
+    use_ssl = _bool_from_form(pick("use_ssl", "imap_use_ssl", "ssl"))
+    mark_read = _bool_from_form(pick("mark_read", "imap_mark_read"))
 
-    # Defaults si falta algo
-    defaults = _defaults_from_env()
-    if not final_port:
-        final_port = int(defaults["port"])
-    if not final_server:
-        final_server = str(defaults["server"] or "")
-    if not final_folder:
-        final_folder = str(defaults["folder"] or "INBOX")
-
-    # Validación mínima (para evitar 422 y dar feedback claro)
-    if not final_email or not final_server or not final_username or not final_password:
-        # si querés, podés renderizar mail.html con error visible
-        return {
-            "ok": False,
-            "error": "Faltan campos requeridos",
-            "missing": {
-                "email": not bool(final_email),
-                "server": not bool(final_server),
-                "username": not bool(final_username),
-                "password": not bool(final_password),
+    # Required
+    missing = {
+        "email": not bool(final_email),
+        "server": not bool(final_server),
+        "username": not bool(final_username),
+        "password": not bool(final_password),
+    }
+    if any(missing.values()):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Faltan campos requeridos",
+                "missing": missing,
+                "hint": "Revisá que el <form> tenga name=email, server, username, password (o aliases imap_*).",
             },
-            "hint": "Revisá que el <form> tenga name=email, server, username, password (o aliases imap_*)",
-        }
+            status_code=422,
+        )
 
-    # Gmail App Password suele venir con espacios
-    password_clean = (final_password or "").replace(" ", "")
+    # Normalize
+    final_email = str(final_email).strip()
+    final_server = str(final_server).strip()
+    final_username = str(final_username).strip()
+    final_password = str(final_password).strip()
 
+    if final_port is None:
+        final_port = 993
+
+    # Save per-user
     data = _load_linked()
-    data[str(user["sub"])] = {
+    uid = str(user["sub"])
+
+    data[uid] = {
         "email": final_email,
         "server": final_server,
         "port": int(final_port),
         "username": final_username,
-        "password": password_clean,
+        # NOTE: en producción real conviene cifrar esto (FERNET_SECRET) y NO guardarlo plano.
+        "password": final_password,
         "folder": final_folder,
-        "use_ssl": bool(ssl_raw),
-        "mark_read": bool(mark_raw),
+        "use_ssl": bool(use_ssl),
+        "mark_read": bool(mark_read),
     }
     _save_linked(data)
 
+    # Si el POST vino desde el form, redirigimos a /mail para mostrar estado
+    accept = (request.headers.get("accept") or "").lower()
+    if "text/html" in accept:
+        return RedirectResponse(url="/mail", status_code=303)
+
+    return {"ok": True}
+
+
+# -----------------------------
+# Compatibility
+# -----------------------------
+@router.get("/settings", include_in_schema=False)
+def mail_settings_compat():
+    # GET /mail/settings -> /mail
     return RedirectResponse(url="/mail", status_code=302)
-
-
-# Alias por si el template hace POST a /mail/link
-@router.post("/link", include_in_schema=False)
-async def save_mail_settings_link_alias(request: Request, user=Depends(get_user)):
-    return await save_mail_settings(request=request, user=user)
