@@ -176,6 +176,20 @@
   "mail.scanner_no_saved_prefix": "No mailbox saved in",
   "mail.scanner_no_saved_suffix": "(optional).",
   "mail.scan_now": "Run scan now",
-  "mail.email": "Email address"
+  "mail.email": "Email address",
+
+  "mail.last_scan": "Last scan",
+  "mail.emails": "emails",
+  "mail.showing": "Showing",
+  "mail.scan_result_title": "Scan result",
+  "mail.scan_failed": "Scan failed",
+  "mail.scan_ok_summary": "IMAP scan OK ✅ | Server: {server} | Folder: {folder} | Emails: {total} | Showing: {shown}",
+  "mail.date": "Date",
+  "mail.from": "From",
+  "mail.subject": "Subject",
+  "mail.risk": "Risk",
+  "mail.reasons": "Reasons",
+  "mail.no_items": "No items to display."
+
 }
 
