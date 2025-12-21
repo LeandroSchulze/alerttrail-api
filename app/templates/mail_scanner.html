@@ -64,7 +64,8 @@
             </div>
           </div>
 
-          {% if last_scan.items and last_scan.items|length > 0 %}
+          {% set scan_items = last_scan.get('items', []) if last_scan else [] %}
+          {% if scan_items|length > 0 %}
             <div style="margin-top:10px;overflow:auto;">
               <table style="width:100%;border-collapse:collapse;font-size:.95rem;">
                 <thead>
