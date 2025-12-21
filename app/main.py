@@ -1,159 +1,188 @@
 # app/main.py
-from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from __future__ import annotations
+
+import os
+import logging
 from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.ui import templates
-from app.i18n import get_lang_from_request, jinja_t, set_lang_cookie
-from app.security import get_current_user_cookie
-
-from app.database import SessionLocal
-from app import models
+from app.i18n import get_lang_from_request
 
 # Routers
-from app.routers import auth, analysis, mail, admin
-from app.routers import alerts, billing, tools, reports
+from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
+from app.routers import tasks_mail  # cron / task endpoints
 
-app = FastAPI(title="AlertTrail API")
+# Background scheduler (auto mail scan)
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# -------------------------------------------------------------------
-# Static files
-# -------------------------------------------------------------------
+logger = logging.getLogger("alerttrail")
+mail_logger = logging.getLogger("alerttrail.mail")
 
-# Static assets (CSS, JS, images)
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# IMPORTANT:
-# En producción (Render) la carpeta puede no existir.
-# Hay que crearla antes de montar StaticFiles o Uvicorn crashea.
-REPORTS_DIR = Path("app/reports")
+APP_NAME = os.getenv("APP_NAME", "AlertTrail")
+SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
+REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# PDFs generados (servidos como archivos estáticos)
+app = FastAPI(title=APP_NAME)
+
+# Session cookies (for a few UI flows; JWT auth stays in your security.py)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
+
+# Static + Reports mounts
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# serve generated PDFs/reports (Render disk)
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
-# -------------------------------------------------------------------
-# Routers
-# -------------------------------------------------------------------
 
+# -------------------------
+# Routers
+# -------------------------
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
 app.include_router(admin.router)
-app.include_router(alerts.router)
-app.include_router(tools.router)
+
+# Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
+
+# misc / ui
+app.include_router(profile.router)
 app.include_router(reports.router)
+app.include_router(tools.router)
+app.include_router(scheduler_status.router)
+app.include_router(alerts.router)
+app.include_router(i18n.router)
 
-# -------------------------------------------------------------------
-# Health + Root
-# -------------------------------------------------------------------
+# cron/task endpoints (Render cron can hit /tasks/mail/poll)
+app.include_router(tasks_mail.router)
 
-@app.get("/health")
+
+# -------------------------
+# Basic routes
+# -------------------------
+@app.get("/health", include_in_schema=False)
 def health():
-    return {"ok": True}
+    return {"ok": True, "app": APP_NAME}
 
 
 @app.get("/", include_in_schema=False)
-@app.head("/", include_in_schema=False)
 def root():
-    # Root del dominio → mandamos al dashboard (que ya maneja login)
     return RedirectResponse(url="/dashboard", status_code=302)
 
 
-# (Opcional recomendado) Alias para links viejos
-@app.get("/login", include_in_schema=False)
-@app.head("/login", include_in_schema=False)
-def login_alias():
-    return RedirectResponse(url="/auth/login", status_code=302)
-
-# -------------------------------------------------------------------
-# Language
-# -------------------------------------------------------------------
-
-@app.get("/set-lang/{lang}", include_in_schema=False)
-def set_lang(lang: str, next: str = "/dashboard"):
-    """Set language cookie and redirect.
-    Path variant: /set-lang/en?next=/dashboard
-    """
-    resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    set_lang_cookie(resp, lang)
-    return resp
-
-
-@app.get("/set-lang", include_in_schema=False)
-def set_lang_q(lang: str = "es", next: str = "/dashboard"):
-    """Compatibility: /set-lang?lang=en&next=/dashboard"""
-    resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    set_lang_cookie(resp, lang)
-    return resp
-
-# -------------------------------------------------------------------
-# Dashboard
-# -------------------------------------------------------------------
-
-@app.get("/dashboard")
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
-    try:
-        user = get_current_user_cookie(request)
-    except Exception:
-        return RedirectResponse(url="/auth/login", status_code=302)
-
-    if not user:
-        return RedirectResponse(url="/auth/login", status_code=302)
-
-    # Enrich user info from DB (plan/is_pro/is_admin)
-    db = SessionLocal()
-    try:
-        db_user = None
-        try:
-            uid = int(user.get("sub"))
-        except Exception:
-            uid = None
-
-        if uid is not None:
-            db_user = db.query(models.User).filter(models.User.id == uid).first()
-
-        # Defaults
-        plan = "FREE"
-        is_admin = False
-        is_pro = False
-
-        if db_user is not None:
-            is_admin = bool(getattr(db_user, "is_admin", False))
-            is_pro = bool(getattr(db_user, "is_pro", False))
-            db_plan = (getattr(db_user, "plan", "") or "").upper()
-
-            # Admin siempre PRO
-            if is_admin:
-                plan = "PRO"
-            else:
-                plan = "PRO" if (is_pro or db_plan == "PRO") else "FREE"
-
-            # Completar datos si el token vino incompleto
-            if not user.get("name") and getattr(db_user, "name", None):
-                user["name"] = db_user.name
-            if not user.get("email") and getattr(db_user, "email", None):
-                user["email"] = db_user.email
-
-        user["plan"] = plan
-        user["is_admin"] = is_admin
-        # Para que dashboard.html no rompa si usa user.is_pro
-        user["is_pro"] = (plan == "PRO") or bool(is_pro) or bool(is_admin)
-    finally:
-        db.close()
-
     lang = get_lang_from_request(request)
-
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
-            "user": user,
-            "current_user": user,              # FIX: el template usa current_user
-            "plan": user.get("plan", "FREE"),  # FIX: el template usa plan
             "lang": lang,
-            "t": jinja_t,
         },
     )
+
+
+@app.get("/set-lang", include_in_schema=False)
+def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
+    """
+    Used by base.html language selector:
+      /set-lang?lang=es&next=/some/path
+    Stores cookie "lang" and redirects back.
+    """
+    lang = (lang or "es").lower()
+    resp = RedirectResponse(url=next or "/dashboard", status_code=302)
+    # cookie for 1 year
+    resp.set_cookie("lang", lang, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax")
+    return resp
+
+
+# -------------------------
+# Background: Mail auto-scan
+# -------------------------
+_scheduler: Optional[BackgroundScheduler] = None
+
+
+def _mail_scan_job():
+    """
+    Runs a scan of all connected mailboxes.
+    This is used for the "auto scan every N minutes" behavior.
+    """
+    try:
+        from app.services.mail_scan import scan_all_connected_mailboxes
+
+        out = scan_all_connected_mailboxes()
+        # out is typically a dict summary; log a compact version
+        mail_logger.info("AUTO_MAIL_SCAN OK: %s", out)
+    except Exception as e:
+        mail_logger.exception("AUTO_MAIL_SCAN ERROR: %s", e)
+
+
+def _heartbeat_job():
+    try:
+        logger.info("scheduler heartbeat")
+    except Exception:
+        pass
+
+
+@app.on_event("startup")
+def on_startup():
+    """
+    Start APScheduler inside the web process (Render web service).
+    NOTE: If you scale to multiple instances, each instance will run this job.
+    In that case prefer Render Cron calling /tasks/mail/poll (single runner).
+    """
+    global _scheduler
+
+    enabled = os.getenv("MAIL_AUTO_SCAN_ENABLED", "1").lower() in ("1", "true", "yes", "on")
+    interval_min = int(os.getenv("MAIL_SCAN_INTERVAL_MIN", os.getenv("MAIL_POLL_EVERY_MIN", "5")))
+
+    # Safety bounds
+    if interval_min < 1:
+        interval_min = 1
+    if interval_min > 60:
+        interval_min = 60
+
+    _scheduler = BackgroundScheduler(timezone="UTC")
+
+    # heartbeat every 10 minutes (helps confirm it’s running in logs)
+    _scheduler.add_job(_heartbeat_job, "interval", minutes=10, id="heartbeat", replace_existing=True)
+
+    if enabled:
+        _scheduler.add_job(
+            _mail_scan_job,
+            "interval",
+            minutes=interval_min,
+            id="mail_auto_scan",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("Auto mail scan enabled каж interval=%s min", interval_min)
+    else:
+        logger.info("Auto mail scan disabled by MAIL_AUTO_SCAN_ENABLED=0")
+
+    _scheduler.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    global _scheduler
+    try:
+        if _scheduler:
+            _scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+    _scheduler = None
