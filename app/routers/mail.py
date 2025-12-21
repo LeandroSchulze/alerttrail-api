@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from fastapi import APIRouter, Request, Depends, Form
+from fastapi import APIRouter, Request, Depends, Form, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.security import get_current_user_cookie
@@ -56,7 +56,8 @@ def _user_id(user: Dict[str, Any]) -> str:
 
 
 def _load_linked() -> Dict[str, Any]:
-    return _load_json(LINKED_FILE, {}) or {}
+    data = _load_json(LINKED_FILE, {}) or {}
+    return data if isinstance(data, dict) else {}
 
 
 def _save_linked(all_linked: Dict[str, Any]) -> None:
@@ -92,16 +93,25 @@ def _scan_file_for(user: Dict[str, Any]) -> Path:
     return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
 
 
+def _truthy(v: Optional[str]) -> bool:
+    if v is None:
+        return False
+    return str(v).strip().lower() in ("1", "true", "yes", "on", "checked")
+
+
 # -----------------------------
 # IMAP scanning (simple MVP)
 # -----------------------------
+def _imap_client(server: str, port: int, use_ssl: bool):
+    if use_ssl:
+        ctx = ssl.create_default_context()
+        return imaplib.IMAP4_SSL(server, port, ssl_context=ctx)
+    return imaplib.IMAP4(server, port)
+
+
 def _imap_count(server: str, port: int, use_ssl: bool, username: str, password: str, folder: str) -> int:
     folder = folder or "INBOX"
-    if use_ssl:
-        imap = imaplib.IMAP4_SSL(server, port, ssl_context=ssl.create_default_context())
-    else:
-        imap = imaplib.IMAP4(server, port)
-
+    imap = _imap_client(server, port, use_ssl)
     try:
         imap.login(username, password)
         imap.select(folder, readonly=True)
@@ -127,13 +137,12 @@ def _imap_sample_headers(
     limit: int = 25,
 ) -> List[Dict[str, Any]]:
     """
-    Trae últimos N mensajes con headers básicos (FROM/SUBJECT/DATE).
+    Trae una muestra pequeña (últimos N) con headers básicos.
+    Además arma campos compatibles con tu template mail_scan_result:
+      item.sender / item.subject / item.verdict
     """
     folder = folder or "INBOX"
-    if use_ssl:
-        imap = imaplib.IMAP4_SSL(server, port, ssl_context=ssl.create_default_context())
-    else:
-        imap = imaplib.IMAP4(server, port)
+    imap = _imap_client(server, port, use_ssl)
 
     try:
         imap.login(username, password)
@@ -170,7 +179,22 @@ def _imap_sample_headers(
                 elif low.startswith("date:"):
                     dt = line[5:].strip()
 
-            out.append({"from": frm, "subject": subj, "date": dt})
+            # verdict por ahora “placeholder” (después lo cambiamos por reglas/IA)
+            verdict = "OK"
+            if "paypal" in subj.lower() or "verify" in subj.lower() or "contraseña" in subj.lower():
+                verdict = "REVISAR"
+
+            out.append(
+                {
+                    # campos "raw"
+                    "from": frm,
+                    "subject": subj,
+                    "date": dt,
+                    # campos compatibles con mail_scan_result.html
+                    "sender": frm or "—",
+                    "verdict": verdict,
+                }
+            )
 
         return out
     finally:
@@ -178,31 +202,6 @@ def _imap_sample_headers(
             imap.logout()
         except Exception:
             pass
-
-
-def _verdict_for(sender: str, subject: str) -> str:
-    """
-    Heurística mínima (MVP) para mostrar un "veredicto" simple.
-    """
-    s = (sender or "").lower()
-    subj = (subject or "").lower()
-
-    suspicious_keywords = [
-        "verify", "verification", "password", "reset", "invoice", "payment",
-        "urgent", "action required", "security", "suspend", "locked",
-        "cuenta", "verificar", "contraseña", "restablecer", "factura", "pago",
-        "urgente", "acción requerida", "seguridad", "suspendida", "bloqueada",
-    ]
-
-    suspicious = any(k in subj for k in suspicious_keywords)
-    if suspicious:
-        return "SUSPECT"
-
-    # si el from está vacío o muy raro
-    if not s or "@" not in s:
-        return "UNKNOWN"
-
-    return "OK"
 
 
 # -----------------------------
@@ -240,7 +239,16 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     lang = get_lang(request)
     plan = _compute_plan(user)
     linked = _load_linked().get(_user_id(user))
+
+    # cargar último scan guardado
     last_scan = _load_json(_scan_file_for(user), None)
+    if not isinstance(last_scan, dict):
+        last_scan = {}
+
+    # ✅ PASAMOS LISTA SEGURA PARA EL TEMPLATE (evita last_scan.items)
+    scan_items = last_scan.get("items", [])
+    if not isinstance(scan_items, list):
+        scan_items = []
 
     return templates.TemplateResponse(
         "mail_scanner.html",
@@ -254,12 +262,14 @@ def mail_scanner(request: Request, user=Depends(get_user)):
             "defaults": _defaults_from_env(),
             "linked": linked,
             "last_scan": last_scan,
+            "scan_items": scan_items,
         },
     )
 
 
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
+    # compat con links viejos
     return RedirectResponse(url="/mail", status_code=302)
 
 
@@ -304,11 +314,6 @@ def mail_settings_save(
     pwd = (password or imap_password or "").strip()
     fld = (folder or imap_folder or "INBOX").strip() or "INBOX"
 
-    def _truthy(v: Optional[str]) -> bool:
-        if v is None:
-            return False
-        return str(v).lower() in ("1", "true", "yes", "on", "checked")
-
     ssl_on = _truthy(use_ssl) or _truthy(imap_ssl)
     mark_on = _truthy(mark_read) or _truthy(imap_mark_read)
 
@@ -319,7 +324,6 @@ def mail_settings_save(
         "password": not bool(pwd),
     }
     if any(missing.values()):
-        # debug rápido (si querés, después lo cambiamos por flash message)
         return {
             "ok": False,
             "error": "Faltan campos requeridos",
@@ -333,7 +337,7 @@ def mail_settings_save(
         "server": srv,
         "port": int(prt),
         "username": usr,
-        "password": pwd,  # TODO: cifrar (si querés lo enchufamos con FERNET_SECRET)
+        "password": pwd,  # (si después cifrás, cambia acá)
         "folder": fld,
         "use_ssl": bool(ssl_on),
         "mark_read": bool(mark_on),
@@ -348,11 +352,11 @@ def mail_settings_save(
 def mail_scan(
     request: Request,
     user=Depends(get_user),
-    limit: int = 25,  # permite /mail/scan?limit=20
+    limit: int = Query(25, ge=1, le=200),
 ):
     """
-    Ejecuta un scan rápido y muestra un resultado simple.
-    Guarda un resumen en /var/data/mail/scan_last_<user>.json
+    Endpoint que ejecuta un scan rápido y muestra un resultado.
+    Además guarda un resumen en /var/data/mail/scan_last_<user>.json
     para que /mail/scanner pueda mostrarlo.
     """
     if not user:
@@ -360,21 +364,8 @@ def mail_scan(
 
     lang = get_lang(request)
 
-    # clamp del limit
-    try:
-        limit = int(limit)
-    except Exception:
-        limit = 25
-    if limit < 1:
-        limit = 1
-    if limit > 50:
-        limit = 50
-
     linked = _load_linked().get(_user_id(user))
     if not linked:
-        summary = "No hay cuenta IMAP vinculada. Configurá primero en /mail."
-        result = {"ok": False, "error": summary, "items": [], "total": 0, "summary": summary}
-        _save_json(_scan_file_for(user), result)
         return templates.TemplateResponse(
             "mail_scan_result.html",
             {
@@ -382,10 +373,8 @@ def mail_scan(
                 "lang": lang,
                 "t": t,
                 "ok": False,
-                "error": summary,
-                "summary": summary,
+                "summary": "No hay cuenta IMAP vinculada. Configurá primero en /mail.",
                 "items": [],
-                "result": result,
             },
             status_code=400,
         )
@@ -403,85 +392,50 @@ def mail_scan(
         "server": server,
         "folder": folder,
         "total": 0,
-        "summary": "",
         "items": [],
         "error": None,
-        "limit": limit,
+        "limit": int(limit),
     }
 
     try:
         total = _imap_count(server, port, use_ssl, username, password, folder)
-        headers = _imap_sample_headers(server, port, use_ssl, username, password, folder, limit=limit)
-
-        items_for_template: List[Dict[str, Any]] = []
-        for h in headers:
-            sender = h.get("from", "") or ""
-            subject = h.get("subject", "") or ""
-            verdict = _verdict_for(sender, subject)
-            items_for_template.append({"sender": sender, "subject": subject, "verdict": verdict})
-
-        summary = f"Scan IMAP OK ✅ — Servidor: {server} — Carpeta: {folder} — Correos encontrados: {total}"
+        items = _imap_sample_headers(server, port, use_ssl, username, password, folder, limit=int(limit))
 
         result["ok"] = True
         result["total"] = total
-        result["summary"] = summary
-        result["items"] = items_for_template
+        result["items"] = items
 
         _save_json(_scan_file_for(user), result)
 
-        ctx = {
-            "request": request,
-            "lang": lang,
-            "t": t,
-            "ok": True,
-            "error": None,
+        summary = f"Scan IMAP OK ✅ | Carpeta: {folder} | Correos encontrados: {total} | Mostrando: {len(items)}"
 
-            # lo que tu mail_scan_result.html espera
-            "summary": summary,
-            "items": items_for_template,
-
-            # compat si en otro template usan esto
-            "result": result,
-            "total": total,
-            "server": server,
-            "folder": folder,
-        }
-
-        # si Jinja explota, mostrar el error en pantalla (evita 500 ciego)
-        try:
-            templates.get_template("mail_scan_result.html").render(**ctx)
-        except Exception as te:
-            return HTMLResponse(
-                content=f"<h1>Template error</h1><pre>{str(te)}</pre>",
-                status_code=500,
-            )
-
-        return templates.TemplateResponse("mail_scan_result.html", ctx)
-
+        # Tu template actual espera summary + items con sender/subject/verdict
+        return templates.TemplateResponse(
+            "mail_scan_result.html",
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "ok": True,
+                "summary": summary,
+                "items": items,
+                "result": result,
+            },
+        )
     except Exception as e:
-        summary = f"Scan IMAP ERROR ❌ — {str(e)}"
         result["error"] = str(e)
-        result["summary"] = summary
-
         _save_json(_scan_file_for(user), result)
 
-        ctx = {
-            "request": request,
-            "lang": lang,
-            "t": t,
-            "ok": False,
-            "error": str(e),
-            "summary": summary,
-            "items": [],
-            "result": result,
-        }
-
-        try:
-            templates.get_template("mail_scan_result.html").render(**ctx)
-        except Exception as te:
-            return HTMLResponse(
-                content=f"<h1>Template error</h1><pre>{str(te)}</pre>",
-                status_code=500,
-            )
-
-        return templates.TemplateResponse("mail_scan_result.html", ctx, status_code=500)
+        return templates.TemplateResponse(
+            "mail_scan_result.html",
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "ok": False,
+                "summary": f"Error de IMAP: {str(e)}",
+                "items": [],
+                "result": result,
+            },
+            status_code=500,
+        )
