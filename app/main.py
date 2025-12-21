@@ -86,7 +86,7 @@ def root():
     return RedirectResponse(url="/dashboard", status_code=302)
 
 
-# ✅ Render (and some proxies) probe with HEAD /
+# ✅ Render/proxies may probe HEAD /
 @app.head("/", include_in_schema=False)
 def root_head():
     return Response(status_code=200)
@@ -95,11 +95,18 @@ def root_head():
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     lang = get_lang_from_request(request)
+
+    # ✅ Fix mínimo y seguro: el template usa `user` y `current_user`
+    # para mostrar el nombre/email; si no existen, Jinja lanza UndefinedError.
+    empty_user = {"name": None, "email": None}
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "lang": lang,
+            "user": empty_user,
+            "current_user": empty_user,
         },
     )
 
