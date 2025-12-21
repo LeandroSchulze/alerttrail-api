@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t(lang, "mail.scan_result_title") }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="card">
+    <h1>{{ t(lang, "mail.scan_result_title") }}</h1>
+    <p>{{ summary }}</p>
+
+    {% if items and items|length > 0 %}
+      <ul>
+        {% for item in items %}
+          <li>
+            <b>{{ item.sender }}</b> — {{ item.subject }}
+            → <b>{{ item.verdict }}</b>
+            {% if item.score is defined %} ({{ item.score }}/100){% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p style="color:#64748b;">{{ t(lang, "mail.no_items") }}</p>
+    {% endif %}
+
+    <p><a href="/mail/scanner">{{ t(lang, "common.back") }}</a> · <a href="/dashboard">{{ t(lang, "common.back_dashboard") }}</a></p>
+  </div>
+</body>
+</html>
