@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -17,6 +17,9 @@ from app.i18n import get_lang_from_request
 # Routers
 from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
 from app.routers import tasks_mail  # cron / task endpoints
+
+# ✅ Push notifications router (Web Push)
+from app.routers import push
 
 # Background scheduler (auto mail scan)
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -61,6 +64,9 @@ app.include_router(admin.router)
 # Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
 
+# ✅ Push endpoints (/push/*)
+app.include_router(push.router)
+
 # misc / ui
 app.include_router(profile.router)
 app.include_router(reports.router)
@@ -90,6 +96,17 @@ def root():
 @app.head("/", include_in_schema=False)
 def root_head():
     return Response(status_code=200)
+
+
+# ✅ Service Worker must be served at site root for correct scope (/)
+# Many browsers require SW to be under the scope you want notifications for.
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    sw_path = STATIC_DIR / "sw.js"
+    if not sw_path.exists():
+        # fallback: some projects keep it in templates or other place; keep it explicit
+        return Response(status_code=404)
+    return FileResponse(str(sw_path), media_type="application/javascript")
 
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
