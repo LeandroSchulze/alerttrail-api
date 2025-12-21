@@ -1,10 +1,13 @@
 # app/routers/mail.py
-import os, json, re, imaplib
-from datetime import datetime, timezone
+from __future__ import annotations
+
+import os
+import json
+import ssl
+import imaplib
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from email.header import decode_header
-from email.utils import parseaddr
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -15,18 +18,20 @@ from app.i18n import get_lang, t
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 
+# Persistencia (Render disk)
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
-SCANS_DIR = MAIL_DATA_DIR / "scans"
-SCANS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# -----------------------------
+# Helpers storage
+# -----------------------------
 def _load_json(path: Path, default):
-    if not path.exists():
-        return default
     try:
+        if not path.exists():
+            return default
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
@@ -37,8 +42,25 @@ def _save_json(path: Path, data) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _user_id(user: Dict[str, Any]) -> str:
+    """
+    Evita KeyError si el JWT trae 'id' o 'email' en vez de 'sub'.
+    """
+    if not user:
+        return "anon"
+    for k in ("sub", "id", "user_id", "email"):
+        v = user.get(k)
+        if v:
+            return str(v)
+    return "unknown"
+
+
 def _load_linked() -> Dict[str, Any]:
-    return _load_json(LINKED_FILE, {})
+    return _load_json(LINKED_FILE, {}) or {}
+
+
+def _save_linked(all_linked: Dict[str, Any]) -> None:
+    _save_json(LINKED_FILE, all_linked)
 
 
 def _defaults_from_env() -> Dict[str, Any]:
@@ -66,90 +88,96 @@ def get_user(request: Request):
     return get_current_user_cookie(request)
 
 
-def _user_id(user: Dict[str, Any]) -> str:
-    # sub suele ser int/str. Lo normalizamos.
-    return str(user.get("sub") or user.get("id") or "unknown")
-
-
 def _scan_file_for(user: Dict[str, Any]) -> Path:
-    return SCANS_DIR / _user_id(user) / "last_scan.json"
+    return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
 
 
-def _decode_mime_header(value: str) -> str:
-    if not value:
-        return ""
-    parts = decode_header(value)
-    out = []
-    for txt, enc in parts:
-        if isinstance(txt, bytes):
-            try:
-                out.append(txt.decode(enc or "utf-8", errors="replace"))
-            except Exception:
-                out.append(txt.decode("utf-8", errors="replace"))
-        else:
-            out.append(txt)
-    return "".join(out).strip()
-
-
-def _risk_score(from_s: str, subject: str) -> Dict[str, Any]:
-    """
-    Scoring simple (0-100) por reglas.
-    """
-    score = 0
-    reasons: List[str] = []
-
-    f = (from_s or "").lower()
-    s = (subject or "").lower()
-
-    # Palabras típicas de phishing
-    phishing_words = [
-        ("verify", 25),
-        ("verification", 20),
-        ("password", 25),
-        ("urgent", 20),
-        ("security", 15),
-        ("login", 15),
-        ("suspend", 20),
-        ("locked", 20),
-        ("confirm", 15),
-        ("update", 10),
-        ("invoice", 10),
-        ("payment", 12),
-    ]
-
-    for w, pts in phishing_words:
-        if w in s:
-            score += pts
-            reasons.append(f"subject:{w}")
-
-    # Links sospechosos en subject (a veces aparecen)
-    if "http://" in s or "https://" in s:
-        score += 15
-        reasons.append("subject:link")
-
-    # From raro: dominios “random” o display name extraño
-    name, addr = parseaddr(from_s or "")
-    domain = addr.split("@")[-1].lower() if "@" in addr else ""
-    if addr and domain and domain.count(".") == 0:
-        score += 10
-        reasons.append("from:domain-weird")
-
-    # Muchos números en el from/name
-    if re.search(r"\d{5,}", (name or "") + " " + (addr or "")):
-        score += 10
-        reasons.append("from:many-digits")
-
-    # Clamp
-    score = max(0, min(100, score))
-    return {"score": score, "reasons": reasons}
-
-
-def _imap_connect(server: str, port: int, use_ssl: bool):
+# -----------------------------
+# IMAP scanning (simple MVP)
+# -----------------------------
+def _imap_count(server: str, port: int, use_ssl: bool, username: str, password: str, folder: str) -> int:
+    folder = folder or "INBOX"
     if use_ssl:
-        return imaplib.IMAP4_SSL(server, port)
-    return imaplib.IMAP4(server, port)
+        imap = imaplib.IMAP4_SSL(server, port, ssl_context=ssl.create_default_context())
+    else:
+        imap = imaplib.IMAP4(server, port)
+
+    try:
+        imap.login(username, password)
+        imap.select(folder, readonly=True)
+        typ, data = imap.search(None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            return 0
+        ids = data[0].split()
+        return len(ids)
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
 
 
+def _imap_sample_headers(
+    server: str,
+    port: int,
+    use_ssl: bool,
+    username: str,
+    password: str,
+    folder: str,
+    limit: int = 25,
+) -> List[Dict[str, Any]]:
+    """
+    Trae una muestra pequeña (últimos N) con headers básicos.
+    Esto no es análisis de phishing todavía; sirve para que el usuario vea "resultados".
+    """
+    folder = folder or "INBOX"
+    if use_ssl:
+        imap = imaplib.IMAP4_SSL(server, port, ssl_context=ssl.create_default_context())
+    else:
+        imap = imaplib.IMAP4(server, port)
+
+    try:
+        imap.login(username, password)
+        imap.select(folder, readonly=True)
+        typ, data = imap.search(None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            return []
+
+        ids = data[0].split()
+        # últimos N
+        ids = ids[-limit:] if len(ids) > limit else ids
+
+        out: List[Dict[str, Any]] = []
+        for mid in reversed(ids):  # más recientes primero
+            typ2, msg_data = imap.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            if typ2 != "OK" or not msg_data:
+                continue
+            raw = msg_data[0][1].decode(errors="ignore") if msg_data[0] and len(msg_data[0]) > 1 else ""
+            # parseo simple
+            frm = ""
+            subj = ""
+            dt = ""
+            for line in raw.splitlines():
+                low = line.lower()
+                if low.startswith("from:"):
+                    frm = line[5:].strip()
+                elif low.startswith("subject:"):
+                    subj = line[8:].strip()
+                elif low.startswith("date:"):
+                    dt = line[5:].strip()
+
+            out.append({"from": frm, "subject": subj, "date": dt})
+        return out
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+# -----------------------------
+# Routes
+# -----------------------------
 @router.get("/", response_class=HTMLResponse)
 def mail_index(request: Request, user=Depends(get_user)):
     if not user:
@@ -157,6 +185,7 @@ def mail_index(request: Request, user=Depends(get_user)):
 
     lang = get_lang(request)
     plan = _compute_plan(user)
+
     linked = _load_linked().get(_user_id(user))
 
     return templates.TemplateResponse(
@@ -175,10 +204,6 @@ def mail_index(request: Request, user=Depends(get_user)):
 
 
 @router.get("/scanner", response_class=HTMLResponse)
-import traceback
-from fastapi.responses import PlainTextResponse
-
-@router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
@@ -187,179 +212,192 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     plan = _compute_plan(user)
     linked = _load_linked().get(_user_id(user))
 
-    last_scan = None
-    scan_error = None
+    # cargar último scan guardado
+    last_scan = _load_json(_scan_file_for(user), None)
 
-    scan_file = _scan_file_for(user)
-    if scan_file.exists():
-        data = _load_json(scan_file, None)
-        if isinstance(data, dict):
-            last_scan = data
-            scan_error = data.get("error")
-
-    try:
-        return templates.TemplateResponse(
-            "mail_scanner.html",
-            {
-                "request": request,
-                "lang": lang,
-                "t": t,
-                "current_user": user,
-                "user": user,
-                "plan": plan,
-                "defaults": _defaults_from_env(),
-                "linked": linked,
-                "last_scan": last_scan,
-                "scan_error": scan_error,
-            },
-        )
-    except Exception:
-        # MOSTRAR el error directamente en pantalla (sin necesitar logs)
-        return PlainTextResponse(traceback.format_exc(), status_code=500)
+    return templates.TemplateResponse(
+        "mail_scanner.html",
+        {
+            "request": request,
+            "lang": lang,
+            "t": t,
+            "current_user": user,
+            "user": user,
+            "plan": plan,
+            "defaults": _defaults_from_env(),
+            "linked": linked,
+            "last_scan": last_scan,  # para que el template muestre resultados
+        },
+    )
 
 
-# Compat viejo
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
+    # compat con links viejos
     return RedirectResponse(url="/mail", status_code=302)
 
 
 @router.post("/settings", include_in_schema=False)
-def mail_save_settings(
+def mail_settings_save(
     request: Request,
     user=Depends(get_user),
 
-    # IMPORTANTE: estos names deben matchear el <form>
-    email: str = Form(...),
-    server: str = Form(...),
-    port: int = Form(993),
-    username: str = Form(...),
-    password: str = Form(...),
-    folder: str = Form("INBOX"),
+    # Aceptamos ambos nombres: email/address, server/imap_server, username/imap_user...
+    email: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+
+    server: Optional[str] = Form(None),
+    imap_server: Optional[str] = Form(None),
+
+    port: Optional[int] = Form(None),
+    imap_port: Optional[int] = Form(None),
+
+    username: Optional[str] = Form(None),
+    imap_user: Optional[str] = Form(None),
+
+    password: Optional[str] = Form(None),
+    imap_password: Optional[str] = Form(None),
+
+    folder: Optional[str] = Form(None),
+    imap_folder: Optional[str] = Form(None),
+
     use_ssl: Optional[str] = Form(None),
+    imap_ssl: Optional[str] = Form(None),
+
     mark_read: Optional[str] = Form(None),
+    imap_mark_read: Optional[str] = Form(None),
 ):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    linked_all = _load_linked()
-    uid = _user_id(user)
+    # normalizar inputs
+    addr = (email or address or "").strip()
+    srv = (server or imap_server or "").strip()
+    prt = port or imap_port or 993
+    usr = (username or imap_user or "").strip()
+    pwd = (password or imap_password or "").strip()
+    fld = (folder or imap_folder or "INBOX").strip() or "INBOX"
 
-    linked_all[uid] = {
-        "address": email.strip(),
-        "server": server.strip(),
-        "port": int(port),
-        "username": username.strip(),
-        "password": password,  # <- si ya tenés cifrado, acá va el encrypted blob
-        "folder": (folder or "INBOX").strip(),
-        "use_ssl": bool(use_ssl),     # checkbox => "on" o None
-        "mark_read": bool(mark_read), # checkbox => "on" o None
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+    def _truthy(v: Optional[str]) -> bool:
+        if v is None:
+            return False
+        return str(v).lower() in ("1", "true", "yes", "on", "checked")
+
+    ssl_on = _truthy(use_ssl) or _truthy(imap_ssl)
+    mark_on = _truthy(mark_read) or _truthy(imap_mark_read)
+
+    # Si el form no manda server/email, damos un error legible en /mail/settings
+    missing = {
+        "email": not bool(addr),
+        "server": not bool(srv),
+        "username": not bool(usr),
+        "password": not bool(pwd),
     }
+    if any(missing.values()):
+        # devolvemos una respuesta simple para debug rápido
+        # (lo ideal después: volver a /mail con flash message)
+        return {
+            "ok": False,
+            "error": "Faltan campos requeridos",
+            "missing": missing,
+            "hint": 'Revisá que el <form> tenga name=email (o address), server, username, password (o aliases imap_*)',
+        }
 
-    _save_json(LINKED_FILE, linked_all)
+    # guardamos por usuario
+    all_linked = _load_linked()
+    all_linked[_user_id(user)] = {
+        "address": addr,
+        "server": srv,
+        "port": int(prt),
+        "username": usr,
+        "password": pwd,  # (si ya tenés cifrado en otra parte, reemplazar acá)
+        "folder": fld,
+        "use_ssl": bool(ssl_on),
+        "mark_read": bool(mark_on),
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    _save_linked(all_linked)
 
-    # volvemos a /mail
     return RedirectResponse(url="/mail", status_code=303)
 
 
 @router.get("/scan", response_class=HTMLResponse)
-def mail_scan(request: Request, user=Depends(get_user), limit: int = 20):
+def mail_scan(request: Request, user=Depends(get_user)):
     """
-    Hace scan de headers de los últimos N emails, guarda resultado en last_scan.json
-    y redirige al scanner para mostrar tabla.
+    Endpoint que ejecuta un scan rápido y muestra un resultado simple.
+    Además guarda un resumen en /var/data/mail/scan_last_<user>.json
+    para que /mail/scanner pueda mostrarlo.
     """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    limit = max(1, min(int(limit or 20), 200))
-    uid = _user_id(user)
+    lang = get_lang(request)
 
-    linked = _load_linked().get(uid)
-    defaults = _defaults_from_env()
+    linked = _load_linked().get(_user_id(user))
+    if not linked:
+        return templates.TemplateResponse(
+            "mail_scan_result.html",
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "ok": False,
+                "error": "No hay cuenta IMAP vinculada. Configurá primero en /mail.",
+            },
+            status_code=400,
+        )
 
-    out = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "found": 0,
-        "folder": None,
+    server = linked.get("server") or "imap.gmail.com"
+    port = int(linked.get("port") or 993)
+    folder = linked.get("folder") or "INBOX"
+    use_ssl = bool(linked.get("use_ssl", True))
+    username = linked.get("username") or linked.get("address") or ""
+    password = linked.get("password") or ""
+
+    result: Dict[str, Any] = {
+        "ok": False,
+        "scanned_at": datetime.utcnow().isoformat() + "Z",
+        "server": server,
+        "folder": folder,
+        "total": 0,
         "items": [],
         "error": None,
     }
 
-    if not linked:
-        out["error"] = "No hay una cuenta IMAP vinculada. Configurala en /mail."
-        _save_json(_scan_file_for(user), out)
-        return RedirectResponse(url="/mail/scanner", status_code=303)
-
-    server = (linked.get("server") or defaults["server"] or "").strip()
-    port = int(linked.get("port") or defaults["port"] or 993)
-    folder = (linked.get("folder") or defaults["folder"] or "INBOX").strip()
-    use_ssl = bool(linked.get("use_ssl")) if "use_ssl" in linked else bool(defaults["use_ssl"])
-    username = (linked.get("username") or "").strip()
-    password = linked.get("password") or ""  # si está cifrado, acá deberías descifrar
-
-    out["folder"] = folder
-
     try:
-        imap = _imap_connect(server, port, use_ssl)
-        imap.login(username, password)
+        total = _imap_count(server, port, use_ssl, username, password, folder)
+        items = _imap_sample_headers(server, port, use_ssl, username, password, folder, limit=25)
 
-        # SELECT folder
-        typ, _ = imap.select(folder, readonly=not bool(linked.get("mark_read")))
-        if typ != "OK":
-            raise RuntimeError(f"No se pudo abrir carpeta {folder}")
+        result["ok"] = True
+        result["total"] = total
+        result["items"] = items
 
-        # Buscar todos, tomar últimos N
-        typ, data = imap.search(None, "ALL")
-        if typ != "OK":
-            raise RuntimeError("IMAP search failed")
+        # guardar para que /mail/scanner muestre resultados
+        _save_json(_scan_file_for(user), result)
 
-        ids = (data[0] or b"").split()
-        out["found"] = len(ids)
-
-        last_ids = ids[-limit:] if len(ids) > limit else ids
-        last_ids = list(reversed(last_ids))  # más nuevos primero
-
-        items = []
-        for msg_id in last_ids:
-            # Solo headers
-            typ, msg_data = imap.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-            if typ != "OK" or not msg_data:
-                continue
-
-            raw = msg_data[0][1].decode("utf-8", errors="replace")
-
-            # parse simple
-            from_line = ""
-            subject_line = ""
-            date_line = ""
-            for line in raw.splitlines():
-                if line.lower().startswith("from:"):
-                    from_line = line[5:].strip()
-                elif line.lower().startswith("subject:"):
-                    subject_line = line[8:].strip()
-                elif line.lower().startswith("date:"):
-                    date_line = line[5:].strip()
-
-            from_dec = _decode_mime_header(from_line)
-            subj_dec = _decode_mime_header(subject_line)
-
-            risk = _risk_score(from_dec, subj_dec)
-
-            items.append({
-                "id": msg_id.decode("ascii", errors="ignore") if isinstance(msg_id, (bytes, bytearray)) else str(msg_id),
-                "from": from_dec,
-                "subject": subj_dec,
-                "date": date_line,
-                "score": risk["score"],
-                "reasons": risk["reasons"],
-            })
-
-        out["items"] = items
-        imap.logout()
-
+        return templates.TemplateResponse(
+            "mail_scan_result.html",
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "ok": True,
+                "result": result,
+            },
+        )
     except Exception as e:
-        out["error"] = str(e)
+        result["error"] = str(e)
+        _save_json(_scan_file_for(user), result)
 
-    _save_json(_scan_file_for(user), out)
-    return RedirectResponse(url="/mail/scanner", status_code=303)
+        return templates.TemplateResponse(
+            "mail_scan_result.html",
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "ok": False,
+                "error": str(e),
+                "result": result,
+            },
+            status_code=500,
+        )
