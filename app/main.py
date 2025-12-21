@@ -18,6 +18,9 @@ from app.i18n import get_lang_from_request
 from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
 from app.routers import tasks_mail  # cron / task endpoints
 
+# ✅ UI router for /mail/connect (connect/replace mailbox via browser)
+from app.routers import mail_ui
+
 # ✅ Push notifications router (Web Push)
 from app.routers import push
 
@@ -67,6 +70,9 @@ app.include_router(billing.router)
 # ✅ Push endpoints (/push/*)
 app.include_router(push.router)
 
+# ✅ Mail connect UI (/mail/connect)
+app.include_router(mail_ui.router)
+
 # misc / ui
 app.include_router(profile.router)
 app.include_router(reports.router)
@@ -99,12 +105,10 @@ def root_head():
 
 
 # ✅ Service Worker must be served at site root for correct scope (/)
-# Many browsers require SW to be under the scope you want notifications for.
 @app.get("/sw.js", include_in_schema=False)
 def service_worker():
     sw_path = STATIC_DIR / "sw.js"
     if not sw_path.exists():
-        # fallback: some projects keep it in templates or other place; keep it explicit
         return Response(status_code=404)
     return FileResponse(str(sw_path), media_type="application/javascript")
 
