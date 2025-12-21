@@ -295,7 +295,6 @@ def get_scan_summary(host: str, port: int, use_ssl: bool, username: str, passwor
 
 # --- Compat layer: scan_mailbox() ---
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
 
 @dataclass
 class MailAnalysis:
@@ -395,3 +394,16 @@ def scan_mailbox(
         dangerous=int(summary.get("dangerous") or 0),
         message=summary.get("message"),
     )
+
+
+# --- NEW: scheduler compatibility ---
+def scan_all_connected_mailboxes() -> Dict[str, Any]:
+    """
+    Compat para el scheduler del main.py.
+    Reusa app.services.mail.scan_all_inboxes() que ya usa linked_accounts.json.
+    """
+    try:
+        from app.services.mail import scan_all_inboxes
+        return scan_all_inboxes()
+    except Exception as e:
+        return {"ok": False, "linked": 0, "scanned": 0, "errors": 1, "error": str(e)}
