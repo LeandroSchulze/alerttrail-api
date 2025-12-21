@@ -292,3 +292,106 @@ def get_scan_summary(host: str, port: int, use_ssl: bool, username: str, passwor
     except Exception as e:
         return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
                 "marked_seen": False, "message": f"Error: {e}", "items": []}
+
+# --- Compat layer: scan_mailbox() ---
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
+
+@dataclass
+class MailAnalysis:
+    risk_score: int = 0
+    danger_level: str = ""
+    reasons: List[str] = None
+    iocs: Dict[str, Any] = None
+    hints: Dict[str, Any] = None
+
+    def __post_init__(self):
+        self.reasons = self.reasons or []
+        self.iocs = self.iocs or {}
+        self.hints = self.hints or {}
+
+@dataclass
+class MailItem:
+    uid: str = ""
+    subject: str = ""
+    from_email: str = ""
+    date: str = ""
+    attachments: List[str] = None
+    analysis: MailAnalysis = None
+
+    def __post_init__(self):
+        self.attachments = self.attachments or []
+        self.analysis = self.analysis or MailAnalysis()
+
+@dataclass
+class MailScanResult:
+    ok: bool = False
+    items: List[MailItem] = None
+    total_found: int = 0
+    unread: int = 0
+    total: int = 0
+    counts: Dict[str, Any] = None
+    dangerous: int = 0
+    message: Optional[str] = None
+
+    def __post_init__(self):
+        self.items = self.items or []
+        self.counts = self.counts or {}
+
+def scan_mailbox(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    folder: str = "INBOX",
+    use_ssl: bool = True,
+    limit: int = 20,
+    mark_read: bool = False,
+) -> MailScanResult:
+    """
+    Wrapper compatible con el router: devuelve un objeto con .items y .total_found.
+    Internamente usa get_scan_summary() existente.
+    """
+    summary = get_scan_summary(
+        host=host,
+        username=username,
+        password=password,
+        port=port,
+        use_ssl=use_ssl,
+        folder=folder,
+        max_msgs=int(limit),
+        mark_seen=bool(mark_read),
+    )
+
+    raw_items = summary.get("items") or []
+    items: List[MailItem] = []
+
+    for it in raw_items:
+        analysis = it.get("analysis") or {}
+        items.append(
+            MailItem(
+                uid=str(it.get("uid") or it.get("id") or ""),
+                subject=str(it.get("subject") or ""),
+                from_email=str(it.get("from") or it.get("from_email") or ""),
+                date=str(it.get("date") or ""),
+                attachments=list(it.get("attachments") or []),
+                analysis=MailAnalysis(
+                    risk_score=int(analysis.get("risk_score") or analysis.get("score") or 0),
+                    danger_level=str(analysis.get("danger_level") or ""),
+                    reasons=list(analysis.get("reasons") or []),
+                    iocs=dict(analysis.get("iocs") or {}),
+                    hints=dict(analysis.get("hints") or {}),
+                ),
+            )
+        )
+
+    return MailScanResult(
+        ok=bool(summary.get("ok")),
+        items=items,
+        total_found=len(items),
+        unread=int(summary.get("unread") or 0),
+        total=int(summary.get("total") or 0),
+        counts=dict(summary.get("counts") or {}),
+        dangerous=int(summary.get("dangerous") or 0),
+        message=summary.get("message"),
+    )
