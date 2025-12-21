@@ -27,8 +27,8 @@ from app.routers import (
     alerts,
     i18n,
     billing,
-    push,        # ✅ restore push router
-    alerts_pro,  # ✅ optional but safe: uses same queue models
+    push,        # ✅ needed for desktop notifications (Web Push)
+    alerts_pro,  # ✅ pro alerts helpers/flows (if you had it working before)
 )
 from app.routers import tasks_mail  # cron / task endpoints
 
@@ -74,16 +74,14 @@ app.include_router(admin.router)
 # Billing
 app.include_router(billing.router)
 
-# ✅ Push + Pro alerts (desktop notifications + prefs)
-app.include_router(push.router)
-app.include_router(alerts_pro.router)
-
 # misc / ui
 app.include_router(profile.router)
 app.include_router(reports.router)
 app.include_router(tools.router)
 app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
+app.include_router(alerts_pro.router)  # ✅
+app.include_router(push.router)        # ✅ (subscribe + send push)
 app.include_router(i18n.router)
 
 # cron/task endpoints (Render cron can hit /tasks/mail/poll)
@@ -109,13 +107,13 @@ def root_head():
     return Response(status_code=200)
 
 
-# ✅ Service Worker must be served at root because push.js registers "/sw.js"
+# ✅ IMPORTANT: Service Worker must be served from site root: /sw.js
 @app.get("/sw.js", include_in_schema=False)
 def service_worker():
     sw_path = STATIC_DIR / "sw.js"
     if not sw_path.exists():
+        # keep it explicit; if missing, push will never work
         return Response(status_code=404)
-    # FileResponse sets correct headers for caching/content-type
     return FileResponse(str(sw_path), media_type="application/javascript")
 
 
