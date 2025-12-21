@@ -177,5 +177,19 @@
   "mail.scanner_no_saved_prefix": "No hay casilla guardada en",
   "mail.scanner_no_saved_suffix": "(opcional).",
   "mail.scan_now": "Ejecutar scan ahora",
-  "mail.email": "Dirección de correo"
+  "mail.email": "Dirección de correo",
+
+  "mail.last_scan": "Último scan",
+  "mail.emails": "correos",
+  "mail.showing": "Mostrando",
+  "mail.scan_result_title": "Resultado de escaneo",
+  "mail.scan_failed": "Falló el escaneo",
+  "mail.scan_ok_summary": "Scan IMAP OK ✅ | Servidor: {server} | Carpeta: {folder} | Correos: {total} | Mostrando: {shown}",
+  "mail.date": "Fecha",
+  "mail.from": "De",
+  "mail.subject": "Asunto",
+  "mail.risk": "Riesgo",
+  "mail.reasons": "Motivos",
+  "mail.no_items": "No hay items para mostrar."
+
 }
