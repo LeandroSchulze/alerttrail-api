@@ -7,103 +7,108 @@
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/alert_clients.js" defer></script>
 </head>
-
 <body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
   <div style="max-width:980px;margin:20px auto;padding:0 16px 32px;">
-
-    <h1 style="margin:0 0 6px;font-size:1.45rem;">
-      {{ t(lang, "mail.scanner_title") }}
-    </h1>
-
+    <h1 style="margin:0 0 6px;font-size:1.45rem;">{{ t(lang, "mail.scanner_title") }}</h1>
     <p style="margin:0 0 14px;color:#64748b;">
       {{ t(lang, "mail.scanner_subtitle_env") }}
     </p>
 
-    <div style="background:white;border:1px solid #dbeafe;border-radius:14px;padding:14px;
-                box-shadow:0 10px 25px rgba(15,23,42,.06);">
-
+    <div style="background:white;border:1px solid #dbeafe;border-radius:14px;padding:14px;box-shadow:0 10px 25px rgba(15,23,42,.06);">
       {% if linked %}
         <div style="margin-bottom:10px;">
-          <div style="font-weight:600;">Casilla guardada:</div>
+          <div style="font-weight:600;margin-bottom:2px;">{{ t(lang, "mail.linked_label") }}</div>
           <div style="color:#334155;">{{ linked.address }}</div>
         </div>
       {% else %}
-        <p style="color:#475569;">
+        <p style="margin:0 0 10px;color:#475569;">
           {{ t(lang, "mail.scanner_no_saved_prefix") }}
           <a href="/mail" style="color:#0369a1;text-decoration:none;">/mail</a>
           {{ t(lang, "mail.scanner_no_saved_suffix") }}
         </p>
       {% endif %}
 
-      <!-- BOTONES -->
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <a href="/mail/scan?limit=20"
-           style="padding:9px 14px;border-radius:999px;
-                  background:linear-gradient(135deg,#22c55e,#0ea5e9);
-                  color:white;font-weight:700;text-decoration:none;">
-          Ejecutar scan ahora (20)
+           style="text-decoration:none;border:none;padding:9px 14px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:700;">
+          {{ t(lang, "mail.scan_now") }} (20)
         </a>
 
         <a href="/mail/scan?limit=50"
-           style="padding:9px 14px;border-radius:999px;
-                  border:1px solid #cbd5f5;background:white;
-                  color:#0f172a;font-weight:700;text-decoration:none;">
-          Ejecutar scan ahora (50)
+           style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:9px 14px;border-radius:999px;background:#ffffff;color:#0f172a;font-weight:700;">
+          {{ t(lang, "mail.scan_now") }} (50)
         </a>
 
         <a href="/mail"
-           style="padding:9px 14px;border-radius:999px;
-                  border:1px solid #cbd5f5;background:#f8fafc;
-                  color:#0f172a;text-decoration:none;">
-          Volver
+           style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:9px 14px;border-radius:999px;background:#f8fafc;color:#0f172a;">
+          {{ t(lang, "common.back") }}
         </a>
       </div>
 
-      {% if last_scan %}
-        <div style="margin-top:14px;background:#f1f5f9;border:1px solid #e2e8f0;
-                    border-radius:12px;padding:12px;">
+      {% if last_scan and last_scan.error %}
+        <div style="margin-top:12px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:12px;padding:10px 12px;">
+          <b>{{ t(lang, "mail.scan_failed") }}:</b> {{ last_scan.error }}
+        </div>
+      {% endif %}
 
-          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;">
+      {% if last_scan and (scan_items|length > 0 or last_scan.ts) %}
+        <div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <div>
-              <b>Último scan</b><br>
-              <span style="color:#475569;font-size:.9rem;">
-                {{ last_scan.scanned_at or "-" }}
-              </span>
+              <div style="font-weight:800;">{{ t(lang, "mail.last_scan") }}</div>
+              <div style="color:#475569;font-size:.92rem;">{{ last_scan.ts or "—" }}</div>
             </div>
-
             <div style="text-align:right;">
-              <b>{{ last_scan.total or 0 }} correos</b><br>
-              <span style="color:#475569;font-size:.9rem;">
-                Carpeta: {{ last_scan.folder or "INBOX" }}
-              </span>
+              <div style="font-weight:800;">
+                {{ last_scan.found or 0 }} {{ t(lang, "mail.emails") }}
+              </div>
+              <div style="color:#475569;font-size:.92rem;">
+                {{ t(lang, "mail.folder") }}: {{ last_scan.folder or 'INBOX' }}
+              </div>
+              {% if last_scan.limit %}
+                <div style="color:#64748b;font-size:.85rem;">
+                  {{ t(lang, "mail.showing") }}: {{ scan_items|length }} / {{ last_scan.limit }}
+                </div>
+              {% endif %}
             </div>
           </div>
 
-          {% if scan_items and scan_items|length > 0 %}
-            <div style="margin-top:12px;overflow:auto;">
+          {% if scan_items|length > 0 %}
+            <div style="margin-top:10px;overflow:auto;">
               <table style="width:100%;border-collapse:collapse;font-size:.95rem;">
                 <thead>
-                  <tr>
-                    <th style="text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;">Fecha</th>
-                    <th style="text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;">De</th>
-                    <th style="text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;">Asunto</th>
-                    <th style="text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;">Riesgo</th>
+                  <tr style="text-align:left;">
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">{{ t(lang, "mail.date") }}</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">{{ t(lang, "mail.from") }}</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">{{ t(lang, "mail.subject") }}</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">{{ t(lang, "mail.risk") }}</th>
+                    <th style="padding:10px 8px;border-bottom:1px solid #e2e8f0;">{{ t(lang, "mail.reasons") }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {% for it in scan_items %}
                     <tr>
-                      <td style="padding:8px;border-bottom:1px solid #f1f5f9;">
-                        {{ it.date or "—" }}
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;color:#475569;white-space:nowrap;">
+                        {{ it.date or '—' }}
                       </td>
-                      <td style="padding:8px;border-bottom:1px solid #f1f5f9;">
-                        {{ it.sender or it.from or "—" }}
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">
+                        {{ it.from or '—' }}
                       </td>
-                      <td style="padding:8px;border-bottom:1px solid #f1f5f9;">
-                        {{ it.subject or "—" }}
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;">
+                        {{ it.subject or '—' }}
                       </td>
-                      <td style="padding:8px;border-bottom:1px solid #f1f5f9;">
-                        {{ it.verdict or "OK" }}
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;white-space:nowrap;">
+                        <span style="display:inline-block;padding:4px 10px;border-radius:999px;
+                          {% if (it.score or 0) >= 70 %} background:#fee2e2;color:#991b1b;border:1px solid #fecaca;
+                          {% elif (it.score or 0) >= 40 %} background:#ffedd5;color:#9a3412;border:1px solid #fed7aa;
+                          {% else %} background:#dcfce7;color:#166534;border:1px solid #bbf7d0;
+                          {% endif %}
+                        ">
+                          {{ it.score or 0 }}/100
+                        </span>
+                      </td>
+                      <td style="padding:10px 8px;border-bottom:1px solid #f1f5f9;color:#475569;">
+                        {{ (it.reasons or [])|join(", ") if it.reasons else "—" }}
                       </td>
                     </tr>
                   {% endfor %}
@@ -111,33 +116,27 @@
               </table>
             </div>
           {% else %}
-            <div style="margin-top:10px;color:#64748b;">
-              No hay resultados para mostrar.
-            </div>
+            <div style="margin-top:10px;color:#475569;">{{ t(lang, "mail.no_items") }}</div>
           {% endif %}
         </div>
       {% endif %}
 
       {% if defaults %}
-        <div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;
-                    border-radius:12px;padding:10px;">
-          <b>{{ t(lang, "mail.effective_params") }}</b>
+        <div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;">
+          <div style="font-weight:700;margin-bottom:6px;">{{ t(lang, "mail.effective_params") }}</div>
           <div style="font-size:.92rem;color:#334155;">
-            <div><b>Servidor:</b> {{ defaults.server }}</div>
-            <div><b>Puerto:</b> {{ defaults.port }}</div>
-            <div><b>SSL:</b> {{ "Sí" if defaults.use_ssl else "No" }}</div>
-            <div><b>Carpeta:</b> {{ defaults.folder }}</div>
+            <div><b>{{ t(lang, "mail.server") }}</b> {{ defaults.server or '—' }}</div>
+            <div><b>{{ t(lang, "mail.port") }}</b> {{ defaults.port }}</div>
+            <div><b>{{ t(lang, "mail.use_ssl") }}</b> {{ t(lang, "common.yes") if defaults.use_ssl else t(lang, "common.no") }}</div>
+            <div><b>{{ t(lang, "mail.folder") }}</b> {{ defaults.folder or 'INBOX' }}</div>
+            <div><b>{{ t(lang, "mail.mark_read") }}</b> {{ t(lang, "common.yes") if defaults.mark_read else t(lang, "common.no") }}</div>
           </div>
         </div>
       {% endif %}
-
     </div>
 
     <div style="height:14px;"></div>
-    <a href="/dashboard" style="color:#0369a1;text-decoration:none;">
-      ← Volver al dashboard
-    </a>
-
+    <a href="/dashboard" style="color:#0369a1;text-decoration:none;">← {{ t(lang, "common.back_dashboard") }}</a>
   </div>
 </body>
 </html>
