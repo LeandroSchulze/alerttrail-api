@@ -127,8 +127,7 @@ def _imap_sample_headers(
     limit: int = 25,
 ) -> List[Dict[str, Any]]:
     """
-    Trae una muestra pequeña (últimos N) con headers básicos.
-    Devuelve: [{from, subject, date}]
+    Trae últimos N mensajes con headers básicos (FROM/SUBJECT/DATE).
     """
     folder = folder or "INBOX"
     if use_ssl:
@@ -154,9 +153,10 @@ def _imap_sample_headers(
 
             raw = ""
             try:
-                raw = msg_data[0][1].decode(errors="ignore")
+                if msg_data[0] and len(msg_data[0]) > 1 and msg_data[0][1]:
+                    raw = msg_data[0][1].decode(errors="ignore")
             except Exception:
-                pass
+                raw = ""
 
             frm = ""
             subj = ""
@@ -171,6 +171,7 @@ def _imap_sample_headers(
                     dt = line[5:].strip()
 
             out.append({"from": frm, "subject": subj, "date": dt})
+
         return out
     finally:
         try:
@@ -181,20 +182,26 @@ def _imap_sample_headers(
 
 def _verdict_for(sender: str, subject: str) -> str:
     """
-    MVP: veredicto muy simple (luego lo mejoramos con reglas/IA).
+    Heurística mínima (MVP) para mostrar un "veredicto" simple.
     """
-    s = (subject or "").lower()
-    f = (sender or "").lower()
+    s = (sender or "").lower()
+    subj = (subject or "").lower()
 
-    suspicious_words = [
-        "verify", "verification", "password", "urgent", "alert", "suspend",
-        "login", "account", "security", "invoice", "factura", "pago", "payment"
+    suspicious_keywords = [
+        "verify", "verification", "password", "reset", "invoice", "payment",
+        "urgent", "action required", "security", "suspend", "locked",
+        "cuenta", "verificar", "contraseña", "restablecer", "factura", "pago",
+        "urgente", "acción requerida", "seguridad", "suspendida", "bloqueada",
     ]
 
-    if any(w in s for w in suspicious_words):
-        return "SUSPICIOUS"
-    if not sender or "@" not in f:
+    suspicious = any(k in subj for k in suspicious_keywords)
+    if suspicious:
+        return "SUSPECT"
+
+    # si el from está vacío o muy raro
+    if not s or "@" not in s:
         return "UNKNOWN"
+
     return "OK"
 
 
@@ -208,7 +215,6 @@ def mail_index(request: Request, user=Depends(get_user)):
 
     lang = get_lang(request)
     plan = _compute_plan(user)
-
     linked = _load_linked().get(_user_id(user))
 
     return templates.TemplateResponse(
@@ -234,7 +240,6 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     lang = get_lang(request)
     plan = _compute_plan(user)
     linked = _load_linked().get(_user_id(user))
-
     last_scan = _load_json(_scan_file_for(user), None)
 
     return templates.TemplateResponse(
@@ -255,7 +260,6 @@ def mail_scanner(request: Request, user=Depends(get_user)):
 
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
-    # compat con links viejos
     return RedirectResponse(url="/mail", status_code=302)
 
 
@@ -292,6 +296,7 @@ def mail_settings_save(
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
+    # normalizar inputs
     addr = (email or address or "").strip()
     srv = (server or imap_server or "").strip()
     prt = port or imap_port or 993
@@ -314,6 +319,7 @@ def mail_settings_save(
         "password": not bool(pwd),
     }
     if any(missing.values()):
+        # debug rápido (si querés, después lo cambiamos por flash message)
         return {
             "ok": False,
             "error": "Faltan campos requeridos",
@@ -327,7 +333,7 @@ def mail_settings_save(
         "server": srv,
         "port": int(prt),
         "username": usr,
-        "password": pwd,  # (si ya tenés cifrado en otra parte, reemplazar acá)
+        "password": pwd,  # TODO: cifrar (si querés lo enchufamos con FERNET_SECRET)
         "folder": fld,
         "use_ssl": bool(ssl_on),
         "mark_read": bool(mark_on),
@@ -339,22 +345,48 @@ def mail_settings_save(
 
 
 @router.get("/scan", response_class=HTMLResponse)
-def mail_scan(request: Request, user=Depends(get_user)):
+def mail_scan(
+    request: Request,
+    user=Depends(get_user),
+    limit: int = 25,  # permite /mail/scan?limit=20
+):
     """
     Ejecuta un scan rápido y muestra un resultado simple.
-    Guarda también el último resultado en /var/data/mail/scan_last_<user>.json
+    Guarda un resumen en /var/data/mail/scan_last_<user>.json
+    para que /mail/scanner pueda mostrarlo.
     """
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
     lang = get_lang(request)
 
+    # clamp del limit
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 25
+    if limit < 1:
+        limit = 1
+    if limit > 50:
+        limit = 50
+
     linked = _load_linked().get(_user_id(user))
     if not linked:
         summary = "No hay cuenta IMAP vinculada. Configurá primero en /mail."
+        result = {"ok": False, "error": summary, "items": [], "total": 0, "summary": summary}
+        _save_json(_scan_file_for(user), result)
         return templates.TemplateResponse(
             "mail_scan_result.html",
-            {"request": request, "summary": summary, "items": []},
+            {
+                "request": request,
+                "lang": lang,
+                "t": t,
+                "ok": False,
+                "error": summary,
+                "summary": summary,
+                "items": [],
+                "result": result,
+            },
             status_code=400,
         )
 
@@ -365,12 +397,7 @@ def mail_scan(request: Request, user=Depends(get_user)):
     username = linked.get("username") or linked.get("address") or ""
     password = linked.get("password") or ""
 
-    # Formato que el template espera
-    summary = ""
-    view_items: List[Dict[str, Any]] = []
-
-    # Formato guardado para /mail/scanner (last_scan)
-    saved: Dict[str, Any] = {
+    result: Dict[str, Any] = {
         "ok": False,
         "scanned_at": datetime.utcnow().isoformat() + "Z",
         "server": server,
@@ -379,50 +406,82 @@ def mail_scan(request: Request, user=Depends(get_user)):
         "summary": "",
         "items": [],
         "error": None,
+        "limit": limit,
     }
 
     try:
         total = _imap_count(server, port, use_ssl, username, password, folder)
-        headers = _imap_sample_headers(server, port, use_ssl, username, password, folder, limit=25)
+        headers = _imap_sample_headers(server, port, use_ssl, username, password, folder, limit=limit)
 
+        items_for_template: List[Dict[str, Any]] = []
         for h in headers:
             sender = h.get("from", "") or ""
             subject = h.get("subject", "") or ""
             verdict = _verdict_for(sender, subject)
-            view_items.append(
-                {
-                    "sender": sender,
-                    "subject": subject,
-                    "verdict": verdict,
-                }
-            )
+            items_for_template.append({"sender": sender, "subject": subject, "verdict": verdict})
 
         summary = f"Scan IMAP OK ✅ — Servidor: {server} — Carpeta: {folder} — Correos encontrados: {total}"
-        saved["ok"] = True
-        saved["total"] = total
-        saved["summary"] = summary
-        saved["items"] = view_items
 
-        _save_json(_scan_file_for(user), saved)
+        result["ok"] = True
+        result["total"] = total
+        result["summary"] = summary
+        result["items"] = items_for_template
 
-        return templates.TemplateResponse(
-            "mail_scan_result.html",
-            {
-                "request": request,
-                "lang": lang,
-                "t": t,
-                "summary": summary,
-                "items": view_items,
-            },
-        )
+        _save_json(_scan_file_for(user), result)
+
+        ctx = {
+            "request": request,
+            "lang": lang,
+            "t": t,
+            "ok": True,
+            "error": None,
+
+            # lo que tu mail_scan_result.html espera
+            "summary": summary,
+            "items": items_for_template,
+
+            # compat si en otro template usan esto
+            "result": result,
+            "total": total,
+            "server": server,
+            "folder": folder,
+        }
+
+        # si Jinja explota, mostrar el error en pantalla (evita 500 ciego)
+        try:
+            templates.get_template("mail_scan_result.html").render(**ctx)
+        except Exception as te:
+            return HTMLResponse(
+                content=f"<h1>Template error</h1><pre>{str(te)}</pre>",
+                status_code=500,
+            )
+
+        return templates.TemplateResponse("mail_scan_result.html", ctx)
+
     except Exception as e:
         summary = f"Scan IMAP ERROR ❌ — {str(e)}"
-        saved["error"] = str(e)
-        saved["summary"] = summary
-        _save_json(_scan_file_for(user), saved)
+        result["error"] = str(e)
+        result["summary"] = summary
 
-        return templates.TemplateResponse(
-            "mail_scan_result.html",
-            {"request": request, "summary": summary, "items": []},
-            status_code=500,
-        )
+        _save_json(_scan_file_for(user), result)
+
+        ctx = {
+            "request": request,
+            "lang": lang,
+            "t": t,
+            "ok": False,
+            "error": str(e),
+            "summary": summary,
+            "items": [],
+            "result": result,
+        }
+
+        try:
+            templates.get_template("mail_scan_result.html").render(**ctx)
+        except Exception as te:
+            return HTMLResponse(
+                content=f"<h1>Template error</h1><pre>{str(te)}</pre>",
+                status_code=500,
+            )
+
+        return templates.TemplateResponse("mail_scan_result.html", ctx, status_code=500)
