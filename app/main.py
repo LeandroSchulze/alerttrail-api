@@ -15,21 +15,28 @@ from app.ui import templates
 from app.i18n import get_lang_from_request
 
 # Routers
-from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
+from app.routers import (
+    auth,
+    analysis,
+    mail,
+    admin,
+    reports,
+    profile,
+    tools,
+    scheduler_status,
+    alerts,
+    i18n,
+    billing,
+    push,        # ✅ restore push router
+    alerts_pro,  # ✅ optional but safe: uses same queue models
+)
 from app.routers import tasks_mail  # cron / task endpoints
-
-# ✅ UI router for /mail/connect (connect/replace mailbox via browser)
-from app.routers import mail_ui
-
-# ✅ Push notifications router (Web Push)
-from app.routers import push
 
 # Background scheduler (auto mail scan)
 from apscheduler.schedulers.background import BackgroundScheduler
 
 logger = logging.getLogger("alerttrail")
 mail_logger = logging.getLogger("alerttrail.mail")
-
 
 APP_NAME = os.getenv("APP_NAME", "AlertTrail")
 SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
@@ -64,14 +71,12 @@ app.include_router(analysis.router)
 app.include_router(mail.router)
 app.include_router(admin.router)
 
-# Billing (this is the one that provides /billing/subscriptions and /billing/payments)
+# Billing
 app.include_router(billing.router)
 
-# ✅ Push endpoints (/push/*)
+# ✅ Push + Pro alerts (desktop notifications + prefs)
 app.include_router(push.router)
-
-# ✅ Mail connect UI (/mail/connect)
-app.include_router(mail_ui.router)
+app.include_router(alerts_pro.router)
 
 # misc / ui
 app.include_router(profile.router)
@@ -104,12 +109,13 @@ def root_head():
     return Response(status_code=200)
 
 
-# ✅ Service Worker must be served at site root for correct scope (/)
+# ✅ Service Worker must be served at root because push.js registers "/sw.js"
 @app.get("/sw.js", include_in_schema=False)
 def service_worker():
     sw_path = STATIC_DIR / "sw.js"
     if not sw_path.exists():
         return Response(status_code=404)
+    # FileResponse sets correct headers for caching/content-type
     return FileResponse(str(sw_path), media_type="application/javascript")
 
 
@@ -161,7 +167,6 @@ def _mail_scan_job():
         from app.services.mail_scan import scan_all_connected_mailboxes
 
         out = scan_all_connected_mailboxes()
-        # out is typically a dict summary; log a compact version
         mail_logger.info("AUTO_MAIL_SCAN OK: %s", out)
     except Exception as e:
         mail_logger.exception("AUTO_MAIL_SCAN ERROR: %s", e)
