@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -35,6 +35,9 @@ REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_NAME)
+
+# ✅ Needed for routers that expect request.app.state.templates
+app.state.templates = templates
 
 # Session cookies (for a few UI flows; JWT auth stays in your security.py)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
@@ -81,6 +84,12 @@ def health():
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse(url="/dashboard", status_code=302)
+
+
+# ✅ Render (and some proxies) probe with HEAD /
+@app.head("/", include_in_schema=False)
+def root_head():
+    return Response(status_code=200)
 
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
@@ -170,7 +179,7 @@ def on_startup():
             max_instances=1,
             coalesce=True,
         )
-        logger.info("Auto mail scan enabled каж interval=%s min", interval_min)
+        logger.info("Auto mail scan enabled interval=%s min", interval_min)
     else:
         logger.info("Auto mail scan disabled by MAIL_AUTO_SCAN_ENABLED=0")
 
