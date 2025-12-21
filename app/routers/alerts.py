@@ -1,127 +1,69 @@
 # app/routers/alerts.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
-
-from app.ui import templates
-from app.i18n import get_lang_from_request, t
-from app.security import get_current_user_cookie
-
-# DB (optional for pending alerts)
-from app.database import get_db
 from sqlalchemy.orm import Session
 
-router = APIRouter(tags=["alerts"])
+from app.database import get_db
+from app.models_pro_alerts import ProAlertQueue
+from app.security import get_current_user_cookie
+
+router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
-def _user_id_from_any(user: Any) -> Optional[int]:
+def _infer_level(title: str, message: str) -> str:
+    blob = f"{title or ''} {message or ''}".lower()
+    if "alto" in blob or "high" in blob or "crítico" in blob or "critico" in blob:
+        return "high"
+    if "medio" in blob or "medium" in blob:
+        return "medium"
+    if "bajo" in blob or "low" in blob:
+        return "low"
+    return "info"
+
+
+@router.get("/pending")
+def pending_alerts(request: Request, db: Session = Depends(get_db)):
     """
-    Tries to extract a numeric user id from whatever get_current_user_cookie returns
-    (dict payload, ORM model, etc.). Returns None if not possible.
+    Endpoint que usa el frontend (polling) para mostrar toasts / popups:
+      GET /alerts/pending  ->  { "alerts": [ {id,title,message,level,url} ] }
+
+    - Si no hay usuario logueado, devuelve lista vacía (no rompe el JS).
+    - Consume (borra) los items de la cola para no repetirlos.
     """
-    if user is None:
-        return None
-    if isinstance(user, dict):
-        # some setups store id under "id"; others store subject in "sub"
-        if user.get("id") is not None:
-            try:
-                return int(user["id"])
-            except Exception:
-                return None
-        if user.get("sub") is not None:
-            try:
-                return int(user["sub"])
-            except Exception:
-                return None
-        return None
-    # ORM-like object
-    for key in ("id", "user_id"):
-        if hasattr(user, key):
-            try:
-                return int(getattr(user, key))
-            except Exception:
-                return None
-    return None
+    try:
+        user = get_current_user_cookie(request, db)
+    except Exception:
+        return {"alerts": []}
 
-
-def _is_pro_user(user: Any) -> bool:
-    """
-    Conservative PRO check. If we can't determine, we return False (safe default).
-    """
-    if user is None:
-        return False
-    if isinstance(user, dict):
-        plan = (user.get("plan") or "").upper()
-        return plan == "PRO"
-    plan = getattr(user, "plan", None) or getattr(user, "tier", None) or ""
-    return str(plan).upper() == "PRO"
-
-
-@router.get("/alerts", response_class=HTMLResponse, include_in_schema=False)
-def alerts_page(request: Request, user=Depends(get_current_user_cookie)):
-    lang = get_lang_from_request(request)
-    # keep template params minimal and safe
-    return templates.TemplateResponse(
-        "alerts.html",
-        {
-            "request": request,
-            "lang": lang,
-            "t": t,
-            "current_user": user,
-        },
+    rows = (
+        db.query(ProAlertQueue)
+        .filter(ProAlertQueue.user_id == user.id)
+        .order_by(ProAlertQueue.created_at.asc(), ProAlertQueue.id.asc())
+        .limit(10)
+        .all()
     )
 
+    if not rows:
+        return {"alerts": []}
 
-@router.get("/alerts/pending", include_in_schema=False)
-def alerts_pending(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_cookie),
-):
-    """
-    Endpoint polled by the UI to check if there are pending desktop alerts.
-    If the PRO alert queue model isn't present, or user isn't PRO, returns empty.
-    """
-    # If not PRO, don't break the UI; just return empty.
-    if not _is_pro_user(user):
-        return {"count": 0, "items": []}
-
-    user_id = _user_id_from_any(user)
-    if not user_id:
-        return {"count": 0, "items": []}
-
-    # Import lazily so we don't break startup if the file/model isn't present.
-    try:
-        from app.models_pro_alerts import ProAlertQueue  # type: ignore
-    except Exception:
-        return {"count": 0, "items": []}
-
-    try:
-        rows = (
-            db.query(ProAlertQueue)
-            .filter(ProAlertQueue.user_id == user_id)
-            .order_by(ProAlertQueue.created_at.desc())
-            .limit(10)
-            .all()
+    alerts_out = []
+    for r in rows:
+        title = (r.title or "").strip()
+        message = (r.body or "").strip()
+        alerts_out.append(
+            {
+                "id": r.id,
+                "title": title or "Alerta",
+                "message": message or "",
+                "level": _infer_level(title, message),
+                "url": r.url or "",
+            }
         )
 
-        items: List[Dict[str, Any]] = []
-        for r in rows:
-            items.append(
-                {
-                    "id": getattr(r, "id", None),
-                    "title": getattr(r, "title", "") or "",
-                    "body": getattr(r, "body", "") or "",
-                    "url": getattr(r, "url", None),
-                    "created_at": getattr(r, "created_at", None).isoformat()
-                    if getattr(r, "created_at", None)
-                    else None,
-                }
-            )
+    # ✅ consumir la cola (evita duplicados en el polling)
+    for r in rows:
+        db.delete(r)
+    db.commit()
 
-        return {"count": len(items), "items": items}
-    except Exception:
-        # Never break the dashboard polling
-        return {"count": 0, "items": []}
+    return {"alerts": alerts_out}
