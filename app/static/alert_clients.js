@@ -1,34 +1,76 @@
-// Polling de alertas – AlertTrail
+// app/static/alert_clients.js
+// AlertTrail - Desktop popups + Toasts
+
 (function () {
-  const INTERVAL_MS = 30000; // 30s
+  const POLL_MS = Number(window.ALERT_POLL_MS || 10000);
   let lastId = null;
+  let permissionAsked = false;
 
-  async function check() {
+  function notifyToast(a) {
     try {
-      const res = await fetch("/alerts/pending", { credentials: "include" });
-      if (!res.ok) return;
-      const data = await res.json();
-      // Estructura esperada: { ok: true, pending: bool, alert: {id, title, message, level} }
-      if (data && data.pending && data.alert) {
-        if (data.alert.id && data.alert.id === lastId) return; // evitar repetidos
-        lastId = data.alert.id || Date.now();
-
-        const lvl = (data.alert.level || "").toLowerCase();
-        const title = data.alert.title || "Alerta";
-        const msg = data.alert.message || "Hay una alerta pendiente.";
-
-        if (lvl === "high" || lvl === "error") toaster.error(title, msg);
-        else if (lvl === "medium" || lvl === "warn") toaster.warning(title, msg);
-        else toaster.info(title, msg);
+      if (window.toaster && typeof window.toaster.notify === 'function') {
+        window.toaster.notify(a.title || 'Alerta', a.body || '', a.severity || 'info');
+        return true;
       }
+    } catch (e) {}
+    return false;
+  }
+
+  async function ensureNotificationPermission() {
+    if (!('Notification' in window)) return 'unsupported';
+    if (Notification.permission === 'granted') return 'granted';
+    if (Notification.permission === 'denied') return 'denied';
+    if (permissionAsked) return Notification.permission;
+
+    permissionAsked = true;
+    try {
+      const p = await Notification.requestPermission();
+      return p;
     } catch (e) {
-      // en silencio para no molestar al usuario
+      return Notification.permission;
     }
   }
 
-  // primer chequeo rápido y luego cada INTERVAL_MS
-  window.addEventListener("load", () => {
-    check();
-    setInterval(check, INTERVAL_MS);
-  });
+  async function notifyNative(a) {
+    try {
+      const perm = await ensureNotificationPermission();
+      if (perm !== 'granted') return false;
+
+      const n = new Notification(a.title || 'Alerta', {
+        body: a.body || '',
+        tag: a.id || undefined,
+      });
+
+      setTimeout(() => {
+        try { n.close(); } catch (e) {}
+      }, 12000);
+
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/alerts/pending', { credentials: 'include' });
+      if (!r.ok) return;
+
+      const data = await r.json();
+      if (!data || !data.ok || !data.pending || !data.alert) return;
+
+      const a = data.alert;
+      if (!a || !a.id) return;
+      if (lastId && String(a.id) === String(lastId)) return;
+
+      lastId = a.id;
+      notifyToast(a);
+      await notifyNative(a);
+    } catch (e) {
+      // no-op
+    }
+  }
+
+  setTimeout(poll, 2500);
+  setInterval(poll, POLL_MS);
 })();
