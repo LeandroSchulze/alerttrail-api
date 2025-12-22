@@ -9,6 +9,7 @@ SUSP_ATTACH_EXT = {
     ".jar", ".lnk", ".msi", ".reg", ".hta", ".apk", ".dmg", ".pkg",
     ".iso", ".img", ".bin", ".dll", ".com"
 }
+# extensiones con doble extensión engañosa
 DOUBLE_EXT_RE = re.compile(r"\.(pdf|docx?|xlsx?|pptx?)\.(zip|rar|7z|exe|js)$", re.I)
 
 PHISH_PATTERNS = [
@@ -18,6 +19,7 @@ PHISH_PATTERNS = [
     r"factura vencida", r"bloqueado por seguridad"
 ]
 
+# --- patrones simples de QR-phishing
 QR_PATTERNS = [
     r"\bcódigo\s*qr\b", r"\bqr\s*code\b", r"\bscan(ea|ea[rn])?\b.*\b(código|code)\b",
     r"\bescane(a|á)\b", r"paga(r)?\b.*\bqr\b", r"autenticaci[oó]n\b.*\bqr\b"
@@ -26,19 +28,26 @@ QR_PATTERNS = [
 URL_RE = re.compile(r"https?://[^\s\"'>)]+", re.I)
 OTP_RE = re.compile(r"\b(\d{6})\b")
 
+# dominios y TLDs sospechosos
 SUSP_TLDS = (".zip", ".mov")
+
+# punycode / IDN
 PUNYCODE_RE = re.compile(r"//[^/\s]*xn--", re.I)
+
 
 def _has_qr_hint(text: str, html: str) -> bool:
     blob = f"{text or ''} {html or ''}".lower()
     if any(re.search(p, blob, re.I) for p in QR_PATTERNS):
         return True
+    # heurística básica por filename/alt en <img>
     if re.search(r"<img[^>]+(alt|src)=['\"][^'\"]*(qr|codigo|c[oó]digo)[^'\"]*['\"]", html or "", re.I):
         return True
     return False
 
+
 def _has_punycode(urls: List[str]) -> bool:
     return any(PUNYCODE_RE.search(u) for u in urls)
+
 
 # ---------------- Utilidades ----------------
 def _decode_header(val: Any) -> str:
@@ -47,11 +56,17 @@ def _decode_header(val: Any) -> str:
     except Exception:
         return str(val or "")
 
+
 def _get_filename(part) -> str:
     filename = part.get_filename()
     return _decode_header(filename)
 
+
 def _collect_parts(msg) -> Tuple[str, str, List[Dict[str, Any]]]:
+    """
+    Devuelve (texto, html, attachments[]) donde cada attachment es:
+    {filename, content_type, size}
+    """
     text, html = "", ""
     atts: List[Dict[str, Any]] = []
 
@@ -73,6 +88,7 @@ def _collect_parts(msg) -> Tuple[str, str, List[Dict[str, Any]]]:
                 except Exception:
                     html += payload.decode("latin1", errors="ignore")
             else:
+                # adjuntos
                 fname = _get_filename(part)
                 if "attachment" in disp or fname:
                     payload = part.get_payload(decode=True) or b""
@@ -90,13 +106,23 @@ def _collect_parts(msg) -> Tuple[str, str, List[Dict[str, Any]]]:
 
     return text, html, atts
 
+
 def _score_email(subject: str, sender: str, text: str, html: str,
                  atts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Devuelve un dict con:
+      risk_score: 0..100
+      danger_level: low / medium / high
+      reasons: lista de motivos
+      iocs: {urls, otp_codes}
+      hints: {qr_phishing?: bool, punycode?: bool}
+    """
     reasons: List[str] = []
     iocs: Dict[str, Any] = {"urls": [], "otp_codes": []}
     hints: Dict[str, Any] = {}
     danger = 0
 
+    # URLs
     all_text = " ".join([subject or "", sender or "", text or "", html or ""])
     urls = URL_RE.findall(all_text)
     iocs["urls"] = urls
@@ -104,22 +130,26 @@ def _score_email(subject: str, sender: str, text: str, html: str,
         reasons.append("URLs con TLDs sospechosos (.zip/.mov)")
         danger += 2
 
+    # punycode / IDN
     if _has_punycode(urls):
         reasons.append("Dominio punycode (IDN) detectado")
         hints["punycode"] = True
         danger += 2
 
+    # Palabras típicas de phishing
     joined = (subject + " " + text).lower()
     if any(re.search(pat, joined, re.I) for pat in PHISH_PATTERNS):
         reasons.append("Patrones típicos de phishing")
         danger += 2
 
+    # OTP expuesto
     otps = OTP_RE.findall(joined)
     if otps:
         iocs["otp_codes"] = otps
         reasons.append("Código OTP expuesto en el cuerpo")
         danger += 1
 
+    # Adjuntos sospechosos
     for a in atts:
         fname = (a.get("filename") or "").lower()
         if not fname:
@@ -134,11 +164,13 @@ def _score_email(subject: str, sender: str, text: str, html: str,
             reasons.append(f"Adjunto comprimido: {fname}")
             danger += 1
 
+    # QR-phishing (heurístico)
     if _has_qr_hint(text, html):
         reasons.append("Posible intento de QR-phishing")
         hints["qr_phishing"] = True
         danger += 2
 
+    # Clasificación de riesgo
     if danger >= 5:
         level = "high"
     elif danger >= 2:
@@ -146,7 +178,18 @@ def _score_email(subject: str, sender: str, text: str, html: str,
     else:
         level = "low"
 
-    return {"danger_level": level, "reasons": reasons, "iocs": iocs, "hints": hints}
+    # ✅ risk_score real (0..100)
+    # Escala simple: cada punto de "danger" suma 20 (cap 100)
+    risk_score = min(100, max(0, int(danger * 20)))
+
+    return {
+        "risk_score": risk_score,
+        "danger_level": level,
+        "reasons": reasons,
+        "iocs": iocs,
+        "hints": hints,
+    }
+
 
 # ---------------- IMAP helpers ----------------
 class IMAPClient:
@@ -167,44 +210,49 @@ class IMAPClient:
         except Exception:
             pass
 
-def _select_latest_ids(M, max_msgs: int) -> List[bytes]:
-    """
-    Devuelve los IDs más recientes del mailbox.
-    Preferimos SORT (REVERSE DATE) si está disponible.
-    Fallback: ALL y últimos N.
-    """
-    # 1) Intentar SORT (Gmail lo soporta)
-    try:
-        if hasattr(M, "sort"):
-            typ, data = M.sort("REVERSE", "DATE", "UTF-8", "ALL")
-            if typ == "OK" and data and data[0]:
-                ids = data[0].split()
-                return ids[:max_msgs]
-    except Exception:
-        pass
 
-    # 2) Fallback simple
-    typ, data = M.search(None, "ALL")
-    ids = (data[0] or b"").split() if typ == "OK" else []
-    return ids[-max_msgs:]
-
-def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl: bool = True,
-               mailbox: str = "INBOX", max_msgs: int = 20) -> List[Dict[str, Any]]:
+def scan_inbox(
+    host: str,
+    username: str,
+    password: str,
+    port: int = 993,
+    use_ssl: bool = True,
+    mailbox: str = "INBOX",
+    max_msgs: int = 20
+) -> List[Dict[str, Any]]:
     """
-    Escanea la casilla IMAP y devuelve lista:
-      {uid, subject, from, date, attachments[], analysis{danger_level, reasons, iocs, hints}}
+    Escanea la casilla IMAP y devuelve una lista de dicts:
+      {uid, subject, from, date, attachments[], analysis{risk_score, danger_level, reasons, iocs, hints}}
     """
     results: List[Dict[str, Any]] = []
+
     with IMAPClient(host, port, use_ssl) as M:
         M.login(username, password)
         M.select(mailbox)
 
-        ids = _select_latest_ids(M, max_msgs=max_msgs)
+        ids: List[bytes] = []
+
+        # ✅ 1) Intentar SORT REVERSE DATE (Gmail lo soporta)
+        try:
+            typ, data = M.sort("REVERSE DATE", "UTF-8", "ALL")
+            if typ == "OK" and data and isinstance(data[0], (bytes, bytearray)):
+                ids = data[0].split()
+        except Exception:
+            ids = []
+
+        # ✅ 2) Fallback: ALL
+        if not ids:
+            typ, data = M.search(None, "ALL")
+            ids = (data[0] or b"").split() if typ == "OK" else []
+
+        # ids ya vienen "más recientes primero" si SORT funcionó
+        ids = ids[:max_msgs] if ids else []
 
         for uid in ids:
             typ, msg_data = M.fetch(uid, "(RFC822)")
             if typ != "OK" or not msg_data:
                 continue
+
             raw = msg_data[0][1]
             msg = email.message_from_bytes(raw)
 
@@ -216,7 +264,7 @@ def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl
             analysis = _score_email(subj, sender, text, html, atts)
 
             results.append({
-                "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
+                "uid": uid.decode() if isinstance(uid, (bytes, bytearray)) else str(uid),
                 "subject": subj,
                 "from": sender,
                 "date": date,
@@ -226,9 +274,21 @@ def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl
 
     return results
 
+
 # -------- Helper externo usado por /mail/scan --------
-def get_scan_summary(host: str, port: int, use_ssl: bool, username: str, password: str,
-                     folder: str, mark_seen: bool, max_msgs: int = 50) -> Dict[str, Any]:
+def get_scan_summary(
+    host: str,
+    port: int,
+    use_ssl: bool,
+    username: str,
+    password: str,
+    folder: str,
+    mark_seen: bool,
+    max_msgs: int = 50
+) -> Dict[str, Any]:
+    """
+    Conecta por IMAP y devuelve un resumen + items analizados (con iocs y hints).
+    """
     imap = None
     try:
         imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
@@ -248,17 +308,19 @@ def get_scan_summary(host: str, port: int, use_ssl: bool, username: str, passwor
         unseen_ids = (data[0] or b"").split() if typ == "OK" else []
         unread = len(unseen_ids)
 
-        items = scan_inbox(host, username, password, port, use_ssl, folder, max_msgs=max_msgs)
-
         try:
-            imap.close(); imap.logout()
+            imap.close()
+            imap.logout()
         except Exception:
             pass
 
+        items = scan_inbox(host, username, password, port, use_ssl, folder, max_msgs=max_msgs)
+
+        # resumen simple por niveles de severidad
         counts = {"low": 0, "medium": 0, "high": 0}
         dangerous = 0
         for it in items:
-            lvl = (it.get("analysis", {}) or {}).get("danger_level", "low")
+            lvl = ((it.get("analysis", {}) or {}).get("danger_level", "low") or "low").lower()
             counts[lvl] = counts.get(lvl, 0) + 1
             if lvl in ("medium", "high"):
                 dangerous += 1
@@ -275,22 +337,25 @@ def get_scan_summary(host: str, port: int, use_ssl: bool, username: str, passwor
         return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
                 "marked_seen": False, "message": f"Error: {e}", "items": []}
 
+
 # --- Compat layer: scan_mailbox() ---
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List as _List, Dict as _Dict, Any as _Any, Optional as _Optional
+
 
 @dataclass
 class MailAnalysis:
     risk_score: int = 0
     danger_level: str = ""
-    reasons: List[str] = None
-    iocs: Dict[str, Any] = None
-    hints: Dict[str, Any] = None
+    reasons: _List[str] = None
+    iocs: _Dict[str, _Any] = None
+    hints: _Dict[str, _Any] = None
 
     def __post_init__(self):
         self.reasons = self.reasons or []
         self.iocs = self.iocs or {}
         self.hints = self.hints or {}
+
 
 @dataclass
 class MailItem:
@@ -298,27 +363,29 @@ class MailItem:
     subject: str = ""
     from_email: str = ""
     date: str = ""
-    attachments: List[str] = None
+    attachments: _List[_Any] = None
     analysis: MailAnalysis = None
 
     def __post_init__(self):
         self.attachments = self.attachments or []
         self.analysis = self.analysis or MailAnalysis()
 
+
 @dataclass
 class MailScanResult:
     ok: bool = False
-    items: List[MailItem] = None
+    items: _List[MailItem] = None
     total_found: int = 0
     unread: int = 0
     total: int = 0
-    counts: Dict[str, Any] = None
+    counts: _Dict[str, _Any] = None
     dangerous: int = 0
-    message: Optional[str] = None
+    message: _Optional[str] = None
 
     def __post_init__(self):
         self.items = self.items or []
         self.counts = self.counts or {}
+
 
 def scan_mailbox(
     host: str,
@@ -330,6 +397,10 @@ def scan_mailbox(
     limit: int = 20,
     mark_read: bool = False,
 ) -> MailScanResult:
+    """
+    Wrapper compatible con el router: devuelve un objeto con .items y .total_found.
+    Internamente usa get_scan_summary() existente.
+    """
     summary = get_scan_summary(
         host=host,
         username=username,
@@ -342,7 +413,7 @@ def scan_mailbox(
     )
 
     raw_items = summary.get("items") or []
-    items: List[MailItem] = []
+    items: _List[MailItem] = []
 
     for it in raw_items:
         analysis = it.get("analysis") or {}
