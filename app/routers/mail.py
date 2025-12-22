@@ -16,7 +16,7 @@ from app.i18n import get_lang, t
 from app.security import get_current_user_cookie
 from app.ui import templates
 
-from app.services.mail_scan import scan_mailbox  # motor real
+from app.services.mail_scan import scan_mailbox  # ✅ motor real de riesgo
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 logger = logging.getLogger("alerttrail.mail")
@@ -96,13 +96,7 @@ def _compute_plan(user: Dict[str, Any]) -> str:
 
 
 def get_user(request: Request):
-    """
-    ✅ Importante: NO tirar 401 desde Depends, para que podamos redirigir a /auth/login.
-    """
-    try:
-        return get_current_user_cookie(request)
-    except Exception:
-        return None
+    return get_current_user_cookie(request)
 
 
 def _render_safe(template_name: str, context: Dict[str, Any], status_code: int = 200):
@@ -169,8 +163,8 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or last_scan_raw.get("ts") or "",
         "folder": last_scan_raw.get("folder") or "",
-        "found": int(last_scan_raw.get("total") or 0),
-        "limit": int(last_scan_raw.get("limit") or 0),
+        "found": last_scan_raw.get("total") if isinstance(last_scan_raw.get("total"), int) else last_scan_raw.get("found", 0),
+        "limit": last_scan_raw.get("limit", 0),
         "error": last_scan_raw.get("error"),
     }
 
@@ -241,6 +235,7 @@ def mail_settings_save(
             "ok": False,
             "error": "Faltan campos requeridos",
             "missing": missing,
+            "hint": "Revisá que el <form> tenga name=email (o address), server, username, password (o aliases imap_*)",
         }
 
     all_linked = _load_linked()
@@ -315,40 +310,44 @@ def mail_scan(
             mark_read=False,
         )
 
-        items = []
+        items: list[Dict[str, Any]] = []
         for it in scan_res.items:
-            level_raw = (getattr(it.analysis, "danger_level", "") or "low").lower()
-            reasons = getattr(it.analysis, "reasons", []) or []
+            level_raw = (getattr(it.analysis, "danger_level", "") or "").lower()
 
-            if level_raw in ("high", "alto"):
+            # score interno (para debug/alertas); en UI lo ocultamos
+            score = int(getattr(it.analysis, "risk_score", 0) or 0)
+            if score <= 0:
+                if level_raw == "high":
+                    score = 80
+                elif level_raw == "medium":
+                    score = 50
+                else:
+                    score = 10
+
+            verdict = "BAJO"
+            if level_raw == "high":
                 verdict = "ALTO"
-                badge = {"bg": "#fee2e2", "fg": "#991b1b", "bd": "#fecaca"}
-            elif level_raw in ("medium", "medio"):
+            elif level_raw == "medium":
                 verdict = "MEDIO"
-                badge = {"bg": "#ffedd5", "fg": "#9a3412", "bd": "#fed7aa"}
-            else:
-                verdict = "BAJO"
-                badge = {"bg": "#dcfce7", "fg": "#166534", "bd": "#bbf7d0"}
 
-            # ✅ Guardamos también analysis completo para /alerts/pending
-            analysis_dict = {
-                "risk_score": int(getattr(it.analysis, "risk_score", 0) or 0),
-                "danger_level": level_raw,
-                "reasons": reasons,
-                "iocs": dict(getattr(it.analysis, "iocs", {}) or {}),
-                "hints": dict(getattr(it.analysis, "hints", {}) or {}),
-            }
+            reasons = list(getattr(it.analysis, "reasons", []) or [])
 
-            items.append({
-                "uid": str(it.uid or ""),
-                "from": it.from_email or "—",
-                "subject": it.subject or "—",
-                "date": it.date or "",
-                "verdict": verdict,
-                "badge": badge,
-                "reasons": reasons,
-                "analysis": analysis_dict,
-            })
+            # ✅ guardamos también analysis (para /alerts/pending)
+            items.append(
+                {
+                    "uid": getattr(it, "uid", None) or getattr(it, "id", None) or "",
+                    "from": it.from_email,
+                    "subject": it.subject,
+                    "date": it.date or "",
+                    "verdict": verdict,   # UI
+                    "reasons": reasons,   # UI
+                    "analysis": {         # alerts/debug
+                        "danger_level": level_raw,
+                        "risk_score": score,
+                        "reasons": reasons,
+                    },
+                }
+            )
 
         result["ok"] = True
         result["total"] = int(scan_res.total_found or 0)
@@ -356,7 +355,8 @@ def mail_scan(
 
         _save_json(_scan_file_for(user), result)
 
-        summary = f"Scan IMAP OK ✅ | Server: {server} | Folder: {folder} | Found: {result['total']} | Showing: {len(items)}"
+        summary = "Scan IMAP OK ✅ | Server: {server} | Folder: {folder} | Found: {total} | Showing: {shown}"
+        summary = summary.format(server=server, folder=folder, total=result["total"], shown=len(items))
 
         return _render_safe(
             "mail_scan_result.html",
