@@ -223,3 +223,65 @@ td {
   color: #ecfeff;
 }
 
+/* =========================================================
+   ✅ Mail Scanner table: no se corta + scroll horizontal
+   ========================================================= */
+.table-wrap{
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 12px;
+  border: 1px solid rgba(226,232,240,.8);
+  background: #fff;
+}
+
+.mail-table{
+  width: 100%;
+  min-width: 980px; /* fuerza ancho para que no se comprima y se corte */
+  border-collapse: collapse;
+  font-size: .95rem;
+}
+
+.mail-table thead th{
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #0f172a;
+  font-weight: 800;
+  background: #ffffff;
+}
+
+.mail-table tbody td{
+  padding: 10px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+/* columnas */
+.mail-table .col-date{
+  white-space: nowrap;
+  color:#475569;
+  width: 210px;
+}
+
+.mail-table .col-risk{
+  white-space: nowrap;
+  width: 120px;
+}
+
+.mail-table .col-from{
+  width: 260px;
+  word-break: break-word;
+}
+
+.mail-table .col-subject{
+  width: 320px;
+  word-break: break-word;
+}
+
+.mail-table .col-reasons{
+  width: 360px;
+  color:#475569;
+  word-break: break-word;
+}
