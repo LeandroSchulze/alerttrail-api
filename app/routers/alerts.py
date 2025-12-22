@@ -1,69 +1,64 @@
-# app/routers/alerts.py
-from __future__ import annotations
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import HTMLResponse, JSONResponse
+from sqlalchemy import select
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.orm import Session
-
+from app.security import get_current_user_cookie
+from app.ui import templates
+from app.i18n import get_lang, t
 from app.database import get_db
 from app.models_pro_alerts import ProAlertQueue
-from app.security import get_current_user_cookie
 
-router = APIRouter(prefix="/alerts", tags=["alerts"])
-
-
-def _infer_level(title: str, message: str) -> str:
-    blob = f"{title or ''} {message or ''}".lower()
-    if "alto" in blob or "high" in blob or "crítico" in blob or "critico" in blob:
-        return "high"
-    if "medio" in blob or "medium" in blob:
-        return "medium"
-    if "bajo" in blob or "low" in blob:
-        return "low"
-    return "info"
+router = APIRouter(prefix="", tags=["alerts"])
 
 
-@router.get("/pending")
-def pending_alerts(request: Request, db: Session = Depends(get_db)):
-    """
-    Endpoint que usa el frontend (polling) para mostrar toasts / popups:
-      GET /alerts/pending  ->  { "alerts": [ {id,title,message,level,url} ] }
-
-    - Si no hay usuario logueado, devuelve lista vacía (no rompe el JS).
-    - Consume (borra) los items de la cola para no repetirlos.
-    """
-    try:
-        user = get_current_user_cookie(request, db)
-    except Exception:
-        return {"alerts": []}
-
-    rows = (
-        db.query(ProAlertQueue)
-        .filter(ProAlertQueue.user_id == user.id)
-        .order_by(ProAlertQueue.created_at.asc(), ProAlertQueue.id.asc())
-        .limit(10)
-        .all()
+@router.get("/alerts", response_class=HTMLResponse)
+def alerts_page(request: Request, user=Depends(get_current_user_cookie)):
+    lang = get_lang(request)
+    return templates.TemplateResponse(
+        "alerts.html",
+        {"request": request, "lang": lang, "t": t, "current_user": user},
     )
 
-    if not rows:
-        return {"alerts": []}
 
-    alerts_out = []
-    for r in rows:
-        title = (r.title or "").strip()
-        message = (r.body or "").strip()
-        alerts_out.append(
-            {
-                "id": r.id,
-                "title": title or "Alerta",
-                "message": message or "",
-                "level": _infer_level(title, message),
-                "url": r.url or "",
-            }
-        )
+@router.get("/alerts/pending", include_in_schema=False)
+def alerts_pending(
+    request: Request,
+    user=Depends(get_current_user_cookie),
+    db=Depends(get_db),
+):
+    """
+    Endpoint polled by /static/alert_clients.js
+    Returns pending alerts (usually 0 or 1) and consumes them to avoid repeats.
+    """
+    # If not logged in, just return no alerts (avoid 401 spam in console)
+    if not user or not getattr(user, "id", None):
+        return JSONResponse({"ok": True, "alerts": []})
 
-    # ✅ consumir la cola (evita duplicados en el polling)
-    for r in rows:
-        db.delete(r)
-    db.commit()
+    stmt = (
+        select(ProAlertQueue)
+        .where(ProAlertQueue.user_id == int(user.id))
+        .order_by(ProAlertQueue.created_at.asc())
+        .limit(1)
+    )
+    row = db.execute(stmt).scalar_one_or_none()
+    if not row:
+        return JSONResponse({"ok": True, "alerts": []})
 
-    return {"alerts": alerts_out}
+    payload = {
+        "id": row.id,
+        "title": row.title,
+        "body": row.body,
+        "url": row.url,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+    # consume it so it doesn't keep popping
+    try:
+        db.delete(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        # Even if delete fails, don't break the UI
+        return JSONResponse({"ok": True, "alerts": [payload]})
+
+    return JSONResponse({"ok": True, "alerts": [payload]})
