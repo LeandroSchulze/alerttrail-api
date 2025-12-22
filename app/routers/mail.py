@@ -16,21 +16,16 @@ from app.i18n import get_lang, t
 from app.security import get_current_user_cookie
 from app.ui import templates
 
-from app.services.mail_scan import scan_mailbox  # ✅ motor real de riesgo
+from app.services.mail_scan import scan_mailbox
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 logger = logging.getLogger("alerttrail.mail")
 
-# Persistencia (Render disk)
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
 
-
-# -----------------------------
-# Helpers storage
-# -----------------------------
 def _load_json(path: Path, default):
     try:
         if not path.exists():
@@ -39,11 +34,9 @@ def _load_json(path: Path, default):
     except Exception:
         return default
 
-
 def _save_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def _user_id(user: Dict[str, Any]) -> str:
     if not user:
@@ -54,25 +47,20 @@ def _user_id(user: Dict[str, Any]) -> str:
             return str(v)
     return "unknown"
 
-
 def _scan_file_for(user: Dict[str, Any]) -> Path:
     return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
-
 
 def _load_linked() -> Dict[str, Any]:
     data = _load_json(LINKED_FILE, {}) or {}
     return data if isinstance(data, dict) else {}
 
-
 def _save_linked(all_linked: Dict[str, Any]) -> None:
     _save_json(LINKED_FILE, all_linked)
-
 
 def _truthy(v: Optional[str]) -> bool:
     if v is None:
         return False
     return str(v).strip().lower() in ("1", "true", "yes", "on", "checked")
-
 
 def _defaults_from_env() -> Dict[str, Any]:
     return {
@@ -82,7 +70,6 @@ def _defaults_from_env() -> Dict[str, Any]:
         "use_ssl": os.getenv("IMAP_SSL", "1").lower() in ("1", "true", "yes", "on"),
         "mark_read": os.getenv("IMAP_MARK_READ", "0").lower() in ("1", "true", "yes", "on"),
     }
-
 
 def _compute_plan(user: Dict[str, Any]) -> str:
     role = (user or {}).get("role") or ""
@@ -94,15 +81,14 @@ def _compute_plan(user: Dict[str, Any]) -> str:
         return "PRO"
     return (user or {}).get("plan") or "FREE"
 
-
-def get_user(request: Request):
-    return get_current_user_cookie(request)
-
+# ✅ FIX: dependency segura (no devuelve 401, devuelve None)
+def get_user_safe(request: Request) -> Optional[Dict[str, Any]]:
+    try:
+        return get_current_user_cookie(request)
+    except Exception:
+        return None
 
 def _render_safe(template_name: str, context: Dict[str, Any], status_code: int = 200):
-    """
-    Render con fallback si el template no existe o falla.
-    """
     try:
         return templates.TemplateResponse(template_name, context, status_code=status_code)
     except Exception as e:
@@ -114,12 +100,8 @@ def _render_safe(template_name: str, context: Dict[str, Any], status_code: int =
             status_code=status_code,
         )
 
-
-# -----------------------------
-# Routes
-# -----------------------------
 @router.get("/", response_class=HTMLResponse)
-def mail_index(request: Request, user=Depends(get_user)):
+def mail_index(request: Request, user=Depends(get_user_safe)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
@@ -141,9 +123,8 @@ def mail_index(request: Request, user=Depends(get_user)):
         },
     )
 
-
 @router.get("/scanner", response_class=HTMLResponse)
-def mail_scanner(request: Request, user=Depends(get_user)):
+def mail_scanner(request: Request, user=Depends(get_user_safe)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
@@ -159,7 +140,6 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     if not isinstance(scan_items, list):
         scan_items = []
 
-    # View-model para evitar last_scan.items (método dict) en Jinja
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or last_scan_raw.get("ts") or "",
         "folder": last_scan_raw.get("folder") or "",
@@ -184,16 +164,14 @@ def mail_scanner(request: Request, user=Depends(get_user)):
         },
     )
 
-
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
     return RedirectResponse(url="/mail", status_code=302)
 
-
 @router.post("/settings", include_in_schema=False)
 def mail_settings_save(
     request: Request,
-    user=Depends(get_user),
+    user=Depends(get_user_safe),
     email: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     server: Optional[str] = Form(None),
@@ -231,12 +209,10 @@ def mail_settings_save(
         "password": not bool(pwd),
     }
     if any(missing.values()):
-        # respuesta simple para debug (después lo hacemos “flash” en UI)
         return {
             "ok": False,
             "error": "Faltan campos requeridos",
             "missing": missing,
-            "hint": "Revisá que el <form> tenga name=email (o address), server, username, password (o aliases imap_*)",
         }
 
     all_linked = _load_linked()
@@ -255,11 +231,10 @@ def mail_settings_save(
 
     return RedirectResponse(url="/mail", status_code=303)
 
-
 @router.get("/scan", response_class=HTMLResponse)
 def mail_scan(
     request: Request,
-    user=Depends(get_user),
+    user=Depends(get_user_safe),
     limit: int = Query(25, ge=1, le=200),
 ):
     if not user:
@@ -275,7 +250,7 @@ def mail_scan(
                 "request": request,
                 "lang": lang,
                 "t": t,
-                "summary": t(lang, "mail.no_linked") if "mail.no_linked" else "No hay cuenta IMAP vinculada.",
+                "summary": "No hay cuenta IMAP vinculada.",
                 "items": [],
             },
             status_code=400,
@@ -300,7 +275,6 @@ def mail_scan(
     }
 
     try:
-        # ✅ motor real de scan (score + reasons + level)
         scan_res = scan_mailbox(
             host=server,
             port=port,
@@ -314,29 +288,34 @@ def mail_scan(
 
         items = []
         for it in scan_res.items:
-            # Normalizamos a dict para Jinja y mantenemos compat con mail_scan_result
-            score = int(getattr(it.analysis, "risk_score", 0) or 0)
-            level = (getattr(it.analysis, "danger_level", "") or "").upper()
-            verdict = "OK"
-            if level in ("ALTO", "HIGH"):
+            lvl_raw = (getattr(it.analysis, "danger_level", "") or "").lower()
+            if lvl_raw in ("high", "alto"):
                 verdict = "ALTO"
-            elif level in ("MEDIO", "MEDIUM"):
+            elif lvl_raw in ("medium", "medio"):
                 verdict = "MEDIO"
             else:
                 verdict = "BAJO"
 
             reasons = getattr(it.analysis, "reasons", []) or []
+            score = int(getattr(it.analysis, "risk_score", 0) or 0)
+
+            # ✅ guardamos "analysis" para compat con alerts
+            analysis = {
+                "danger_level": "high" if verdict == "ALTO" else ("medium" if verdict == "MEDIO" else "low"),
+                "risk_score": score,
+                "reasons": reasons,
+            }
 
             items.append(
                 {
+                    "uid": getattr(it, "uid", "") or "",
                     "from": it.from_email,
                     "subject": it.subject,
                     "date": it.date or "",
                     "score": score,
-                    "level": level,
-                    "reasons": reasons,
-                    "sender": it.from_email or "—",
                     "verdict": verdict,
+                    "reasons": reasons,
+                    "analysis": analysis,
                 }
             )
 
@@ -346,35 +325,10 @@ def mail_scan(
 
         _save_json(_scan_file_for(user), result)
 
-        summary = t(lang, "mail.scan_ok_summary")
-        if summary == "mail.scan_ok_summary":
-            summary = "Scan IMAP OK ✅ | Server: {server} | Folder: {folder} | Found: {total} | Showing: {shown}"
-
-        summary = summary.format(
-            server=server,
-            folder=folder,
-            total=result["total"],
-            shown=len(items),
-        )
-
-        # Intentamos el template nuevo; si no existe, caemos al viejo "mail_scan_result"
-        resp = _render_safe(
-            "mail_scan_result.html",
-            {
-                "request": request,
-                "lang": lang,
-                "t": t,
-                "summary": summary,
-                "items": items,
-                "result": result,
-            },
-            status_code=200,
-        )
-        if isinstance(resp, HTMLResponse) and resp.status_code == 200:
-            return resp
+        summary = f"Scan IMAP OK ✅ | Folder: {folder} | Found: {result['total']} | Showing: {len(items)}"
 
         return _render_safe(
-            "mail_scan_result",
+            "mail_scan_result.html",
             {
                 "request": request,
                 "lang": lang,
@@ -389,13 +343,8 @@ def mail_scan(
     except Exception as e:
         result["error"] = str(e)
         _save_json(_scan_file_for(user), result)
-
         logger.error("MAIL_SCAN ERROR user=%s err=%s", _user_id(user), str(e))
         logger.error(traceback.format_exc())
-
-        fail = t(lang, "mail.scan_failed")
-        if fail == "mail.scan_failed":
-            fail = "Scan failed"
 
         return _render_safe(
             "mail_scan_result.html",
@@ -403,7 +352,7 @@ def mail_scan(
                 "request": request,
                 "lang": lang,
                 "t": t,
-                "summary": f"{fail}: {str(e)}",
+                "summary": f"Scan failed: {str(e)}",
                 "items": [],
                 "result": result,
             },
