@@ -1,154 +1,189 @@
 # app/services/mail_scan.py
-import imaplib
+from __future__ import annotations
+
 import email
 import re
+import ssl
+from dataclasses import dataclass
 from email.header import decode_header, make_header
-from typing import List, Tuple, Dict, Any, Optional
+from email.message import Message
+from typing import Any, Dict, List, Optional
 
-# ---------------- Reglas / Heurísticas ----------------
-SUSP_ATTACH_EXT = {
-    ".exe", ".js", ".vbs", ".scr", ".bat", ".cmd", ".ps1",
-    ".jar", ".lnk", ".msi", ".reg", ".hta", ".apk", ".dmg", ".pkg",
-    ".iso", ".img", ".bin", ".dll", ".com"
-}
-
-DOUBLE_EXT_RE = re.compile(r"\.(pdf|docx?|xlsx?|pptx?)\.(zip|rar|7z|exe|js)$", re.I)
-
-PHISH_PATTERNS = [
-    r"verifica tu cuenta", r"tu cuenta será suspendida", r"urgente",
-    r"confirma tu contraseña", r"actualiza tu método de pago", r"has sido seleccionado",
-    r"transferencia pendiente", r"adjunto factura", r"comprobante de pago",
-    r"factura vencida", r"bloqueado por seguridad"
-]
-
-QR_PATTERNS = [
-    r"\bcódigo\s*qr\b", r"\bqr\s*code\b", r"\bscan(ea|ea[rn])?\b.*\b(código|code)\b",
-    r"\bescane(a|á)\b", r"paga(r)?\b.*\bqr\b", r"autenticaci[oó]n\b.*\bqr\b"
-]
-
-URL_RE = re.compile(r"https?://[^\s\"'>)]+", re.I)
-OTP_RE = re.compile(r"\b(\d{6})\b")
-SUSP_TLDS = (".zip", ".mov")
-PUNYCODE_RE = re.compile(r"//[^/\s]*xn--", re.I)
+import imaplib
 
 
-def _has_qr_hint(text: str, html: str) -> bool:
-    blob = f"{text or ''} {html or ''}".lower()
-    if any(re.search(p, blob, re.I) for p in QR_PATTERNS):
-        return True
-    if re.search(r"<img[^>]+(alt|src)=['\"][^'\"]*(qr|codigo|c[oó]digo)[^'\"]*['\"]", html or "", re.I):
-        return True
-    return False
+# -----------------------------
+# Data models (compat)
+# -----------------------------
+@dataclass
+class MailAnalysis:
+    risk_score: int
+    danger_level: str
+    reasons: List[str]
+    iocs: Dict[str, Any]
+    hints: Dict[str, Any]
 
 
-def _has_punycode(urls: List[str]) -> bool:
-    return any(PUNYCODE_RE.search(u) for u in urls)
+@dataclass
+class MailItem:
+    uid: str
+    from_email: str
+    subject: str
+    date: str
+    attachments: List[Dict[str, Any]]
+    analysis: MailAnalysis
 
 
-def _decode_header(val: Any) -> str:
+@dataclass
+class MailScanResult:
+    ok: bool
+    items: List[MailItem]
+    total_found: int
+    unread: int
+    total: int
+    counts: Dict[str, Any]
+    dangerous: int
+    message: Optional[str] = None
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+_URL_RE = re.compile(r"https?://[^\s<>\"]+", re.I)
+_PUNYCODE_RE = re.compile(r"\bxn--[a-z0-9\-]+\b", re.I)
+_OTP_RE = re.compile(r"\b(otp|one[- ]time|c[oó]digo|code)\b", re.I)
+_URGENT_RE = re.compile(r"\b(urgente|urgent|suspend|bloque|verify|verific|security|seguridad)\b", re.I)
+_QR_RE = re.compile(r"\b(qr)\b", re.I)
+
+_BAD_EXT = (".exe", ".js", ".vbs", ".bat", ".cmd", ".scr", ".msi", ".iso", ".img", ".zip", ".rar", ".7z")
+
+
+def _decode_header(val: str) -> str:
+    if not val:
+        return ""
     try:
-        return str(make_header(decode_header(val))) if val else ""
+        return str(make_header(decode_header(val)))
     except Exception:
-        return str(val or "")
+        return val
 
 
-def _get_filename(part) -> str:
-    filename = part.get_filename()
-    return _decode_header(filename)
-
-
-def _collect_parts(msg) -> Tuple[str, str, List[Dict[str, Any]]]:
-    text, html = "", ""
-    atts: List[Dict[str, Any]] = []
+def _extract_text_parts(msg: Message) -> Dict[str, str]:
+    text = ""
+    html = ""
 
     if msg.is_multipart():
         for part in msg.walk():
             ctype = (part.get_content_type() or "").lower()
             disp = (part.get("Content-Disposition") or "").lower()
+            if "attachment" in disp:
+                continue
 
-            if ctype == "text/plain" and "attachment" not in disp:
-                payload = part.get_payload(decode=True) or b""
+            try:
+                payload = part.get_payload(decode=True)
+            except Exception:
+                payload = None
+
+            charset = (part.get_content_charset() or "utf-8") if hasattr(part, "get_content_charset") else "utf-8"
+            if payload:
                 try:
-                    text += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+                    decoded = payload.decode(charset, errors="ignore")
                 except Exception:
-                    text += payload.decode("latin1", errors="ignore")
+                    decoded = payload.decode("utf-8", errors="ignore")
 
-            elif ctype == "text/html" and "attachment" not in disp:
-                payload = part.get_payload(decode=True) or b""
-                try:
-                    html += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
-                except Exception:
-                    html += payload.decode("latin1", errors="ignore")
-
-            else:
-                fname = _get_filename(part)
-                if "attachment" in disp or fname:
-                    payload = part.get_payload(decode=True) or b""
-                    atts.append({
-                        "filename": fname,
-                        "content_type": ctype,
-                        "size": len(payload)
-                    })
+                if ctype == "text/plain":
+                    text += decoded + "\n"
+                elif ctype == "text/html":
+                    html += decoded + "\n"
     else:
+        ctype = (msg.get_content_type() or "").lower()
         payload = msg.get_payload(decode=True) or b""
+        charset = (msg.get_content_charset() or "utf-8")
         try:
-            text = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
+            decoded = payload.decode(charset, errors="ignore")
         except Exception:
-            text = payload.decode("latin1", errors="ignore")
+            decoded = payload.decode("utf-8", errors="ignore")
+        if ctype == "text/html":
+            html = decoded
+        else:
+            text = decoded
 
-    return text, html, atts
+    return {"text": text.strip(), "html": html.strip()}
+
+
+def _extract_attachments(msg: Message) -> List[Dict[str, Any]]:
+    atts: List[Dict[str, Any]] = []
+    if not msg.is_multipart():
+        return atts
+
+    for part in msg.walk():
+        disp = (part.get("Content-Disposition") or "").lower()
+        if "attachment" not in disp:
+            continue
+
+        filename = part.get_filename() or ""
+        filename = _decode_header(filename)
+        size = 0
+        try:
+            payload = part.get_payload(decode=True) or b""
+            size = len(payload)
+        except Exception:
+            pass
+
+        atts.append({"filename": filename, "size": size})
+    return atts
 
 
 def _score_email(subject: str, sender: str, text: str, html: str,
                  atts: List[Dict[str, Any]]) -> Dict[str, Any]:
-    reasons: List[str] = []
-    iocs: Dict[str, Any] = {"urls": [], "otp_codes": []}
-    hints: Dict[str, Any] = {}
     danger = 0
+    reasons: List[str] = []
+    iocs: Dict[str, Any] = {}
+    hints: Dict[str, Any] = {}
 
-    all_text = " ".join([subject or "", sender or "", text or "", html or ""])
-    urls = URL_RE.findall(all_text)
-    iocs["urls"] = urls
+    subj_l = (subject or "").lower()
+    sender_l = (sender or "").lower()
+    blob = (text or "") + "\n" + (html or "")
 
-    if any(u.lower().endswith(SUSP_TLDS) for u in urls):
-        reasons.append("URLs con TLDs sospechosos (.zip/.mov)")
+    urls = _URL_RE.findall(blob)
+    if urls:
+        iocs["urls"] = urls[:10]
+
+    if _URGENT_RE.search(subj_l) or _URGENT_RE.search(blob.lower()):
         danger += 2
+        reasons.append("Urgencia / presión para actuar")
 
-    if _has_punycode(urls):
+    if _OTP_RE.search(blob.lower()):
+        danger += 2
+        reasons.append("Menciona códigos / OTP (posible takeover)")
+
+    if _PUNYCODE_RE.search(blob.lower()):
+        danger += 2
         reasons.append("Dominio punycode (IDN) detectado")
-        hints["punycode"] = True
-        danger += 2
 
-    joined = (subject + " " + text).lower()
-    if any(re.search(pat, joined, re.I) for pat in PHISH_PATTERNS):
-        reasons.append("Patrones típicos de phishing")
+    if urls and any(_PUNYCODE_RE.search(u) for u in urls):
         danger += 2
+        reasons.append("URL con punycode detectado")
 
-    otps = OTP_RE.findall(joined)
-    if otps:
-        iocs["otp_codes"] = otps
-        reasons.append("Código OTP expuesto en el cuerpo")
+    if _QR_RE.search(blob.lower()):
         danger += 1
-
-    for a in atts:
-        fname = (a.get("filename") or "").lower()
-        if not fname:
-            continue
-        if any(fname.endswith(ext) for ext in SUSP_ATTACH_EXT):
-            reasons.append(f"Adjunto ejecutable/sospechoso: {fname}")
-            danger += 3
-        if DOUBLE_EXT_RE.search(fname):
-            reasons.append(f"Doble extensión riesgosa: {fname}")
-            danger += 2
-        if fname.endswith(".zip") and a.get("size", 0) > 0:
-            reasons.append(f"Adjunto comprimido: {fname}")
-            danger += 1
-
-    if _has_qr_hint(text, html):
         reasons.append("Posible intento de QR-phishing")
-        hints["qr_phishing"] = True
-        danger += 2
 
+    if "no-reply" in sender_l and ("verify" in blob.lower() or "verific" in blob.lower()):
+        danger += 1
+        reasons.append("Patrones típicos de phishing (no-reply + verify)")
+
+    # Adjuntos peligrosos
+    bad_att = []
+    for a in atts or []:
+        fn = (a.get("filename") or "").lower()
+        if any(fn.endswith(ext) for ext in _BAD_EXT):
+            bad_att.append(a.get("filename") or "")
+    if bad_att:
+        danger += 3
+        reasons.append("Adjunto potencialmente peligroso")
+        iocs["dangerous_attachments"] = bad_att
+
+    # Clasificación
     if danger >= 5:
         level = "high"
     elif danger >= 2:
@@ -156,28 +191,40 @@ def _score_email(subject: str, sender: str, text: str, html: str,
     else:
         level = "low"
 
-    risk_score = min(100, max(0, int(danger * 20)))
+    # Score (para logs/alertas), aunque no lo muestres en UI
+    if level == "high":
+        risk_score = min(100, 80 + danger * 4)
+    elif level == "medium":
+        risk_score = min(100, 45 + danger * 6)
+    else:
+        risk_score = min(35, 10 + danger * 8)
 
     return {
-        "risk_score": risk_score,
         "danger_level": level,
+        "risk_score": int(risk_score),
         "reasons": reasons,
         "iocs": iocs,
         "hints": hints,
     }
 
 
-# ---------------- IMAP helpers ----------------
+# -----------------------------
+# IMAP minimal client
+# -----------------------------
 class IMAPClient:
-    def __init__(self, host: str, port: int = 993, use_ssl: bool = True):
+    def __init__(self, host: str, port: int, use_ssl: bool):
         self.host = host
         self.port = port
         self.use_ssl = use_ssl
         self.conn: Optional[imaplib.IMAP4] = None
 
     def __enter__(self):
-        self.conn = imaplib.IMAP4_SSL(self.host, self.port) if self.use_ssl else imaplib.IMAP4(self.host, self.port)
-        return self.conn
+        if self.use_ssl:
+            ctx = ssl.create_default_context()
+            self.conn = imaplib.IMAP4_SSL(self.host, self.port, ssl_context=ctx)
+        else:
+            self.conn = imaplib.IMAP4(self.host, self.port)
+        return self
 
     def __exit__(self, exc_type, exc, tb):
         try:
@@ -186,193 +233,88 @@ class IMAPClient:
         except Exception:
             pass
 
+    def login(self, username: str, password: str):
+        assert self.conn is not None
+        self.conn.login(username, password)
 
-def _pick_latest_ids(ids: List[bytes], max_msgs: int) -> List[bytes]:
-    """
-    ✅ Normaliza ids para devolver SIEMPRE los más recientes primero.
-    - Si 'ids' viene en orden viejo->nuevo (lo común), tomamos los últimos N y reverseamos.
-    - Si ya viene en reverse, igual esto no lo rompe.
-    """
-    if not ids:
-        return []
-    tail = ids[-max_msgs:] if len(ids) > max_msgs else ids[:]
-    tail.reverse()
-    return tail
+    def select(self, mailbox: str):
+        assert self.conn is not None
+        self.conn.select(mailbox)
+
+    def uid_search(self, criteria: str):
+        assert self.conn is not None
+        typ, data = self.conn.uid("search", None, criteria)
+        if typ != "OK":
+            return []
+        raw = data[0] if data else b""
+        if not raw:
+            return []
+        return raw.split()
+
+    def uid_fetch(self, uid: bytes, parts: str):
+        assert self.conn is not None
+        typ, data = self.conn.uid("fetch", uid, parts)
+        if typ != "OK":
+            return None
+        return data
 
 
-def scan_inbox(
-    host: str,
-    username: str,
-    password: str,
-    port: int = 993,
-    use_ssl: bool = True,
-    mailbox: str = "INBOX",
-    max_msgs: int = 20
-) -> List[Dict[str, Any]]:
+def scan_inbox(host: str, username: str, password: str, port: int = 993, use_ssl: bool = True,
+               mailbox: str = "INBOX", max_msgs: int = 20) -> List[Dict[str, Any]]:
     """
-    Devuelve lista de dicts:
-      {uid, subject, from, date, attachments[], analysis{...}}
+    Devuelve lista de dicts con: uid, from, subject, date, body(text/html), attachments, analysis
     """
-    results: List[Dict[str, Any]] = []
+    out: List[Dict[str, Any]] = []
 
     with IMAPClient(host, port, use_ssl) as M:
         M.login(username, password)
         M.select(mailbox)
 
-        ids: List[bytes] = []
+        # Primero UNSEEN (si hay), sino ALL (últimos N por UID)
+        uids = M.uid_search("(UNSEEN)")
+        if not uids:
+            uids = M.uid_search("ALL")
 
-        # ✅ 1) Intentar SORT REVERSE DATE (si el server lo soporta)
-        try:
-            typ, data = M.sort("REVERSE DATE", "UTF-8", "ALL")
-            if typ == "OK" and data and isinstance(data[0], (bytes, bytearray)):
-                # ya viene "más reciente primero"
-                ids = data[0].split()[:max_msgs]
-        except Exception:
-            ids = []
+        # Tomamos últimos N por UID (lo más nuevo)
+        uids = uids[-max_msgs:] if len(uids) > max_msgs else uids
 
-        # ✅ 2) Fallback: SEARCH ALL (normalmente viejo->nuevo)
-        if not ids:
-            typ, data = M.search(None, "ALL")
-            raw = (data[0] or b"").split() if typ == "OK" else []
-            ids = _pick_latest_ids(raw, max_msgs=max_msgs)  # ✅ fix principal
-
-        for uid in ids:
-            typ, msg_data = M.fetch(uid, "(RFC822)")
-            if typ != "OK" or not msg_data:
+        for uid in uids:
+            fetched = M.uid_fetch(uid, "(RFC822)")
+            if not fetched:
                 continue
 
-            raw = msg_data[0][1]
-            msg = email.message_from_bytes(raw)
+            raw_msg = None
+            for part in fetched:
+                if isinstance(part, tuple) and part[1]:
+                    raw_msg = part[1]
+                    break
+            if not raw_msg:
+                continue
 
-            subj = _decode_header(msg.get("Subject"))
-            sender = _decode_header(msg.get("From"))
-            date = msg.get("Date") or ""
+            msg = email.message_from_bytes(raw_msg)
+            subj = _decode_header(msg.get("Subject", ""))
+            frm = _decode_header(msg.get("From", ""))
+            date = _decode_header(msg.get("Date", ""))
 
-            text, html, atts = _collect_parts(msg)
-            analysis = _score_email(subj, sender, text, html, atts)
+            parts = _extract_text_parts(msg)
+            atts = _extract_attachments(msg)
 
-            results.append({
-                "uid": uid.decode() if isinstance(uid, (bytes, bytearray)) else str(uid),
-                "subject": subj,
-                "from": sender,
-                "date": date,
-                "attachments": atts,
-                "analysis": analysis
-            })
+            analysis = _score_email(subj, frm, parts["text"], parts["html"], atts)
 
-    return results
+            out.append(
+                {
+                    "uid": uid.decode(errors="ignore"),
+                    "from": frm,
+                    "subject": subj,
+                    "date": date,
+                    "text": parts["text"],
+                    "html": parts["html"],
+                    "attachments": atts,
+                    "analysis": analysis,
+                }
+            )
 
-
-def get_scan_summary(
-    host: str,
-    port: int,
-    use_ssl: bool,
-    username: str,
-    password: str,
-    folder: str,
-    mark_seen: bool,
-    max_msgs: int = 50
-) -> Dict[str, Any]:
-    imap = None
-    try:
-        imap = imaplib.IMAP4_SSL(host, port, timeout=30) if use_ssl else imaplib.IMAP4(host, port, timeout=30)
-        typ, _ = imap.login(username, password)
-        if typ != "OK":
-            return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0, "marked_seen": False,
-                    "message": "Login IMAP falló", "items": []}
-
-        typ, _ = imap.select(folder, readonly=not mark_seen)
-        if typ != "OK":
-            return {"ok": False, "login": True, "folder": folder, "unread": 0, "total": 0, "marked_seen": False,
-                    "message": f"No se pudo abrir {folder}", "items": []}
-
-        typ, data = imap.search(None, "ALL")
-        total = len((data[0] or b"").split()) if typ == "OK" else 0
-        typ, data = imap.search(None, "UNSEEN")
-        unseen_ids = (data[0] or b"").split() if typ == "OK" else []
-        unread = len(unseen_ids)
-
-        try:
-            imap.close()
-            imap.logout()
-        except Exception:
-            pass
-
-        items = scan_inbox(
-            host, username, password,
-            port=port, use_ssl=use_ssl, mailbox=folder,
-            max_msgs=max_msgs
-        )
-
-        counts = {"low": 0, "medium": 0, "high": 0}
-        dangerous = 0
-        for it in items:
-            lvl = ((it.get("analysis", {}) or {}).get("danger_level", "low") or "low").lower()
-            counts[lvl] = counts.get(lvl, 0) + 1
-            if lvl in ("medium", "high"):
-                dangerous += 1
-
-        return {
-            "ok": True, "login": True, "folder": folder, "unread": unread, "total": total,
-            "marked_seen": bool(mark_seen), "message": None, "items": items,
-            "counts": counts, "dangerous": dangerous
-        }
-
-    except (imaplib.IMAP4.error) as e:
-        return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
-                "marked_seen": False, "message": str(e), "items": []}
-    except Exception as e:
-        return {"ok": False, "login": False, "folder": folder, "unread": 0, "total": 0,
-                "marked_seen": False, "message": f"Error: {e}", "items": []}
-
-
-# -------- Compat layer: scan_mailbox() --------
-from dataclasses import dataclass
-from typing import List as _List, Dict as _Dict, Any as _Any, Optional as _Optional
-
-
-@dataclass
-class MailAnalysis:
-    risk_score: int = 0
-    danger_level: str = ""
-    reasons: _List[str] = None
-    iocs: _Dict[str, _Any] = None
-    hints: _Dict[str, _Any] = None
-
-    def __post_init__(self):
-        self.reasons = self.reasons or []
-        self.iocs = self.iocs or {}
-        self.hints = self.hints or {}
-
-
-@dataclass
-class MailItem:
-    uid: str = ""
-    subject: str = ""
-    from_email: str = ""
-    date: str = ""
-    attachments: _List[_Any] = None
-    analysis: MailAnalysis = None
-
-    def __post_init__(self):
-        self.attachments = self.attachments or []
-        self.analysis = self.analysis or MailAnalysis()
-
-
-@dataclass
-class MailScanResult:
-    ok: bool = False
-    items: _List[MailItem] = None
-    total_found: int = 0
-    unread: int = 0
-    total: int = 0
-    counts: _Dict[str, _Any] = None
-    dangerous: int = 0
-    message: _Optional[str] = None
-
-    def __post_init__(self):
-        self.items = self.items or []
-        self.counts = self.counts or {}
+    return out
 
 
 def scan_mailbox(
@@ -385,27 +327,24 @@ def scan_mailbox(
     limit: int = 20,
     mark_read: bool = False,
 ) -> MailScanResult:
-    summary = get_scan_summary(
+    items_raw = scan_inbox(
         host=host,
+        port=port,
         username=username,
         password=password,
-        port=port,
         use_ssl=use_ssl,
-        folder=folder,
-        max_msgs=int(limit),
-        mark_seen=bool(mark_read),
+        mailbox=folder,
+        max_msgs=limit,
     )
 
-    raw_items = summary.get("items") or []
-    items: _List[MailItem] = []
-
-    for it in raw_items:
+    items: List[MailItem] = []
+    for it in items_raw:
         analysis = it.get("analysis") or {}
         items.append(
             MailItem(
-                uid=str(it.get("uid") or it.get("id") or ""),
+                uid=str(it.get("uid") or ""),
+                from_email=str(it.get("from") or ""),
                 subject=str(it.get("subject") or ""),
-                from_email=str(it.get("from") or it.get("from_email") or ""),
                 date=str(it.get("date") or ""),
                 attachments=list(it.get("attachments") or []),
                 analysis=MailAnalysis(
@@ -419,12 +358,12 @@ def scan_mailbox(
         )
 
     return MailScanResult(
-        ok=bool(summary.get("ok")),
+        ok=True,
         items=items,
         total_found=len(items),
-        unread=int(summary.get("unread") or 0),
-        total=int(summary.get("total") or 0),
-        counts=dict(summary.get("counts") or {}),
-        dangerous=int(summary.get("dangerous") or 0),
-        message=summary.get("message"),
+        unread=0,
+        total=len(items),
+        counts={},
+        dangerous=sum(1 for i in items if (i.analysis.danger_level or "") in ("medium", "high")),
+        message=None,
     )
