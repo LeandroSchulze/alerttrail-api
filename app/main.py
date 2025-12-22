@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -15,21 +15,7 @@ from app.ui import templates
 from app.i18n import get_lang_from_request
 
 # Routers
-from app.routers import (
-    auth,
-    analysis,
-    mail,
-    admin,
-    reports,
-    profile,
-    tools,
-    scheduler_status,
-    alerts,
-    i18n,
-    billing,
-    push,        # ✅ needed for desktop notifications (Web Push)
-    alerts_pro,  # ✅ pro alerts helpers/flows (if you had it working before)
-)
+from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
 from app.routers import tasks_mail  # cron / task endpoints
 
 # Background scheduler (auto mail scan)
@@ -49,7 +35,7 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_NAME)
 
-# ✅ Needed for routers that expect request.app.state.templates
+# ✅ Needed for routers/templates that expect request.app.state.templates
 app.state.templates = templates
 
 # Session cookies (for a few UI flows; JWT auth stays in your security.py)
@@ -71,7 +57,7 @@ app.include_router(analysis.router)
 app.include_router(mail.router)
 app.include_router(admin.router)
 
-# Billing
+# Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
 
 # misc / ui
@@ -80,8 +66,6 @@ app.include_router(reports.router)
 app.include_router(tools.router)
 app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
-app.include_router(alerts_pro.router)  # ✅
-app.include_router(push.router)        # ✅ (subscribe + send push)
 app.include_router(i18n.router)
 
 # cron/task endpoints (Render cron can hit /tasks/mail/poll)
@@ -107,22 +91,11 @@ def root_head():
     return Response(status_code=200)
 
 
-# ✅ IMPORTANT: Service Worker must be served from site root: /sw.js
-@app.get("/sw.js", include_in_schema=False)
-def service_worker():
-    sw_path = STATIC_DIR / "sw.js"
-    if not sw_path.exists():
-        # keep it explicit; if missing, push will never work
-        return Response(status_code=404)
-    return FileResponse(str(sw_path), media_type="application/javascript")
-
-
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     lang = get_lang_from_request(request)
 
     # ✅ Fix mínimo y seguro: el template usa `user` y `current_user`
-    # para mostrar el nombre/email; si no existen, Jinja lanza UndefinedError.
     empty_user = {"name": None, "email": None}
 
     return templates.TemplateResponse(
