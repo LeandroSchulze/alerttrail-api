@@ -16,16 +16,21 @@ from app.i18n import get_lang, t
 from app.security import get_current_user_cookie
 from app.ui import templates
 
-from app.services.mail_scan import scan_mailbox
+from app.services.mail_scan import scan_mailbox  # motor real
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 logger = logging.getLogger("alerttrail.mail")
 
+# Persistencia (Render disk)
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
 
+
+# -----------------------------
+# Helpers storage
+# -----------------------------
 def _load_json(path: Path, default):
     try:
         if not path.exists():
@@ -34,9 +39,11 @@ def _load_json(path: Path, default):
     except Exception:
         return default
 
+
 def _save_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def _user_id(user: Dict[str, Any]) -> str:
     if not user:
@@ -47,20 +54,25 @@ def _user_id(user: Dict[str, Any]) -> str:
             return str(v)
     return "unknown"
 
+
 def _scan_file_for(user: Dict[str, Any]) -> Path:
     return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
+
 
 def _load_linked() -> Dict[str, Any]:
     data = _load_json(LINKED_FILE, {}) or {}
     return data if isinstance(data, dict) else {}
 
+
 def _save_linked(all_linked: Dict[str, Any]) -> None:
     _save_json(LINKED_FILE, all_linked)
+
 
 def _truthy(v: Optional[str]) -> bool:
     if v is None:
         return False
     return str(v).strip().lower() in ("1", "true", "yes", "on", "checked")
+
 
 def _defaults_from_env() -> Dict[str, Any]:
     return {
@@ -70,6 +82,7 @@ def _defaults_from_env() -> Dict[str, Any]:
         "use_ssl": os.getenv("IMAP_SSL", "1").lower() in ("1", "true", "yes", "on"),
         "mark_read": os.getenv("IMAP_MARK_READ", "0").lower() in ("1", "true", "yes", "on"),
     }
+
 
 def _compute_plan(user: Dict[str, Any]) -> str:
     role = (user or {}).get("role") or ""
@@ -81,14 +94,21 @@ def _compute_plan(user: Dict[str, Any]) -> str:
         return "PRO"
     return (user or {}).get("plan") or "FREE"
 
-# ✅ FIX: dependency segura (no devuelve 401, devuelve None)
-def get_user_safe(request: Request) -> Optional[Dict[str, Any]]:
+
+def get_user(request: Request):
+    """
+    ✅ Importante: NO tirar 401 desde Depends, para que podamos redirigir a /auth/login.
+    """
     try:
         return get_current_user_cookie(request)
     except Exception:
         return None
 
+
 def _render_safe(template_name: str, context: Dict[str, Any], status_code: int = 200):
+    """
+    Render con fallback si el template no existe o falla.
+    """
     try:
         return templates.TemplateResponse(template_name, context, status_code=status_code)
     except Exception as e:
@@ -100,8 +120,12 @@ def _render_safe(template_name: str, context: Dict[str, Any], status_code: int =
             status_code=status_code,
         )
 
+
+# -----------------------------
+# Routes
+# -----------------------------
 @router.get("/", response_class=HTMLResponse)
-def mail_index(request: Request, user=Depends(get_user_safe)):
+def mail_index(request: Request, user=Depends(get_user)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
@@ -123,8 +147,9 @@ def mail_index(request: Request, user=Depends(get_user_safe)):
         },
     )
 
+
 @router.get("/scanner", response_class=HTMLResponse)
-def mail_scanner(request: Request, user=Depends(get_user_safe)):
+def mail_scanner(request: Request, user=Depends(get_user)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
@@ -140,11 +165,12 @@ def mail_scanner(request: Request, user=Depends(get_user_safe)):
     if not isinstance(scan_items, list):
         scan_items = []
 
+    # View-model para evitar last_scan.items (método dict) en Jinja
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or last_scan_raw.get("ts") or "",
         "folder": last_scan_raw.get("folder") or "",
-        "found": last_scan_raw.get("total") if isinstance(last_scan_raw.get("total"), int) else last_scan_raw.get("found", 0),
-        "limit": last_scan_raw.get("limit", 0),
+        "found": int(last_scan_raw.get("total") or 0),
+        "limit": int(last_scan_raw.get("limit") or 0),
         "error": last_scan_raw.get("error"),
     }
 
@@ -164,14 +190,16 @@ def mail_scanner(request: Request, user=Depends(get_user_safe)):
         },
     )
 
+
 @router.get("/settings", include_in_schema=False)
 def mail_settings_compat():
     return RedirectResponse(url="/mail", status_code=302)
 
+
 @router.post("/settings", include_in_schema=False)
 def mail_settings_save(
     request: Request,
-    user=Depends(get_user_safe),
+    user=Depends(get_user),
     email: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     server: Optional[str] = Form(None),
@@ -231,10 +259,11 @@ def mail_settings_save(
 
     return RedirectResponse(url="/mail", status_code=303)
 
+
 @router.get("/scan", response_class=HTMLResponse)
 def mail_scan(
     request: Request,
-    user=Depends(get_user_safe),
+    user=Depends(get_user),
     limit: int = Query(25, ge=1, le=200),
 ):
     if not user:
@@ -288,36 +317,38 @@ def mail_scan(
 
         items = []
         for it in scan_res.items:
-            lvl_raw = (getattr(it.analysis, "danger_level", "") or "").lower()
-            if lvl_raw in ("high", "alto"):
+            level_raw = (getattr(it.analysis, "danger_level", "") or "low").lower()
+            reasons = getattr(it.analysis, "reasons", []) or []
+
+            if level_raw in ("high", "alto"):
                 verdict = "ALTO"
-            elif lvl_raw in ("medium", "medio"):
+                badge = {"bg": "#fee2e2", "fg": "#991b1b", "bd": "#fecaca"}
+            elif level_raw in ("medium", "medio"):
                 verdict = "MEDIO"
+                badge = {"bg": "#ffedd5", "fg": "#9a3412", "bd": "#fed7aa"}
             else:
                 verdict = "BAJO"
+                badge = {"bg": "#dcfce7", "fg": "#166534", "bd": "#bbf7d0"}
 
-            reasons = getattr(it.analysis, "reasons", []) or []
-            score = int(getattr(it.analysis, "risk_score", 0) or 0)
-
-            # ✅ guardamos "analysis" para compat con alerts
-            analysis = {
-                "danger_level": "high" if verdict == "ALTO" else ("medium" if verdict == "MEDIO" else "low"),
-                "risk_score": score,
+            # ✅ Guardamos también analysis completo para /alerts/pending
+            analysis_dict = {
+                "risk_score": int(getattr(it.analysis, "risk_score", 0) or 0),
+                "danger_level": level_raw,
                 "reasons": reasons,
+                "iocs": dict(getattr(it.analysis, "iocs", {}) or {}),
+                "hints": dict(getattr(it.analysis, "hints", {}) or {}),
             }
 
-            items.append(
-                {
-                    "uid": getattr(it, "uid", "") or "",
-                    "from": it.from_email,
-                    "subject": it.subject,
-                    "date": it.date or "",
-                    "score": score,
-                    "verdict": verdict,
-                    "reasons": reasons,
-                    "analysis": analysis,
-                }
-            )
+            items.append({
+                "uid": str(it.uid or ""),
+                "from": it.from_email or "—",
+                "subject": it.subject or "—",
+                "date": it.date or "",
+                "verdict": verdict,
+                "badge": badge,
+                "reasons": reasons,
+                "analysis": analysis_dict,
+            })
 
         result["ok"] = True
         result["total"] = int(scan_res.total_found or 0)
@@ -325,7 +356,7 @@ def mail_scan(
 
         _save_json(_scan_file_for(user), result)
 
-        summary = f"Scan IMAP OK ✅ | Folder: {folder} | Found: {result['total']} | Showing: {len(items)}"
+        summary = f"Scan IMAP OK ✅ | Server: {server} | Folder: {folder} | Found: {result['total']} | Showing: {len(items)}"
 
         return _render_safe(
             "mail_scan_result.html",
@@ -343,6 +374,7 @@ def mail_scan(
     except Exception as e:
         result["error"] = str(e)
         _save_json(_scan_file_for(user), result)
+
         logger.error("MAIL_SCAN ERROR user=%s err=%s", _user_id(user), str(e))
         logger.error(traceback.format_exc())
 
