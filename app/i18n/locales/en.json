@@ -189,7 +189,40 @@
   "mail.subject": "Subject",
   "mail.risk": "Risk",
   "mail.reasons": "Reasons",
-  "mail.no_items": "No items to display."
+  "mail.no_items": "No items to display.",
+
+  "audit.page_title": "Cybersecurity Audit — AlertTrail",
+  "audit.title": "Cybersecurity audit",
+  "audit.subtitle": "We help you review your environment (email, access, basic settings) and deliver an actionable checklist with next steps to reduce risk.",
+  "audit.badge": "Extra service for PRO accounts / Companies",
+
+  "audit.includes_title": "What’s included?",
+  "audit.includes_1": "Review of how you use AlertTrail (logs, email, alerts) + quick recommendations.",
+  "audit.includes_2": "Basic best-practices check: passwords, 2FA, shared access.",
+  "audit.includes_3": "Improvement ideas for your email and current setup (non-technical language).",
+  "audit.includes_4": "1 review session via video call or email (scheduled based on availability).",
+  "audit.footer_note": "This is a manual audit, performed by a real person, assisted by AI and AlertTrail tools.",
+
+  "audit.form_title": "Request an audit",
+  "audit.f_name_org": "Your name and organization",
+  "audit.ph_name_org": "Ex: Laura — Accounting Studio XYZ",
+  "audit.f_email": "Contact email",
+  "audit.email_help": "We’ll use this email to send the proposal and coordinate the audit.",
+  "audit.f_review": "What would you like us to review?",
+  "audit.ph_review": "Ex: suspicious emails the team receives, admin panel access, server logs, etc.",
+  "audit.f_team": "Approx. team size",
+  "audit.team_any": "No preference",
+  "audit.f_comments": "Additional notes (optional)",
+  "audit.ph_comments": "Links, domains, internal systems, preferred time windows, etc.",
+  "audit.submit": "Send request",
+
+  "audit.error_title": "Please check the form:",
+  "audit.error_missing": "required fields are missing or the email is invalid.",
+  "audit.success_title": "All set!",
+  "audit.success_desc": "Your request was saved. If you want, you can send it by email now with one click.",
+  "audit.success_cta": "Send email",
+  "audit.success_note": "Recipient"
+
 
 }
 
