@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="{{ (lang or 'es')|lower }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t(lang, "tools.receipt.title") if t else "Analizador de Tickets" }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg">
+  <div class="page" style="max-width: 980px;">
+    <div class="card" style="border-radius: 18px;">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+        <div>
+          <h1 style="font-size: 1.35rem;">{{ t(lang, "tools.receipt.h1") if t else "Analizador de Tickets" }}</h1>
+          <p class="muted" style="margin-top:6px;">
+            {{ t(lang, "tools.receipt.subtitle") if t else "Pegá texto del comprobante o detalles del cobro para detectar señales raras." }}
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <a class="btn secondary" href="/dashboard">← {{ t(lang, "common.back_dashboard") if t else "Volver al dashboard" }}</a>
+        </div>
+      </div>
+
+      <div style="margin-top:14px;display:grid;gap:10px;">
+        <label style="font-weight:700;">{{ t(lang, "tools.receipt.input") if t else "Texto / detalle del ticket" }}</label>
+        <textarea id="txt" rows="8" placeholder="Comercio: ...&#10;Monto: ...&#10;Fecha: ..."
+                  style="width:100%;"></textarea>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn" id="btnAnalyze">{{ t(lang, "common.analyze") if t else "Analizar" }}</button>
+          <button class="btn secondary" id="btnClear">{{ t(lang, "common.clear") if t else "Limpiar" }}</button>
+        </div>
+
+        <div id="result" style="display:none;margin-top:6px;border-radius:14px;padding:12px;border:1px solid var(--border);background:#fff;">
+          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+            <div style="font-weight:800;" id="title">—</div>
+            <span class="badge" id="badge">—</span>
+          </div>
+          <div class="muted" id="desc" style="margin-top:6px;">—</div>
+
+          <div style="margin-top:10px;">
+            <div style="font-weight:700;margin-bottom:6px;">{{ t(lang, "tools.receipt.flags") if t else "Señales detectadas" }}</div>
+            <ul id="flags" style="margin:0;padding-left:18px;color:#334155;"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+
+  function analyzeReceipt(text){
+    const t = (text||"").trim();
+    const flags = [];
+    if(!t){
+      return {level:"none", title:"Sin datos", badge:"—", desc:"Pegá el texto del ticket para analizar.", flags:[]};
+    }
+
+    const lower = t.toLowerCase();
+
+    // Heurísticas simples (no “score” numérico para evitar líos)
+    if(/gift\s*card|tarjeta\s*de\s*regalo|crypto|bitcoin|usdt/i.test(lower)) flags.push("Mención de gift cards/cripto: común en estafas.");
+    if(/urgente|inmediato|hoy|finaliza|último aviso/i.test(lower)) flags.push("Lenguaje de urgencia/presión.");
+    if(/link|http:\/\/|https:\/\//i.test(lower)) flags.push("Incluye links: revisá dominio antes de abrir.");
+    if(/c[oó]digo\s*qr|qr\s*code|escane/i.test(lower)) flags.push("Referencia a QR: posible QR-phishing.");
+    if(/xn--/i.test(lower)) flags.push("Dominio punycode (IDN) detectado en el texto.");
+
+    let level = "low";
+    if(flags.length >= 3) level = "high";
+    else if(flags.length >= 1) level = "medium";
+
+    let title = "Sin señales fuertes";
+    let badge = "BAJO";
+    let desc = "No se detectaron señales fuertes de riesgo en el texto.";
+
+    if(level === "medium"){
+      title = "Precaución";
+      badge = "MEDIO";
+      desc = "Hay señales que conviene revisar antes de pagar o abrir links.";
+    }
+    if(level === "high"){
+      title = "Riesgo alto";
+      badge = "ALTO";
+      desc = "Varias señales típicas de estafa. Recomendado no avanzar sin verificar.";
+    }
+
+    return {level, title, badge, desc, flags};
+  }
+
+  function render(res){
+    $("result").style.display = "block";
+    $("title").textContent = res.title;
+    $("desc").textContent = res.desc;
+    $("badge").textContent = res.badge;
+
+    const b = $("badge");
+    b.style.background = "#dcfce7";
+    b.style.color = "#166534";
+    b.style.border = "1px solid #bbf7d0";
+    if(res.level === "medium"){
+      b.style.background = "#ffedd5";
+      b.style.color = "#9a3412";
+      b.style.border = "1px solid #fed7aa";
+    }
+    if(res.level === "high"){
+      b.style.background = "#fee2e2";
+      b.style.color = "#991b1b";
+      b.style.border = "1px solid #fecaca";
+    }
+
+    const ul = $("flags");
+    ul.innerHTML = "";
+    if(!res.flags || !res.flags.length){
+      const li = document.createElement("li");
+      li.textContent = "—";
+      ul.appendChild(li);
+      return;
+    }
+    res.flags.forEach(f=>{
+      const li = document.createElement("li");
+      li.textContent = f;
+      ul.appendChild(li);
+    });
+  }
+
+  $("btnAnalyze").addEventListener("click", ()=> render(analyzeReceipt($("txt").value)));
+  $("btnClear").addEventListener("click", ()=>{
+    $("txt").value = "";
+    $("result").style.display = "none";
+  });
+})();
+</script>
+
+</body>
+</html>
