@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="{{ (lang or 'es')|lower }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t(lang, "tools.qr.title") if t else "QR Scan Seguro" }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg">
+  <div class="page" style="max-width: 980px;">
+    <div class="card" style="border-radius: 18px;">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+        <div>
+          <h1 style="font-size: 1.35rem;">{{ t(lang, "tools.qr.h1") if t else "QR Scan Seguro" }}</h1>
+          <p class="muted" style="margin-top:6px;">
+            {{ t(lang, "tools.qr.subtitle") if t else "Pegá el contenido del QR (texto o link) para evaluarlo." }}
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <a class="btn secondary" href="/dashboard">← {{ t(lang, "common.back_dashboard") if t else "Volver al dashboard" }}</a>
+        </div>
+      </div>
+
+      <div style="margin-top:14px;display:grid;gap:10px;">
+        <label style="font-weight:700;">{{ t(lang, "tools.qr.input") if t else "Contenido del QR" }}</label>
+        <textarea id="qrInput" rows="4" placeholder="https://example.com/login?..."
+                  style="width:100%;"></textarea>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn" id="btnAnalyze">{{ t(lang, "tools.qr.analyze") if t else "Analizar" }}</button>
+          <button class="btn secondary" id="btnClear">{{ t(lang, "common.clear") if t else "Limpiar" }}</button>
+        </div>
+
+        <div id="resultBox" style="display:none;margin-top:6px;border-radius:14px;padding:12px;border:1px solid var(--border);background:#fff;">
+          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+            <div style="font-weight:800;" id="verdictTitle">—</div>
+            <span class="badge" id="verdictBadge">—</span>
+          </div>
+          <div class="muted" id="verdictDesc" style="margin-top:6px;">—</div>
+
+          <div style="margin-top:10px;">
+            <div style="font-weight:700;margin-bottom:6px;">{{ t(lang, "tools.qr.details") if t else "Detalles" }}</div>
+            <ul id="reasons" style="margin:0;padding-left:18px;color:#334155;"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+
+  function isUrl(s){
+    try { new URL(s); return true; } catch(e){ return false; }
+  }
+
+  function analyze(text){
+    const t = (text||"").trim();
+    const reasons = [];
+
+    if(!t){
+      return {level:"none", title:"Sin datos", badge:"—", desc:"Pegá el contenido del QR para analizar.", reasons:[]};
+    }
+
+    // Heurísticas simples
+    const lower = t.toLowerCase();
+
+    if(isUrl(t)){
+      const u = new URL(t);
+      const host = (u.hostname||"").toLowerCase();
+
+      if(host.includes("xn--")) reasons.push("Dominio punycode (IDN) detectado.");
+      if(host.endsWith(".zip") || host.endsWith(".mov")) reasons.push("TLD sospechoso (.zip/.mov).");
+      if(u.username || u.password) reasons.push("URL con credenciales embebidas (user:pass@host).");
+      if(u.protocol !== "https:") reasons.push("No usa HTTPS.");
+      if((u.search||"").length > 120) reasons.push("Query muy larga (posible tracking/obfuscación).");
+      if(/login|verify|verificar|account|cuenta|payment|pago|secure|seguridad/i.test(t)) reasons.push("Keywords típicas de phishing (login/verificar/pago).");
+    } else {
+      if(/otp|c[oó]digo|code|verifica|verificar|urgente|suspend/i.test(lower)) reasons.push("Texto con keywords típicas de engaño (OTP/verificar/urgente).");
+      if(/[A-Za-z0-9]{24,}/.test(t)) reasons.push("Texto largo tipo token (posible enlace encubierto).");
+    }
+
+    let level = "low";
+    if(reasons.length >= 3) level = "high";
+    else if(reasons.length >= 1) level = "medium";
+
+    let title = "Parece seguro";
+    let badge = "BAJO";
+    let desc = "No se detectaron señales fuertes de riesgo.";
+
+    if(level === "medium"){
+      title = "Precaución";
+      badge = "MEDIO";
+      desc = "Hay señales que ameritan revisar antes de abrir.";
+    }
+    if(level === "high"){
+      title = "Riesgo alto";
+      badge = "ALTO";
+      desc = "Varias señales de posible phishing. Evitá abrirlo.";
+    }
+
+    return {level, title, badge, desc, reasons};
+  }
+
+  function ensureList(items){
+    const ul = $("reasons");
+    ul.innerHTML = "";
+    if(!items || !items.length){
+      const li = document.createElement("li");
+      li.textContent = "—";
+      ul.appendChild(li);
+      return;
+    }
+    items.forEach(r=>{
+      const li = document.createElement("li");
+      li.textContent = r;
+      ul.appendChild(li);
+    });
+  }
+
+  function paint(res){
+    $("resultBox").style.display = "block";
+    $("verdictTitle").textContent = res.title;
+    $("verdictDesc").textContent = res.desc;
+    $("verdictBadge").textContent = res.badge;
+
+    // Badge look
+    const b = $("verdictBadge");
+    b.style.background = "#dcfce7";
+    b.style.color = "#166534";
+    b.style.border = "1px solid #bbf7d0";
+    if(res.level === "medium"){
+      b.style.background = "#ffedd5";
+      b.style.color = "#9a3412";
+      b.style.border = "1px solid #fed7aa";
+    }
+    if(res.level === "high"){
+      b.style.background = "#fee2e2";
+      b.style.color = "#991b1b";
+      b.style.border = "1px solid #fecaca";
+    }
+
+    ensureList(res.reasons);
+  }
+
+  $("btnAnalyze").addEventListener("click", ()=>{
+    paint(analyze($("qrInput").value));
+  });
+
+  $("btnClear").addEventListener("click", ()=>{
+    $("qrInput").value = "";
+    $("resultBox").style.display = "none";
+  });
+})();
+</script>
+
+</body>
+</html>
