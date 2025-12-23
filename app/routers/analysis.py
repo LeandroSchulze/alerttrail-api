@@ -242,6 +242,10 @@ async def generate_post(
     if current is None:
         return RedirectResponse("/login")
 
+    # ✅ FREE limit (5/week) — PRO ilimitado
+    from app.plan_guard import enforce_free_log_scans_limit
+    enforce_free_log_scans_limit(request)
+
     lang = get_lang_from_request(request)
 
     content = (await file.read()).decode("utf-8", errors="ignore")
