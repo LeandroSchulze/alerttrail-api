@@ -16,6 +16,7 @@ from app.i18n import get_lang_from_request
 
 # Routers
 from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
+from app.routers import audit  # ✅ AUDIT router (esto faltaba)
 from app.routers import tasks_mail  # cron / task endpoints
 
 # Background scheduler (auto mail scan)
@@ -35,7 +36,7 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_NAME)
 
-# ✅ Needed for routers/templates that expect request.app.state.templates
+# ✅ Needed for routers that expect request.app.state.templates
 app.state.templates = templates
 
 # Session cookies (for a few UI flows; JWT auth stays in your security.py)
@@ -59,6 +60,9 @@ app.include_router(admin.router)
 
 # Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
+
+# ✅ Auditoría (formulario /audit)
+app.include_router(audit.router)
 
 # misc / ui
 app.include_router(profile.router)
@@ -91,6 +95,12 @@ def root_head():
     return Response(status_code=200)
 
 
+# ✅ safety: si alguien entra a /audit (sin slash), lo mandamos a /audit/
+@app.get("/audit", include_in_schema=False)
+def audit_redirect():
+    return RedirectResponse(url="/audit/", status_code=302)
+
+
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     lang = get_lang_from_request(request)
@@ -118,7 +128,6 @@ def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
     """
     lang = (lang or "es").lower()
     resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    # cookie for 1 year
     resp.set_cookie("lang", lang, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax")
     return resp
 
@@ -136,7 +145,6 @@ def _mail_scan_job():
     """
     try:
         from app.services.mail_scan import scan_all_connected_mailboxes
-
         out = scan_all_connected_mailboxes()
         mail_logger.info("AUTO_MAIL_SCAN OK: %s", out)
     except Exception as e:
@@ -152,25 +160,17 @@ def _heartbeat_job():
 
 @app.on_event("startup")
 def on_startup():
-    """
-    Start APScheduler inside the web process (Render web service).
-    NOTE: If you scale to multiple instances, each instance will run this job.
-    In that case prefer Render Cron calling /tasks/mail/poll (single runner).
-    """
     global _scheduler
 
     enabled = os.getenv("MAIL_AUTO_SCAN_ENABLED", "1").lower() in ("1", "true", "yes", "on")
     interval_min = int(os.getenv("MAIL_SCAN_INTERVAL_MIN", os.getenv("MAIL_POLL_EVERY_MIN", "5")))
 
-    # Safety bounds
     if interval_min < 1:
         interval_min = 1
     if interval_min > 60:
         interval_min = 60
 
     _scheduler = BackgroundScheduler(timezone="UTC")
-
-    # heartbeat every 10 minutes (helps confirm it’s running in logs)
     _scheduler.add_job(_heartbeat_job, "interval", minutes=10, id="heartbeat", replace_existing=True)
 
     if enabled:
