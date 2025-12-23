@@ -14,9 +14,15 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.ui import templates
 from app.i18n import get_lang_from_request
 
+# DB + models
+from app.database import get_db
+from app.models import User
+
+# Security
+from app.security import get_current_user_cookie
+
 # Routers
 from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
-from app.routers import audit  # ✅ AUDIT router (esto faltaba)
 from app.routers import tasks_mail  # cron / task endpoints
 
 # Background scheduler (auto mail scan)
@@ -61,9 +67,6 @@ app.include_router(admin.router)
 # Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
 
-# ✅ Auditoría (formulario /audit)
-app.include_router(audit.router)
-
 # misc / ui
 app.include_router(profile.router)
 app.include_router(reports.router)
@@ -95,26 +98,73 @@ def root_head():
     return Response(status_code=200)
 
 
-# ✅ safety: si alguien entra a /audit (sin slash), lo mandamos a /audit/
-@app.get("/audit", include_in_schema=False)
-def audit_redirect():
-    return RedirectResponse(url="/audit/", status_code=302)
+def _build_current_user(request: Request) -> dict:
+    """
+    Lee JWT cookie -> busca user en DB -> arma view-model para templates.
+    Si no hay sesión, devuelve user vacío.
+    """
+    empty = {"id": None, "name": None, "email": None, "role": None, "plan": "FREE", "is_pro": False}
+
+    try:
+        payload = get_current_user_cookie(request)  # puede tirar 401
+    except Exception:
+        return empty
+
+    # sub suele ser el id (string)
+    user_id = payload.get("sub")
+    db_user: Optional[User] = None
+
+    try:
+        if user_id:
+            with next(get_db()) as db:  # get_db es generator; este patrón funciona con tu implementación actual
+                try:
+                    uid_int = int(str(user_id))
+                except Exception:
+                    uid_int = None
+
+                if uid_int is not None:
+                    db_user = db.get(User, uid_int)
+
+    except Exception:
+        db_user = None
+
+    # Fallback si no está en DB (no debería pasar, pero evitamos romper UI)
+    role = (getattr(db_user, "role", None) or payload.get("role") or "").lower() if payload else ""
+    plan = (getattr(db_user, "plan", None) or payload.get("plan") or "FREE").upper() if payload else "FREE"
+    email = getattr(db_user, "email", None) or payload.get("email")
+    name = getattr(db_user, "name", None) or payload.get("name") or payload.get("email")
+
+    # Admin => PRO siempre
+    is_admin = role == "admin"
+    if is_admin:
+        plan = "PRO"
+
+    is_pro = plan == "PRO" or is_admin
+
+    return {
+        "id": getattr(db_user, "id", None) or (int(user_id) if str(user_id).isdigit() else None),
+        "name": name,
+        "email": email,
+        "role": role.upper() if role else None,
+        "plan": plan,
+        "is_pro": bool(is_pro),
+    }
 
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     lang = get_lang_from_request(request)
 
-    # ✅ Fix mínimo y seguro: el template usa `user` y `current_user`
-    empty_user = {"name": None, "email": None}
+    current_user = _build_current_user(request)
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "lang": lang,
-            "user": empty_user,
-            "current_user": empty_user,
+            # ✅ el template usa ambos
+            "user": current_user,
+            "current_user": current_user,
         },
     )
 
@@ -128,6 +178,7 @@ def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
     """
     lang = (lang or "es").lower()
     resp = RedirectResponse(url=next or "/dashboard", status_code=302)
+    # cookie for 1 year
     resp.set_cookie("lang", lang, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax")
     return resp
 
@@ -145,6 +196,7 @@ def _mail_scan_job():
     """
     try:
         from app.services.mail_scan import scan_all_connected_mailboxes
+
         out = scan_all_connected_mailboxes()
         mail_logger.info("AUTO_MAIL_SCAN OK: %s", out)
     except Exception as e:
@@ -160,17 +212,24 @@ def _heartbeat_job():
 
 @app.on_event("startup")
 def on_startup():
+    """
+    Start APScheduler inside the web process (Render web service).
+    NOTE: If you scale to multiple instances, each instance will run this job.
+    In that case prefer Render Cron calling /tasks/mail/poll (single runner).
+    """
     global _scheduler
 
     enabled = os.getenv("MAIL_AUTO_SCAN_ENABLED", "1").lower() in ("1", "true", "yes", "on")
     interval_min = int(os.getenv("MAIL_SCAN_INTERVAL_MIN", os.getenv("MAIL_POLL_EVERY_MIN", "5")))
 
+    # Safety bounds
     if interval_min < 1:
         interval_min = 1
     if interval_min > 60:
         interval_min = 60
 
     _scheduler = BackgroundScheduler(timezone="UTC")
+
     _scheduler.add_job(_heartbeat_job, "interval", minutes=10, id="heartbeat", replace_existing=True)
 
     if enabled:
