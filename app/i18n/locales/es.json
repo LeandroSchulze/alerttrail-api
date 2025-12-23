@@ -190,6 +190,39 @@
   "mail.subject": "Asunto",
   "mail.risk": "Riesgo",
   "mail.reasons": "Motivos",
-  "mail.no_items": "No hay items para mostrar."
+  "mail.no_items": "No hay items para mostrar.",
+
+  "audit.page_title": "Auditoría de ciberseguridad — AlertTrail",
+  "audit.title": "Auditoría de ciberseguridad",
+  "audit.subtitle": "Te ayudamos a revisar tu entorno (correos, accesos, configuraciones básicas) y te entregamos un checklist accionable con los próximos pasos para reducir riesgos.",
+  "audit.badge": "Servicio extra para cuentas PRO / Empresas",
+
+  "audit.includes_title": "¿Qué incluye esta auditoría?",
+  "audit.includes_1": "Revisión de cómo usás AlertTrail (logs, correo, alertas) y recomendaciones rápidas.",
+  "audit.includes_2": "Chequeo básico de buenas prácticas: contraseñas, 2FA, accesos compartidos.",
+  "audit.includes_3": "Ideas de mejora para tus correos e infraestructura actual (en lenguaje no técnico).",
+  "audit.includes_4": "1 sesión de revisión por videollamada o email (a coordinar según tu disponibilidad).",
+  "audit.footer_note": "La auditoría es manual, hecha por una persona real, asistida por IA y herramientas de AlertTrail.",
+
+  "audit.form_title": "Solicitar una auditoría",
+  "audit.f_name_org": "Tu nombre y organización",
+  "audit.ph_name_org": "Ej: Laura — Estudio Contable XYZ",
+  "audit.f_email": "Correo de contacto",
+  "audit.email_help": "Usamos este correo para enviarte la propuesta y coordinar la auditoría.",
+  "audit.f_review": "Qué te gustaría revisar",
+  "audit.ph_review": "Ej: Correos sospechosos que recibe el equipo, accesos a paneles, logs del servidor, etc.",
+  "audit.f_team": "Tamaño aproximado del equipo",
+  "audit.team_any": "Sin preferencia",
+  "audit.f_comments": "Comentarios adicionales (opcional)",
+  "audit.ph_comments": "Links, dominios, sistemas internos, horarios preferidos, etc.",
+  "audit.submit": "Enviar solicitud",
+
+  "audit.error_title": "Revisá el formulario:",
+  "audit.error_missing": "faltan campos obligatorios o el email no es válido.",
+  "audit.success_title": "¡Listo!",
+  "audit.success_desc": "Se registró tu solicitud. Si querés, podés enviarla por email ahora mismo con un click.",
+  "audit.success_cta": "Enviar email",
+  "audit.success_note": "Destino"
+
 
 }
