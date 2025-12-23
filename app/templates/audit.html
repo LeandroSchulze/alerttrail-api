@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="{{ (lang or 'es')|lower }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t(lang, "audit.page_title") }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body style="margin:0;background:#f1f5f9;color:#0f172a;">
+  <div style="max-width:1050px;margin:26px auto;padding:0 16px 40px;">
+
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div>
+        <h1 style="margin:0 0 6px;font-size:1.6rem;">{{ t(lang, "audit.title") }}</h1>
+        <div style="color:#64748b;max-width:760px;">
+          {{ t(lang, "audit.subtitle") }}
+        </div>
+      </div>
+
+      <span class="tag-pill" style="margin-top:6px;">
+        {{ t(lang, "audit.badge") }}
+      </span>
+    </div>
+
+    {% if error %}
+      <div style="margin-top:14px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:12px;padding:10px 12px;">
+        <b>{{ t(lang, "audit.error_title") }}</b> {{ error }}
+      </div>
+    {% endif %}
+
+    {% if success %}
+      <div style="margin-top:14px;background:#ecfeff;border:1px solid #a5f3fc;color:#155e75;border-radius:12px;padding:12px 12px;">
+        <b>{{ t(lang, "audit.success_title") }}</b><br/>
+        {{ t(lang, "audit.success_desc") }}
+        <div style="margin-top:10px;">
+          <a class="btn" href="{{ mailto }}" style="text-decoration:none;">
+            {{ t(lang, "audit.success_cta") }}
+          </a>
+          <a class="btn secondary" href="/dashboard" style="margin-left:8px;text-decoration:none;">
+            {{ t(lang, "common.back_dashboard") }}
+          </a>
+        </div>
+        <div style="margin-top:8px;color:#64748b;font-size:12px;">
+          {{ t(lang, "audit.success_note") }}: <b>{{ to_email }}</b>
+        </div>
+      </div>
+    {% endif %}
+
+    <div style="margin-top:16px;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:16px;box-shadow:0 18px 40px rgba(15,23,42,.06);">
+      <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:18px;align-items:start;">
+        <div style="min-width:260px;">
+          <h3 style="margin:2px 0 10px;">{{ t(lang, "audit.includes_title") }}</h3>
+          <ul style="margin:0;padding-left:18px;color:#475569;line-height:1.55;">
+            <li>{{ t(lang, "audit.includes_1") }}</li>
+            <li>{{ t(lang, "audit.includes_2") }}</li>
+            <li>{{ t(lang, "audit.includes_3") }}</li>
+            <li>{{ t(lang, "audit.includes_4") }}</li>
+          </ul>
+
+          <p style="margin:10px 0 0;color:#64748b;font-size:12px;">
+            {{ t(lang, "audit.footer_note") }}
+          </p>
+        </div>
+
+        <div style="min-width:280px;">
+          <h3 style="margin:2px 0 10px;">{{ t(lang, "audit.form_title") }}</h3>
+
+          <form method="post" action="/audit/submit" style="display:grid;gap:10px;">
+            <div>
+              <label style="display:block;font-size:12px;color:#334155;margin:0 0 5px;">
+                {{ t(lang, "audit.f_name_org") }}
+              </label>
+              <input name="name_org" placeholder="{{ t(lang, 'audit.ph_name_org') }}" value="{{ (form.name_org if form is defined else '') }}">
+            </div>
+
+            <div>
+              <label style="display:block;font-size:12px;color:#334155;margin:0 0 5px;">
+                {{ t(lang, "audit.f_email") }}
+              </label>
+              <input name="contact_email" placeholder="you@company.com" value="{{ (form.contact_email if form is defined else '') }}">
+              <div style="font-size:11px;color:#64748b;margin-top:4px;">
+                {{ t(lang, "audit.email_help") }}
+              </div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:12px;color:#334155;margin:0 0 5px;">
+                {{ t(lang, "audit.f_review") }}
+              </label>
+              <textarea name="what_to_review" rows="4" placeholder="{{ t(lang, 'audit.ph_review') }}">{{ (form.what_to_review if form is defined else '') }}</textarea>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:12px;color:#334155;margin:0 0 5px;">
+                {{ t(lang, "audit.f_team") }}
+              </label>
+              <select name="team_size">
+                {% set v = (form.team_size if form is defined else '') %}
+                <option value="" {% if not v %}selected{% endif %}>{{ t(lang, "audit.team_any") }}</option>
+                <option value="1-5" {% if v=='1-5' %}selected{% endif %}>1–5</option>
+                <option value="6-15" {% if v=='6-15' %}selected{% endif %}>6–15</option>
+                <option value="16-50" {% if v=='16-50' %}selected{% endif %}>16–50</option>
+                <option value="50+" {% if v=='50+' %}selected{% endif %}>50+</option>
+              </select>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:12px;color:#334155;margin:0 0 5px;">
+                {{ t(lang, "audit.f_comments") }}
+              </label>
+              <textarea name="comments" rows="3" placeholder="{{ t(lang, 'audit.ph_comments') }}">{{ (form.comments if form is defined else '') }}</textarea>
+            </div>
+
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:4px;">
+              <button type="submit" class="btn">{{ t(lang, "audit.submit") }}</button>
+              <a href="/dashboard" class="btn secondary" style="text-decoration:none;">
+                {{ t(lang, "common.back_dashboard") }}
+              </a>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
