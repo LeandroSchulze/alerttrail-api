@@ -22,7 +22,19 @@ from app.models import User
 from app.security import get_current_user_cookie
 
 # Routers
-from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
+from app.routers import (
+    auth,
+    analysis,
+    mail,
+    admin,
+    reports,
+    profile,
+    tools,
+    scheduler_status,
+    alerts,
+    i18n,
+    billing,
+)
 from app.routers import tasks_mail  # cron / task endpoints
 
 # Background scheduler (auto mail scan)
@@ -42,19 +54,17 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_NAME)
 
-# ✅ Needed for routers that expect request.app.state.templates
+# Needed for routers that expect request.app.state.templates
 app.state.templates = templates
 
-# Session cookies (for a few UI flows; JWT auth stays in your security.py)
+# Session cookies (JWT sigue siendo el auth principal)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
 # Static + Reports mounts
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# serve generated PDFs/reports (Render disk)
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
-
 
 # -------------------------
 # Routers
@@ -63,11 +73,8 @@ app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
 app.include_router(admin.router)
-
-# Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
 
-# misc / ui
 app.include_router(profile.router)
 app.include_router(reports.router)
 app.include_router(tools.router)
@@ -75,9 +82,7 @@ app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
 app.include_router(i18n.router)
 
-# cron/task endpoints (Render cron can hit /tasks/mail/poll)
 app.include_router(tasks_mail.router)
-
 
 # -------------------------
 # Basic routes
@@ -92,7 +97,6 @@ def root():
     return RedirectResponse(url="/dashboard", status_code=302)
 
 
-# ✅ Render/proxies may probe HEAD /
 @app.head("/", include_in_schema=False)
 def root_head():
     return Response(status_code=200)
@@ -100,23 +104,30 @@ def root_head():
 
 def _build_current_user(request: Request) -> dict:
     """
-    Lee JWT cookie -> busca user en DB -> arma view-model para templates.
-    Si no hay sesión, devuelve user vacío.
+    JWT -> DB -> View-model consistente para templates
+    ADMIN => PRO siempre
     """
-    empty = {"id": None, "name": None, "email": None, "role": None, "plan": "FREE", "is_pro": False}
+    empty = {
+        "id": None,
+        "name": None,
+        "email": None,
+        "role": None,
+        "plan": "FREE",
+        "is_pro": False,
+        "is_admin": False,
+    }
 
     try:
-        payload = get_current_user_cookie(request)  # puede tirar 401
+        payload = get_current_user_cookie(request)
     except Exception:
         return empty
 
-    # sub suele ser el id (string)
     user_id = payload.get("sub")
     db_user: Optional[User] = None
 
     try:
         if user_id:
-            with next(get_db()) as db:  # get_db es generator; este patrón funciona con tu implementación actual
+            with next(get_db()) as db:
                 try:
                     uid_int = int(str(user_id))
                 except Exception:
@@ -124,37 +135,45 @@ def _build_current_user(request: Request) -> dict:
 
                 if uid_int is not None:
                     db_user = db.get(User, uid_int)
-
     except Exception:
         db_user = None
 
-    # Fallback si no está en DB (no debería pasar, pero evitamos romper UI)
-    role = (getattr(db_user, "role", None) or payload.get("role") or "").lower() if payload else ""
-    plan = (getattr(db_user, "plan", None) or payload.get("plan") or "FREE").upper() if payload else "FREE"
+    role = (
+        (getattr(db_user, "role", None) or payload.get("role") or "")
+        .lower()
+    )
+
     email = getattr(db_user, "email", None) or payload.get("email")
-    name = getattr(db_user, "name", None) or payload.get("name") or payload.get("email")
+    name = (
+        getattr(db_user, "name", None)
+        or payload.get("name")
+        or payload.get("email")
+        or "Usuario"
+    )
 
-    # Admin => PRO siempre
+    plan_db = (getattr(db_user, "plan", None) or payload.get("plan") or "FREE").upper()
+
     is_admin = role == "admin"
-    if is_admin:
-        plan = "PRO"
 
-    is_pro = plan == "PRO" or is_admin
+    # 🔒 ADMIN => PRO forzado
+    plan = "PRO" if is_admin else plan_db
+    is_pro = is_admin or plan == "PRO"
 
     return {
-        "id": getattr(db_user, "id", None) or (int(user_id) if str(user_id).isdigit() else None),
+        "id": getattr(db_user, "id", None)
+        or (int(user_id) if str(user_id).isdigit() else None),
         "name": name,
         "email": email,
         "role": role.upper() if role else None,
         "plan": plan,
         "is_pro": bool(is_pro),
+        "is_admin": bool(is_admin),
     }
 
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     lang = get_lang_from_request(request)
-
     current_user = _build_current_user(request)
 
     return templates.TemplateResponse(
@@ -162,24 +181,24 @@ def dashboard(request: Request):
         {
             "request": request,
             "lang": lang,
-            # ✅ el template usa ambos
             "user": current_user,
             "current_user": current_user,
+            "is_admin": current_user.get("is_admin", False),
         },
     )
 
 
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
-    """
-    Used by base.html language selector:
-      /set-lang?lang=es&next=/some/path
-    Stores cookie "lang" and redirects back.
-    """
     lang = (lang or "es").lower()
     resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    # cookie for 1 year
-    resp.set_cookie("lang", lang, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax")
+    resp.set_cookie(
+        "lang",
+        lang,
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="lax",
+    )
     return resp
 
 
@@ -190,10 +209,6 @@ _scheduler: Optional[BackgroundScheduler] = None
 
 
 def _mail_scan_job():
-    """
-    Runs a scan of all connected mailboxes.
-    This is used for the "auto scan every N minutes" behavior.
-    """
     try:
         from app.services.mail_scan import scan_all_connected_mailboxes
 
@@ -204,32 +219,18 @@ def _mail_scan_job():
 
 
 def _heartbeat_job():
-    try:
-        logger.info("scheduler heartbeat")
-    except Exception:
-        pass
+    logger.info("scheduler heartbeat")
 
 
 @app.on_event("startup")
 def on_startup():
-    """
-    Start APScheduler inside the web process (Render web service).
-    NOTE: If you scale to multiple instances, each instance will run this job.
-    In that case prefer Render Cron calling /tasks/mail/poll (single runner).
-    """
     global _scheduler
 
     enabled = os.getenv("MAIL_AUTO_SCAN_ENABLED", "1").lower() in ("1", "true", "yes", "on")
-    interval_min = int(os.getenv("MAIL_SCAN_INTERVAL_MIN", os.getenv("MAIL_POLL_EVERY_MIN", "5")))
-
-    # Safety bounds
-    if interval_min < 1:
-        interval_min = 1
-    if interval_min > 60:
-        interval_min = 60
+    interval_min = int(os.getenv("MAIL_SCAN_INTERVAL_MIN", "5"))
+    interval_min = max(1, min(interval_min, 60))
 
     _scheduler = BackgroundScheduler(timezone="UTC")
-
     _scheduler.add_job(_heartbeat_job, "interval", minutes=10, id="heartbeat", replace_existing=True)
 
     if enabled:
@@ -244,7 +245,7 @@ def on_startup():
         )
         logger.info("Auto mail scan enabled interval=%s min", interval_min)
     else:
-        logger.info("Auto mail scan disabled by MAIL_AUTO_SCAN_ENABLED=0")
+        logger.info("Auto mail scan disabled")
 
     _scheduler.start()
 
