@@ -5,13 +5,16 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.i18n import get_lang, t
 from app.ui import templates
+
+# ✅ Plan guard
+from app.plan_guard import get_current_user_db
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -43,21 +46,47 @@ def _append_audit_request(payload: Dict[str, Any]) -> None:
     if not isinstance(data, list):
         data = []
     data.append(payload)
-    # keep last 200
     if len(data) > 200:
         data = data[-200:]
     _save_json(AUDIT_REQ_FILE, data)
 
 
+def _url_q(s: str) -> str:
+    from urllib.parse import quote
+    return quote(s or "", safe="")
+
+
+def _require_pro_or_redirect(request: Request):
+    """
+    - No logueado -> login
+    - Free -> upgrade
+    - Pro/Admin -> ok
+    """
+    try:
+        cu = get_current_user_db(request)
+    except Exception:
+        return None, RedirectResponse(url="/auth/login", status_code=302)
+
+    if not cu.is_pro:
+        nxt = "/audit/"
+        return None, RedirectResponse(url=f"/billing/subscriptions?next={nxt}", status_code=302)
+
+    return cu, None
+
+
 @router.get("", response_class=HTMLResponse, include_in_schema=False)
 def audit_page_noslash(request: Request):
-    # Para que /audit no tire Not Found y funcione igual que /audit/
     return RedirectResponse(url="/audit/", status_code=302)
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def audit_page(request: Request):
     lang = get_lang(request)
+
+    cu, redir = _require_pro_or_redirect(request)
+    if redir:
+        return redir
+
     return templates.TemplateResponse(
         "audit.html",
         {
@@ -79,13 +108,16 @@ def audit_submit(
 ):
     lang = get_lang(request)
 
+    cu, redir = _require_pro_or_redirect(request)
+    if redir:
+        return redir
+
     name_org = (name_org or "").strip()
     contact_email = (contact_email or "").strip()
     what_to_review = (what_to_review or "").strip()
     team_size = (team_size or "").strip()
     comments = (comments or "").strip()
 
-    # validación simple
     missing = []
     if not name_org:
         missing.append("name_org")
@@ -114,7 +146,6 @@ def audit_submit(
             status_code=400,
         )
 
-    # Guardamos en disco (por si no hay SMTP)
     payload = {
         "ts": _now_iso(),
         "name_org": name_org,
@@ -130,10 +161,8 @@ def audit_submit(
     except Exception:
         pass
 
-    # Destino (tu mail)
     to_email = os.getenv("AUDIT_CONTACT_EMAIL", "info.alerttrail@gmail.com")
 
-    # Si no configuraste SMTP, devolvemos confirmación + mailto listo para enviar
     subject = f"AlertTrail - Auditoría solicitada ({name_org})"
     body_lines = [
         f"Nombre/Organización: {name_org}",
@@ -164,10 +193,3 @@ def audit_submit(
         },
         status_code=200,
     )
-
-
-def _url_q(s: str) -> str:
-    # mini urlencode sin dependencias
-    from urllib.parse import quote
-
-    return quote(s or "", safe="")
