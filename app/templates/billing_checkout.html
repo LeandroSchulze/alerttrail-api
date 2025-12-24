@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="{{ (lang or 'es')|lower }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t(lang, "billing.checkout_title") }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body class="bg">
+  <div class="center">
+    <div class="card">
+      <h1 style="margin:0 0 6px;font-size:1.35rem;">{{ t(lang, "billing.checkout_title") }}</h1>
+
+      {% if error %}
+        <div style="margin:10px 0;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:12px;padding:10px 12px;">
+          <b>{{ t(lang, "common.error") }}:</b> {{ error }}
+        </div>
+      {% endif %}
+
+      {% if mp_enabled %}
+        <p class="muted" style="margin-top:10px;">
+          {{ t(lang, "billing.checkout_open_mp") }}
+        </p>
+
+        {% if init_point %}
+          <a class="btn" href="{{ init_point }}" style="margin-top:10px;">
+            {{ t(lang, "billing.checkout_continue") }}
+          </a>
+        {% else %}
+          <p class="muted" style="margin-top:10px;">
+            {{ t(lang, "billing.checkout_no_init_point") }}
+          </p>
+        {% endif %}
+      {% else %}
+        <p class="muted" style="margin-top:10px;">
+          {{ t(lang, "billing.checkout_disabled") }}
+        </p>
+        <p class="muted" style="margin-top:6px;">
+          {{ t(lang, "billing.checkout_contact") }}
+          <a href="mailto:info.alerttrail@gmail.com" style="text-decoration:none;">info.alerttrail@gmail.com</a>
+        </p>
+      {% endif %}
+
+      <div style="margin-top:14px;">
+        <a href="/billing/subscriptions" style="text-decoration:none;color:#1d4ed8;">
+          ← {{ t(lang, "billing.back_subscriptions") }}
+        </a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
