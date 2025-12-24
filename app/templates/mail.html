@@ -20,22 +20,8 @@
         <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
           <div>
             <div style="font-weight:600;margin-bottom:2px;">{{ t(lang, "mail.linked_label") }}</div>
-
-            {# linked puede venir como dict (linked_accounts.json) o como objeto/row (MailAccount).
-               Mostramos un "display" robusto para evitar que quede vacío. #}
-            {% set _addr = linked.address or linked.email_address or linked.username or linked.imap_username or linked.email or '' %}
-            {% set _srv  = linked.server or linked.imap_host or '' %}
-            {% set _fld  = linked.folder or linked.imap_folder or '' %}
-
-            <div style="color:#334155;font-weight:600;">
-              {{ _addr if _addr else '—' }}
-            </div>
-            <div style="color:#64748b;font-size:.85rem;margin-top:2px;">
-              {% if _srv %}{{ _srv }}{% else %}—{% endif %}
-              {% if _fld %} · {{ _fld }}{% endif %}
-            </div>
+            <div style="color:#334155;">{{ linked.address }}</div>
           </div>
-
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <a href="/mail/connect" style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
               {{ t(lang, "mail.replace") }}
@@ -77,7 +63,7 @@
 
         <div>
           <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.server") }}</label>
-          <input name="server" value="{{ defaults.server if defaults else '' }}"
+          <input name="host" value="{{ defaults.server if defaults else '' }}"
                  style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
         </div>
 
