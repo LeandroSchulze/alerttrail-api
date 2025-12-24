@@ -1,4 +1,5 @@
-"""Background mail scan utilities.
+"""
+Background mail scan utilities.
 
 This module is used by the automatic scheduler (every N minutes).
 It scans linked IMAP accounts and stores the last scan result on disk
@@ -24,11 +25,10 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.database import get_db
 from app.models import MailAccount, User
-
 from app.services.mail_scan import scan_mailbox
 
 logger = logging.getLogger("alerttrail.mail")
@@ -46,16 +46,36 @@ def _save_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _user_id_from_user(user: User) -> str:
-    if getattr(user, "id", None) is not None:
-        return str(user.id)
-    if getattr(user, "email", None):
-        return str(user.email)
+def _user_key(user: Optional[User], acc: MailAccount) -> str:
+    """
+    Clave estable por usuario para el archivo scan_last_{key}.json
+
+    Preferimos SIEMPRE user.id (string) porque:
+    - coincide con lo que suele venir en JWT sub
+    - coincide con el lookup en /alerts y en UI
+    """
+    try:
+        if user and getattr(user, "id", None) is not None:
+            return str(user.id)
+    except Exception:
+        pass
+
+    # fallback: user_id del mail account
+    if getattr(acc, "user_id", None) is not None:
+        return str(acc.user_id)
+
+    # último fallback
+    try:
+        if user and getattr(user, "email", None):
+            return str(user.email)
+    except Exception:
+        pass
+
     return "unknown"
 
 
-def _scan_file_for_user_id(user_id: str) -> Path:
-    return MAIL_DATA_DIR / f"scan_last_{user_id}.json"
+def _scan_file_for_user_key(user_key: str) -> Path:
+    return MAIL_DATA_DIR / f"scan_last_{user_key}.json"
 
 
 def scan_all_inboxes(limit: int = 50) -> Dict[str, Any]:
@@ -72,8 +92,8 @@ def scan_all_inboxes(limit: int = 50) -> Dict[str, Any]:
         for acc in accounts:
             scanned += 1
             try:
-                user: User | None = db.get(User, acc.user_id) if acc.user_id else None
-                user_key = _user_id_from_user(user) if user else str(acc.user_id or "unknown")
+                user: Optional[User] = db.get(User, acc.user_id) if getattr(acc, "user_id", None) else None
+                user_key = _user_key(user, acc)
 
                 res = scan_mailbox(
                     host=acc.imap_host,
@@ -113,7 +133,16 @@ def scan_all_inboxes(limit: int = 50) -> Dict[str, Any]:
                     "ok": bool(res.ok),
                     "scanned_at": _now_iso(),
                     "folder": acc.imap_folder or "INBOX",
-                    "address": acc.email_address,
+
+                    # ✅ metadata útil para UI
+                    "user_id": str(getattr(acc, "user_id", "") or ""),
+                    "address": getattr(acc, "email_address", None) or getattr(user, "email", None) or "",
+                    "server": str(acc.imap_host or ""),
+                    "port": int(acc.imap_port or 993),
+                    "use_ssl": bool(acc.imap_ssl if acc.imap_ssl is not None else True),
+                    "mark_read": bool(acc.mark_read or False),
+
+                    # ✅ resultados
                     "total": int(res.total_found or 0),
                     "unread": int(res.unread or 0),
                     "items": items,
@@ -123,7 +152,7 @@ def scan_all_inboxes(limit: int = 50) -> Dict[str, Any]:
                     "limit": int(limit),
                 }
 
-                _save_json(_scan_file_for_user_id(user_key), payload)
+                _save_json(_scan_file_for_user_key(user_key), payload)
 
             except Exception as e:
                 errors += 1
