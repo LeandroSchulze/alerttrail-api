@@ -222,7 +222,32 @@
   "audit.success_title": "¡Listo!",
   "audit.success_desc": "Se registró tu solicitud. Si querés, podés enviarla por email ahora mismo con un click.",
   "audit.success_cta": "Enviar email",
-  "audit.success_note": "Destino"
+  "audit.success_note": "Destino",
 
+    "common.error": "Error",
+
+  "billing.page_title": "Suscripciones",
+  "billing.title": "Suscripciones",
+  "billing.subtitle": "Gestioná tu suscripción actual y tu ciclo de facturación.",
+  "billing.current_plan_title": "Tu plan actual",
+  "billing.free_note": "Estás en el plan GRATIS.",
+  "billing.pro_note": "Estás en el plan PRO.",
+  "billing.admin_note": "Las cuentas ADMIN se tratan como PRO.",
+  "billing.per_month": "mes",
+  "billing.annual_label": "Anual",
+  "billing.cta_pro": "Pasar a PRO",
+  "billing.cta_biz": "Empresas",
+  "billing.cta_history": "Historial de pagos",
+  "billing.biz_title": "Empresas / Equipos",
+  "billing.biz_desc": "Invitá miembros, gestioná accesos y centralizá la facturación.",
+  "billing.cta_biz_buy": "Comprar Empresas",
+
+  "billing.checkout_title": "Checkout",
+  "billing.checkout_open_mp": "Te vamos a redirigir a Mercado Pago para completar el pago.",
+  "billing.checkout_continue": "Continuar a Mercado Pago",
+  "billing.checkout_no_init_point": "No pudimos generar el link de pago. Probá nuevamente.",
+  "billing.checkout_disabled": "Los pagos todavía no están configurados en este despliegue.",
+  "billing.checkout_contact": "Contacto:",
+  "billing.back_subscriptions": "Volver a suscripciones"
 
 }
