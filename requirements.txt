@@ -13,8 +13,12 @@ reportlab==4.2.2
 cryptography==43.0.1
 mercadopago==2.2.1
 pywebpush
-requests  
+requests
 beautifulsoup4>=4.12
 APScheduler==3.10.4
 python-dateutil
 python-jose[cryptography]==3.3.0
+
+# ✅ IMAP engine dependency (missing on Render)
+imapclient==2.3.1
+
