@@ -1,21 +1,62 @@
 from __future__ import annotations
 
-from typing import Optional
-from sqlalchemy.orm import Session
+from dataclasses import dataclass
+from typing import Optional, List
+from datetime import datetime
 
 
-def scan_all_connected_mailboxes(db: Optional[Session] = None, limit: int | None = None, dry_run: bool = False) -> int:
-    """
-    Motor real para /tasks/mail/poll.
-    - db se acepta para compatibilidad (aunque hoy el scan usa JSON store).
-    - limit/dry_run por compatibilidad con el endpoint (dry_run hoy no cambia nada).
-    Retorna cantidad de casillas escaneadas.
-    """
-    from app.services.mail import scan_all_inboxes
-    import os
+@dataclass
+class MailScannerItem:
+    uid: str
+    subject: str
+    from_email: str
+    date: str
+    score: int
+    reasons: List[str]
 
-    if limit is not None:
-        os.environ["MAIL_SCAN_LIMIT"] = str(int(limit))
 
-    out = scan_all_inboxes()
-    return int(out.get("scanned", 0) or 0)
+@dataclass
+class MailScannerResult:
+    ok: bool
+    message: str
+    total_found: int
+    unread: int
+    dangerous: int
+    items: List[MailScannerItem]
+    counts: dict
+    scanned_at: str
+
+
+def danger_level(score: int) -> str:
+    if score >= 70:
+        return "high"
+    if score >= 40:
+        return "medium"
+    return "low"
+
+
+def to_scanner_result(res) -> MailScannerResult:
+    scanned_at = getattr(res, "scanned_at", None) or datetime.utcnow().isoformat() + "Z"
+    items = []
+    for it in getattr(res, "items", []) or []:
+        items.append(
+            MailScannerItem(
+                uid=str(getattr(it, "uid", "") or ""),
+                subject=str(getattr(it, "subject", "") or ""),
+                from_email=str(getattr(it, "from_email", "") or ""),
+                date=str(getattr(it, "date", "") or ""),
+                score=int(getattr(it, "score", 0) or 0),
+                reasons=list(getattr(it, "reasons", []) or []),
+            )
+        )
+
+    return MailScannerResult(
+        ok=bool(getattr(res, "ok", False)),
+        message=str(getattr(res, "message", "") or ""),
+        total_found=int(getattr(res, "total_found", 0) or 0),
+        unread=int(getattr(res, "unread", 0) or 0),
+        dangerous=int(getattr(res, "dangerous", 0) or 0),
+        items=items,
+        counts=dict(getattr(res, "counts", {}) or {}),
+        scanned_at=str(scanned_at),
+    )
