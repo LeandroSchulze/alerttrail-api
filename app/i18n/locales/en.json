@@ -221,8 +221,33 @@
   "audit.success_title": "All set!",
   "audit.success_desc": "Your request was saved. If you want, you can send it by email now with one click.",
   "audit.success_cta": "Send email",
-  "audit.success_note": "Recipient"
+  "audit.success_note": "Recipient",
 
+    "common.error": "Error",
+
+  "billing.page_title": "Subscriptions",
+  "billing.title": "Subscriptions",
+  "billing.subtitle": "Manage your current subscription and billing cycle.",
+  "billing.current_plan_title": "Your current plan",
+  "billing.free_note": "You're on the FREE plan.",
+  "billing.pro_note": "You're on the PRO plan.",
+  "billing.admin_note": "Admin accounts are treated as PRO.",
+  "billing.per_month": "month",
+  "billing.annual_label": "Annual",
+  "billing.cta_pro": "Go PRO",
+  "billing.cta_biz": "Business",
+  "billing.cta_history": "Payment history",
+  "billing.biz_title": "Business / Teams",
+  "billing.biz_desc": "Invite teammates, manage access and centralize billing.",
+  "billing.cta_biz_buy": "Buy Business",
+
+  "billing.checkout_title": "Checkout",
+  "billing.checkout_open_mp": "We’ll redirect you to Mercado Pago to complete payment.",
+  "billing.checkout_continue": "Continue to Mercado Pago",
+  "billing.checkout_no_init_point": "We couldn’t generate a payment link. Please try again.",
+  "billing.checkout_disabled": "Payments are not configured yet on this deployment.",
+  "billing.checkout_contact": "Contact:",
+  "billing.back_subscriptions": "Back to subscriptions"
 
 }
 
