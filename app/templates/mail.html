@@ -16,30 +16,61 @@
 
     <!-- Estado casilla guardada -->
     <div style="background:white;border:1px solid #dbeafe;border-radius:14px;padding:14px 14px 12px;box-shadow:0 10px 25px rgba(15,23,42,.06);">
-      {% if linked %}
-        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
-          <div>
-            <div style="font-weight:600;margin-bottom:2px;">{{ t(lang, "mail.linked_label") }}</div>
-            <div style="color:#334155;">{{ linked.address }}</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="/mail/connect" style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
-              {{ t(lang, "mail.replace") }}
-            </a>
-            <a href="/mail/scanner" style="text-decoration:none;border:none;padding:8px 12px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:600;">
-              {{ t(lang, "mail.open_scanner") }}
-            </a>
-          </div>
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+        <div>
+          <div style="font-weight:700;margin-bottom:2px;">Saved mailbox:</div>
+
+          {% if linked and (linked.get('address') or linked.get('email') or linked.get('username')) %}
+            {% set addr = linked.get('address') or linked.get('email') or linked.get('username') %}
+            <div style="color:#0f172a;font-weight:800;font-size:1.02rem;">
+              {{ addr }}
+              <span style="margin-left:8px;display:inline-flex;align-items:center;gap:6px;
+                           border:1px solid #bbf7d0;background:#dcfce7;color:#166534;
+                           padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;">
+                ✅ Linked
+              </span>
+            </div>
+
+            <div style="margin-top:4px;color:#64748b;font-size:.92rem;">
+              {% if linked.get('server') %}
+                {{ linked.get('server') }}{% if linked.get('port') %}:{{ linked.get('port') }}{% endif %}
+                ·
+              {% endif %}
+              Folder: {{ linked.get('folder') or 'INBOX' }}
+              {% if linked.get('updated_at') %}
+                · Updated: {{ linked.get('updated_at') }}
+              {% endif %}
+            </div>
+          {% else %}
+            <div style="color:#94a3b8;font-weight:700;">
+              None linked yet
+            </div>
+            <div style="margin-top:4px;color:#94a3b8;font-size:.92rem;">
+              Fill IMAP settings and click “Save configuration”.
+            </div>
+          {% endif %}
         </div>
-      {% else %}
-        <p style="margin:0 0 12px;color:#475569;">
-          {{ t(lang, "mail.no_linked") }}
-        </p>
+
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <a href="/mail/connect" style="text-decoration:none;border:none;padding:8px 12px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:600;">
+          <a href="/mail/connect"
+             style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
+            {{ t(lang, "mail.replace") }}
+          </a>
+          <a href="/mail/scanner"
+             style="text-decoration:none;border:none;padding:8px 12px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:700;">
+            {{ t(lang, "mail.open_scanner") }}
+          </a>
+        </div>
+      </div>
+
+      {% if not (linked and (linked.get('address') or linked.get('email') or linked.get('username'))) %}
+        <div style="margin-top:10px;">
+          <a href="/mail/connect"
+             style="text-decoration:none;border:none;padding:8px 12px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:700;">
             {{ t(lang, "mail.link") }}
           </a>
-          <a href="/mail/scanner" style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
+          <a href="/mail/scanner"
+             style="margin-left:6px;text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
             {{ t(lang, "mail.try_scanner") }}
           </a>
         </div>
@@ -63,7 +94,8 @@
 
         <div>
           <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.server") }}</label>
-          <input name="host" value="{{ defaults.server if defaults else '' }}"
+          <!-- IMPORTANTE: tu backend acepta server / imap_server; evitamos "host" -->
+          <input name="server" value="{{ defaults.server if defaults else '' }}"
                  style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
         </div>
 
