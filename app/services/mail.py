@@ -1,120 +1,137 @@
-# app/services/mail.py
+"""Background mail scan utilities.
+
+This module is used by the automatic scheduler (every N minutes).
+It scans linked IMAP accounts and stores the last scan result on disk
+so the UI (/mail/scanner) and the alerts poller (/alerts/pending) can
+consume the same data.
+
+Important: we store items in a stable shape compatible with alerts.
+
+    {
+      "uid": "...",
+      "subject": "...",
+      "from": "...",
+      "date": "...",
+      "attachments": [...],
+      "analysis": { "danger_level": "low|medium|high", "reasons": [...], "iocs": {...}, "hints": {...} }
+    }
+"""
+
 from __future__ import annotations
 
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
+
+from app.database import get_db
+from app.models import MailAccount, User
 
 from app.services.mail_scan import scan_mailbox
 
-logger = logging.getLogger("alerttrail.mailjobs")
-
+logger = logging.getLogger("alerttrail.mail")
 
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _load_json(path: Path, default):
-    try:
-        if not path.exists():
-            return default
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-
-def _save_json(path: Path, data) -> None:
+def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def scan_all_inboxes() -> Dict[str, Any]:
-    """
-    Background job: scan every linked account (JSON store) and persist last scan per user.
-    Enable via MAIL_CRON_ENABLED=1 and choose interval with MAIL_CRON_MINUTES.
-    """
-    linked_all = _load_json(LINKED_FILE, {}) or {}
-    if not isinstance(linked_all, dict) or not linked_all:
-        logger.info("scan_all_inboxes: no linked accounts found")
-        return {"ok": True, "linked": 0, "scanned": 0, "errors": 0}
+def _user_id_from_user(user: User) -> str:
+    if getattr(user, "id", None) is not None:
+        return str(user.id)
+    if getattr(user, "email", None):
+        return str(user.email)
+    return "unknown"
 
-    limit = int(os.getenv("MAIL_SCAN_LIMIT", "25"))
+
+def _scan_file_for_user_id(user_id: str) -> Path:
+    return MAIL_DATA_DIR / f"scan_last_{user_id}.json"
+
+
+def scan_all_inboxes(limit: int = 50) -> Dict[str, Any]:
+    """Scan all active IMAP mailboxes stored in DB and persist last scan per user."""
     scanned = 0
     errors = 0
+    dangerous_total = 0
 
-    for user_id, cfg in linked_all.items():
-        try:
-            if not isinstance(cfg, dict):
-                continue
+    with next(get_db()) as db:
+        accounts: List[MailAccount] = (
+            db.query(MailAccount).filter(MailAccount.is_active == True).all()  # noqa: E712
+        )
 
-            host = cfg.get("server") or "imap.gmail.com"
-            port = int(cfg.get("port") or 993)
-            folder = cfg.get("folder") or "INBOX"
-            use_ssl = bool(cfg.get("use_ssl", True))
-            username = cfg.get("username") or cfg.get("address") or ""
-            password = cfg.get("password") or ""
+        for acc in accounts:
+            scanned += 1
+            try:
+                user: User | None = db.get(User, acc.user_id) if acc.user_id else None
+                user_key = _user_id_from_user(user) if user else str(acc.user_id or "unknown")
 
-            res = scan_mailbox(
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-                folder=folder,
-                use_ssl=use_ssl,
-                limit=limit,
-                mark_read=False,
-            )
-
-            items = []
-            for it in res.items:
-                score = int(getattr(it.analysis, "risk_score", 0) or 0)
-                level = (getattr(it.analysis, "danger_level", "") or "").upper()
-                reasons = getattr(it.analysis, "reasons", []) or []
-
-                verdict = "BAJO"
-                if level in ("ALTO", "HIGH"):
-                    verdict = "ALTO"
-                elif level in ("MEDIO", "MEDIUM"):
-                    verdict = "MEDIO"
-
-                items.append(
-                    {
-                        "from": it.from_email,
-                        "subject": it.subject,
-                        "date": it.date or "",
-                        "score": score,
-                        "level": level,
-                        "reasons": reasons,
-                        "sender": it.from_email or "—",
-                        "verdict": verdict,
-                    }
+                res = scan_mailbox(
+                    host=acc.imap_host,
+                    port=int(acc.imap_port or 993),
+                    username=acc.imap_username,
+                    password=acc.imap_password,
+                    folder=acc.imap_folder or "INBOX",
+                    use_ssl=bool(acc.imap_ssl if acc.imap_ssl is not None else True),
+                    limit=int(limit),
+                    mark_read=bool(acc.mark_read or False),
                 )
 
-            out = {
-                "ok": True,
-                "scanned_at": datetime.utcnow().isoformat() + "Z",
-                "server": host,
-                "folder": folder,
-                "total": int(res.total_found or 0),
-                "items": items,
-                "error": None,
-                "limit": int(limit),
-            }
-            _save_json(MAIL_DATA_DIR / f"scan_last_{user_id}.json", out)
-            scanned += 1
+                items: List[Dict[str, Any]] = []
+                for it in (res.items or []):
+                    analysis = it.analysis
+                    items.append(
+                        {
+                            "uid": str(it.uid or ""),
+                            "subject": str(it.subject or ""),
+                            "from": str(it.from_email or ""),
+                            "date": str(it.date or ""),
+                            "attachments": list(it.attachments or []),
+                            "analysis": {
+                                "danger_level": str(getattr(analysis, "danger_level", "") or "low").lower(),
+                                "reasons": list(getattr(analysis, "reasons", []) or []),
+                                "iocs": dict(getattr(analysis, "iocs", {}) or {}),
+                                "hints": dict(getattr(analysis, "hints", {}) or {}),
+                            },
+                        }
+                    )
 
-        except Exception as e:
-            errors += 1
-            logger.exception("scan_all_inboxes error for user_id=%s: %s", user_id, str(e))
+                counts = dict(res.counts or {})
+                dangerous = int(res.dangerous or 0)
+                dangerous_total += dangerous
+
+                payload = {
+                    "ok": bool(res.ok),
+                    "scanned_at": _now_iso(),
+                    "folder": acc.imap_folder or "INBOX",
+                    "address": acc.email_address,
+                    "total": int(res.total_found or 0),
+                    "unread": int(res.unread or 0),
+                    "items": items,
+                    "counts": counts,
+                    "dangerous": dangerous,
+                    "error": res.message,
+                    "limit": int(limit),
+                }
+
+                _save_json(_scan_file_for_user_id(user_key), payload)
+
+            except Exception as e:
+                errors += 1
+                logger.exception("auto scan failed for account id=%s: %s", getattr(acc, "id", "?"), e)
 
     return {
-        "ok": True,
-        "linked": len(linked_all),
+        "ok": errors == 0,
         "scanned": scanned,
         "errors": errors,
+        "dangerous": dangerous_total,
     }
