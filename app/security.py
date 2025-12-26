@@ -52,21 +52,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """
-    bcrypt revienta si el password supera 72 bytes.
-    Para evitar que Render crashee en init_db/seed_admin,
-    si supera 72 bytes usamos pbkdf2_sha256.
+    bcrypt tiene límite duro de 72 bytes.
+    Si el password es largo, passlib automáticamente
+    usa pbkdf2_sha256 (configurado en CryptContext).
     """
-    try:
-        pw_bytes = (password or "").encode("utf-8", errors="ignore")
-    except Exception:
-        pw_bytes = b""
+    return pwd_context.hash(password)
 
-    if len(pw_bytes) > 72:
-        # ✅ safe fallback (sin límite 72 bytes)
-        return pwd_context.hash(password, scheme="pbkdf2_sha256")
-
-    # bcrypt normal
-    return pwd_context.hash(password, scheme="bcrypt")
 
 
 def _cookie_domain_from_host(host: str) -> Optional[str]:
