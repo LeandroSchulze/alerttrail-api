@@ -5,6 +5,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional
+from importlib import import_module
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -56,6 +57,28 @@ if STATIC_DIR.exists():
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
 
+def _try_include_router(module_path: str) -> None:
+    """
+    Includes router from a module if it exists.
+    Expected: module has attribute 'router'.
+    This is safe for deploys where some UI routers may not exist.
+    """
+    try:
+        mod = import_module(module_path)
+        router = getattr(mod, "router", None)
+        if router is None:
+            logger.warning("Optional router module %s has no attribute 'router'", module_path)
+            return
+        app.include_router(router)
+        logger.info("Included optional router: %s", module_path)
+    except ModuleNotFoundError:
+        # module not present in this build — ok
+        logger.warning("Optional router not found: %s", module_path)
+    except Exception as e:
+        # any other error should be visible but not kill app startup
+        logger.exception("Failed including optional router %s: %s", module_path, e)
+
+
 # -------------------------
 # Routers
 # -------------------------
@@ -77,6 +100,17 @@ app.include_router(i18n.router)
 
 # cron/task endpoints (Render cron can hit /tasks/mail/poll)
 app.include_router(tasks_mail.router)
+
+# -------------------------
+# Optional UI routers (templates)
+# -------------------------
+_try_include_router("app.routers.billing_ui")
+_try_include_router("app.routers.payments_ui")
+_try_include_router("app.routers.stats_ui")
+_try_include_router("app.routers.admin_payments")
+_try_include_router("app.routers.audit")
+_try_include_router("app.routers.darkweb")
+_try_include_router("app.routers.legal")
 
 
 # -------------------------
