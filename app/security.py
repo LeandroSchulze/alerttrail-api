@@ -22,11 +22,14 @@ COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()
 COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "") or "").lower() in ("1", "true", "yes", "on")
 COOKIE_HTTPONLY = (os.getenv("COOKIE_HTTPONLY", "1") or "1").lower() in ("1", "true", "yes", "on")
 
-# Si lo seteás en env, lo respeta. Si no, lo calculamos según host.
 COOKIE_DOMAIN_ENV = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ✅ IMPORTANTE:
+# bcrypt tiene límite de 72 bytes. Para passwords largos usamos pbkdf2_sha256.
+pwd_context = CryptContext(
+    schemes=["bcrypt", "pbkdf2_sha256"],
+    deprecated="auto",
+)
 
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
@@ -48,20 +51,30 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """
+    bcrypt revienta si el password supera 72 bytes.
+    Para evitar que Render crashee en init_db/seed_admin,
+    si supera 72 bytes usamos pbkdf2_sha256.
+    """
+    try:
+        pw_bytes = (password or "").encode("utf-8", errors="ignore")
+    except Exception:
+        pw_bytes = b""
+
+    if len(pw_bytes) > 72:
+        # ✅ safe fallback (sin límite 72 bytes)
+        return pwd_context.hash(password, scheme="pbkdf2_sha256")
+
+    # bcrypt normal
+    return pwd_context.hash(password, scheme="bcrypt")
 
 
 def _cookie_domain_from_host(host: str) -> Optional[str]:
-    """
-    Deriva un domain tipo ".alerttrail.com" desde "www.alerttrail.com".
-    Si estás en localhost/IP => None (host-only cookie).
-    """
     if not host:
         return None
 
     host = host.split(":")[0].strip().lower()
 
-    # localhost o IP -> no setear Domain
     if host == "localhost" or host.replace(".", "").isdigit():
         return None
 
@@ -69,7 +82,6 @@ def _cookie_domain_from_host(host: str) -> Optional[str]:
     if len(parts) < 2:
         return None
 
-    # último 2 labels (alerttrail.com)
     root = ".".join(parts[-2:])
     return f".{root}"
 
@@ -106,33 +118,21 @@ def issue_access_cookie(resp: Response, token: str, request: Optional[Request] =
 
 
 def clear_access_cookie(resp: Response, request: Optional[Request] = None) -> None:
-    """
-    Borra cookie en varias variantes para evitar duplicados:
-    - host-only
-    - domain derivado (".alerttrail.com")
-    - domain explícito de env
-    """
-    # host-only
     resp.delete_cookie(key=COOKIE_NAME, path="/")
 
-    # domain derivado
     if request is not None:
         domain = _get_cookie_domain(request)
         if domain:
             resp.delete_cookie(key=COOKIE_NAME, path="/", domain=domain)
 
-    # domain env (si existiese)
     if COOKIE_DOMAIN_ENV:
         resp.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN_ENV)
 
 
 def get_token_from_request(request: Request) -> str:
-    """Return the JWT from cookies (robust against duplicate cookie variants)."""
-    # Fast path (Starlette parsed cookies)
     token = request.cookies.get(COOKIE_NAME)
 
-    # If multiple cookies with same name exist (host-only + domain),
-    # Starlette may pick one arbitrarily. Parse raw Cookie header and prefer the LAST.
+    # fallback robusto si hay cookies duplicadas
     if not token:
         raw = request.headers.get("cookie", "") or ""
         parts = [p.strip() for p in raw.split(";") if p.strip()]
@@ -157,7 +157,6 @@ def get_current_user_cookie(request: Request) -> Dict[str, Any]:
 def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
-        # probar header raw por duplicados
         raw = request.headers.get("cookie", "") or ""
         parts = [p.strip() for p in raw.split(";") if p.strip()]
         for p in reversed(parts):
@@ -174,9 +173,6 @@ def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any
         return None
 
 
-# ------------------------------------------------------------
-# Compat / helpers usados en otros módulos (según tu proyecto)
-# ------------------------------------------------------------
 def get_current_user_id(request: Request) -> int:
     payload = get_current_user_cookie(request)
     sub = payload.get("sub")
@@ -187,14 +183,5 @@ def get_current_user_id(request: Request) -> int:
 
 
 def normalize_user_plan(db, user) -> None:
-    """
-    Fallback NO intrusivo.
-    Si tu proyecto tiene billing_guard real, se usa ese.
-    Este no debería “bajarte” a FREE salvo que tu DB ya lo tenga así.
-    """
-    try:
-        # no hacemos nada agresivo acá
-        # (si necesitás lógica real de billing, va en app/security/billing_guard.py)
-        return
-    except Exception:
-        return
+    # fallback no intrusivo
+    return
