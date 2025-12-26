@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException, Request, status
-from starlette.responses import Response
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 from passlib.context import CryptContext
+from starlette.responses import Response
 
 # =========================
 # Password hashing
@@ -88,9 +88,10 @@ COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))
 
 def _cookie_domain_from_host(host: str) -> Optional[str]:
     """
-    Hace que la cookie funcione tanto en www.alerttrail.com como en alerttrail.com.
-    - www.alerttrail.com / alerttrail.com -> .alerttrail.com
-    - localhost/IP -> None
+    Hace que la cookie funcione en:
+      - www.alerttrail.com
+      - alerttrail.com
+    y evita romper en localhost / IP.
     """
     if not host:
         return None
@@ -100,7 +101,7 @@ def _cookie_domain_from_host(host: str) -> Optional[str]:
         return None
 
     parts = host.split(".")
-    # IP simple
+    # IP
     if len(parts) == 4 and all(p.isdigit() for p in parts):
         return None
 
@@ -121,7 +122,7 @@ def issue_access_cookie(
     samesite = COOKIE_SAMESITE
     secure = COOKIE_SECURE or (samesite == "none")
 
-    # ✅ FIX: si no hay COOKIE_DOMAIN en env, derivamos del host (www vs root)
+    # ✅ CLAVE: si no seteaste COOKIE_DOMAIN en env, lo derivamos del host
     domain = COOKIE_DOMAIN
     if not domain and request is not None:
         domain = _cookie_domain_from_host(request.headers.get("host", ""))
@@ -169,7 +170,7 @@ def get_current_user_cookie(request: Request) -> Dict[str, Any]:
     return payload
 
 # =========================
-# Request helpers (OPTIONAL) ✅ para UI/templates
+# Request helpers (OPTIONAL) ✅ UI/templates
 # =========================
 def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
     """
@@ -198,14 +199,9 @@ async def validate_csrf(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF inválido")
 
 # -------------------------
-# Compat exports (NO ROMPER imports viejos)
+# Compat exports (NO romper imports viejos)
 # -------------------------
-
 def get_current_user_id(request: Request) -> int:
-    """
-    Compat para app.guards / routers viejos.
-    Lee la cookie JWT y devuelve el user id (sub) como int.
-    """
     payload = get_current_user_cookie(request)
     sub = payload.get("sub")
     try:
@@ -213,12 +209,10 @@ def get_current_user_id(request: Request) -> int:
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
 
-
 def normalize_user_plan(db, user):
     """
-    Compat para billing_ui u otros módulos que importan normalize_user_plan desde app.security.
+    Compat para módulos que importan normalize_user_plan desde app.security.
     La lógica real vive en app.security.billing_guard.normalize_user_plan.
-    Si no existe o falla, no rompe el server.
     """
     try:
         from app.security.billing_guard import normalize_user_plan as _normalize  # type: ignore
