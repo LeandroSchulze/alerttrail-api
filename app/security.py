@@ -16,10 +16,12 @@ pwd_context = CryptContext(
     deprecated="auto",
 )
 
+
 def get_password_hash(password: str) -> str:
     if not isinstance(password, str) or not password:
         raise ValueError("Password inválido")
     return pwd_context.hash(password)
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     if not plain_password or not hashed_password:
@@ -28,6 +30,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
         return False
+
 
 def verify_and_rehash(plain_password: str, hashed_password: str) -> Tuple[bool, Optional[str]]:
     if not plain_password or not hashed_password:
@@ -42,6 +45,7 @@ def verify_and_rehash(plain_password: str, hashed_password: str) -> Tuple[bool, 
     except Exception:
         return False, None
 
+
 # =========================
 # JWT
 # =========================
@@ -52,14 +56,17 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(
     os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", os.getenv("JWT_EXPIRE_MIN", str(60 * 24 * 7)))
 )
 
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     to_encode = dict(data)
     expire = _now_utc() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "iat": _now_utc()})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
 
 def decode_token(token: str) -> Dict[str, Any]:
     try:
@@ -70,10 +77,12 @@ def decode_token(token: str) -> Dict[str, Any]:
             detail="Token inválido o expirado",
         ) from e
 
+
 # =========================
 # Cookies
 # =========================
 COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
+
 
 def _env_bool(var_name: str, default: bool) -> bool:
     v = os.getenv(var_name)
@@ -81,21 +90,64 @@ def _env_bool(var_name: str, default: bool) -> bool:
         return default
     return v.strip().lower() in ("1", "true", "t", "yes", "y", "on")
 
+
 COOKIE_SECURE = _env_bool("COOKIE_SECURE", False)
 COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # lax|strict|none
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None
 COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))
 
+
+def _first_host_value(v: str) -> str:
+    """
+    Render/proxies pueden mandar "www.alerttrail.com, alerttrail.com"
+    o valores con espacios. Nos quedamos con el primero.
+    """
+    if not v:
+        return ""
+    v = v.strip()
+    if "," in v:
+        v = v.split(",")[0].strip()
+    return v
+
+
+def _get_public_host_from_request(request: Optional[Request]) -> str:
+    """
+    En producción detrás de proxy, el host real suele venir en X-Forwarded-Host.
+    """
+    if request is None:
+        return ""
+    xf_host = _first_host_value(request.headers.get("x-forwarded-host", "") or "")
+    if xf_host:
+        return xf_host
+    host = _first_host_value(request.headers.get("host", "") or "")
+    return host
+
+
+def _is_https_from_request(request: Optional[Request]) -> bool:
+    """
+    Render termina TLS en el proxy y suele informar el esquema real con X-Forwarded-Proto.
+    """
+    if request is None:
+        return False
+    xf_proto = (request.headers.get("x-forwarded-proto") or "").strip().lower()
+    if xf_proto:
+        return xf_proto.split(",")[0].strip() == "https"
+    try:
+        return (request.url.scheme or "").lower() == "https"
+    except Exception:
+        return False
+
+
 def _cookie_domain_from_host(host: str) -> Optional[str]:
     """
-    Hace que la cookie funcione en:
-      - www.alerttrail.com
-      - alerttrail.com
-    y evita romper en localhost / IP.
+    Convierte un host público (www.alerttrail.com) en domain cookie (.alerttrail.com).
+    Evita localhost/IP y casos inválidos.
     """
     if not host:
         return None
-    host = host.split(":")[0].strip().lower()
+
+    host = _first_host_value(host).strip().lower()
+    host = host.split(":")[0].strip()
 
     if host in ("localhost",):
         return None
@@ -108,7 +160,12 @@ def _cookie_domain_from_host(host: str) -> Optional[str]:
     if len(parts) < 2:
         return None
 
-    return "." + ".".join(parts[-2:])  # .alerttrail.com
+    base = ".".join(parts[-2:])  # alerttrail.com
+    if "." not in base or len(base) < 3:
+        return None
+
+    return "." + base  # .alerttrail.com
+
 
 def issue_access_cookie(
     response: Response,
@@ -120,12 +177,15 @@ def issue_access_cookie(
     expires_dt = _now_utc() + timedelta(seconds=ma)
 
     samesite = COOKIE_SAMESITE
-    secure = COOKIE_SECURE or (samesite == "none")
 
-    # ✅ CLAVE: si no seteaste COOKIE_DOMAIN en env, lo derivamos del host
+    # ✅ en https real (x-forwarded-proto=https), marcamos secure=True
+    secure = COOKIE_SECURE or _is_https_from_request(request) or (samesite == "none")
+
+    # ✅ CLAVE: derivar dominio desde el HOST PUBLICO (x-forwarded-host)
     domain = COOKIE_DOMAIN
-    if not domain and request is not None:
-        domain = _cookie_domain_from_host(request.headers.get("host", ""))
+    if not domain:
+        public_host = _get_public_host_from_request(request)
+        domain = _cookie_domain_from_host(public_host)
 
     response.set_cookie(
         key=COOKIE_NAME,
@@ -139,6 +199,7 @@ def issue_access_cookie(
         samesite=samesite,
     )
 
+
 def clear_access_cookie(response: Response, request: Optional[Request] = None) -> None:
     # borrar host-only
     response.delete_cookie(key=COOKIE_NAME, path="/")
@@ -147,11 +208,12 @@ def clear_access_cookie(response: Response, request: Optional[Request] = None) -
     if COOKIE_DOMAIN:
         response.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
 
-    # borrar domain derivado (www/root)
-    if request is not None:
-        d = _cookie_domain_from_host(request.headers.get("host", ""))
-        if d:
-            response.delete_cookie(key=COOKIE_NAME, path="/", domain=d)
+    # borrar domain derivado del host público (x-forwarded-host)
+    public_host = _get_public_host_from_request(request)
+    d = _cookie_domain_from_host(public_host)
+    if d:
+        response.delete_cookie(key=COOKIE_NAME, path="/", domain=d)
+
 
 # =========================
 # Request helpers (STRICT)
@@ -162,12 +224,14 @@ def get_token_from_request(request: Request) -> str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
     return token
 
+
 def get_current_user_cookie(request: Request) -> Dict[str, Any]:
     token = get_token_from_request(request)
     payload = decode_token(token)
     if "sub" not in payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sin sujeto (sub)")
     return payload
+
 
 # =========================
 # Request helpers (OPTIONAL) ✅ UI/templates
@@ -187,6 +251,7 @@ def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any
     except Exception:
         return None
 
+
 # =========================
 # Optional CSRF (compat)
 # =========================
@@ -198,6 +263,7 @@ async def validate_csrf(request: Request) -> None:
     if not cookie or not header or cookie != header:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF inválido")
 
+
 # -------------------------
 # Compat exports (NO romper imports viejos)
 # -------------------------
@@ -208,6 +274,7 @@ def get_current_user_id(request: Request) -> int:
         return int(str(sub))
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
 
 def normalize_user_plan(db, user):
     """
