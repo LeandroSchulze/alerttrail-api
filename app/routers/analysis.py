@@ -1,7 +1,7 @@
 # app/routers/analysis.py
 from fastapi import APIRouter, Request, UploadFile, File, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import io, re
 from collections import Counter, defaultdict
 from datetime import datetime
