@@ -94,7 +94,6 @@ def login_web(
     r = RedirectResponse("/dashboard", status_code=303)
     issue_access_cookie(r, token, request=request)
 
-
     if DEBUG_AUTH:
         try:
             print(f"[auth][login_web] ok email={user.email} id={user.id}")
@@ -106,6 +105,7 @@ def login_web(
 
 @router.post("/login", response_class=JSONResponse)
 def login_api(
+    request: Request,
     email: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db),
@@ -127,7 +127,7 @@ def login_api(
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
     resp = JSONResponse({"ok": True})
-    issue_access_cookie(resp, token)
+    issue_access_cookie(resp, token, request=request)
     return resp
 
 
