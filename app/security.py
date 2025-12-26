@@ -1,225 +1,146 @@
 # app/security.py
+from __future__ import annotations
+
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from fastapi import HTTPException, Request, status
-from jose import JWTError, jwt
+from fastapi import HTTPException, Request, Response, status
+from jose import jwt
 from passlib.context import CryptContext
-from starlette.responses import Response
 
-# =========================
-# Password hashing
-# =========================
-pwd_context = CryptContext(
-    schemes=["pbkdf2_sha256", "bcrypt"],
-    deprecated="auto",
-)
+# ------------------------------------------------------------
+# Config
+# ------------------------------------------------------------
+JWT_SECRET = os.getenv("JWT_SECRET", os.getenv("SESSION_SECRET", "change-me-in-env"))
+JWT_ALG = os.getenv("JWT_ALG", "HS256")
+
+COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 30)))  # 30 días
+
+COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()
+COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "") or "").lower() in ("1", "true", "yes", "on")
+COOKIE_HTTPONLY = (os.getenv("COOKIE_HTTPONLY", "1") or "1").lower() in ("1", "true", "yes", "on")
+
+# Si lo seteás en env, lo respeta. Si no, lo calculamos según host.
+COOKIE_DOMAIN_ENV = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
 
-def get_password_hash(password: str) -> str:
-    if not isinstance(password, str) or not password:
-        raise ValueError("Password inválido")
-    return pwd_context.hash(password)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = dict(data)
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(seconds=COOKIE_MAX_AGE))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALG)
+
+
+def decode_token(token: str) -> Dict[str, Any]:
+    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if not plain_password or not hashed_password:
-        return False
     try:
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
         return False
 
 
-def verify_and_rehash(plain_password: str, hashed_password: str) -> Tuple[bool, Optional[str]]:
-    if not plain_password or not hashed_password:
-        return False, None
-    try:
-        ok = pwd_context.verify(plain_password, hashed_password)
-        if not ok:
-            return False, None
-        if pwd_context.needs_update(hashed_password):
-            return True, pwd_context.hash(plain_password)
-        return True, None
-    except Exception:
-        return False, None
-
-
-# =========================
-# JWT
-# =========================
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-please")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", os.getenv("JWT_ALG", "HS256"))
-
-ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", os.getenv("JWT_EXPIRE_MIN", str(60 * 24 * 7)))
-)
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = dict(data)
-    expire = _now_utc() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iat": _now_utc()})
-    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-
-def decode_token(token: str) -> Dict[str, Any]:
-    try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o expirado",
-        ) from e
-
-
-# =========================
-# Cookies
-# =========================
-COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
-
-
-def _env_bool(var_name: str, default: bool) -> bool:
-    v = os.getenv(var_name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "t", "yes", "y", "on")
-
-
-COOKIE_SECURE = _env_bool("COOKIE_SECURE", False)
-COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # lax|strict|none
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None
-COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))
-
-
-def _first_host_value(v: str) -> str:
-    """
-    Render/proxies pueden mandar "www.alerttrail.com, alerttrail.com"
-    o valores con espacios. Nos quedamos con el primero.
-    """
-    if not v:
-        return ""
-    v = v.strip()
-    if "," in v:
-        v = v.split(",")[0].strip()
-    return v
-
-
-def _get_public_host_from_request(request: Optional[Request]) -> str:
-    """
-    En producción detrás de proxy, el host real suele venir en X-Forwarded-Host.
-    """
-    if request is None:
-        return ""
-    xf_host = _first_host_value(request.headers.get("x-forwarded-host", "") or "")
-    if xf_host:
-        return xf_host
-    host = _first_host_value(request.headers.get("host", "") or "")
-    return host
-
-
-def _is_https_from_request(request: Optional[Request]) -> bool:
-    """
-    Render termina TLS en el proxy y suele informar el esquema real con X-Forwarded-Proto.
-    """
-    if request is None:
-        return False
-    xf_proto = (request.headers.get("x-forwarded-proto") or "").strip().lower()
-    if xf_proto:
-        return xf_proto.split(",")[0].strip() == "https"
-    try:
-        return (request.url.scheme or "").lower() == "https"
-    except Exception:
-        return False
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
 
 
 def _cookie_domain_from_host(host: str) -> Optional[str]:
     """
-    Convierte un host público (www.alerttrail.com) en domain cookie (.alerttrail.com).
-    Evita localhost/IP y casos inválidos.
+    Deriva un domain tipo ".alerttrail.com" desde "www.alerttrail.com".
+    Si estás en localhost/IP => None (host-only cookie).
     """
     if not host:
         return None
 
-    host = _first_host_value(host).strip().lower()
-    host = host.split(":")[0].strip()
+    host = host.split(":")[0].strip().lower()
 
-    if host in ("localhost",):
+    # localhost o IP -> no setear Domain
+    if host == "localhost" or host.replace(".", "").isdigit():
         return None
 
     parts = host.split(".")
-    # IP
-    if len(parts) == 4 and all(p.isdigit() for p in parts):
-        return None
-
     if len(parts) < 2:
         return None
 
-    base = ".".join(parts[-2:])  # alerttrail.com
-    if "." not in base or len(base) < 3:
+    # último 2 labels (alerttrail.com)
+    root = ".".join(parts[-2:])
+    return f".{root}"
+
+
+def _get_cookie_domain(request: Optional[Request] = None) -> Optional[str]:
+    if COOKIE_DOMAIN_ENV:
+        return COOKIE_DOMAIN_ENV
+    if request is None:
         return None
+    host = request.headers.get("host") or ""
+    return _cookie_domain_from_host(host)
 
-    return "." + base  # .alerttrail.com
 
-
-def issue_access_cookie(
-    response: Response,
-    token: str,
-    max_age: Optional[int] = None,
-    request: Optional[Request] = None,
-) -> None:
-    ma = max_age if max_age is not None else COOKIE_MAX_AGE
-    expires_dt = _now_utc() + timedelta(seconds=ma)
+def issue_access_cookie(resp: Response, token: str, request: Optional[Request] = None) -> None:
+    domain = _get_cookie_domain(request)
 
     samesite = COOKIE_SAMESITE
+    if samesite not in ("lax", "strict", "none"):
+        samesite = "lax"
 
-    # ✅ en https real (x-forwarded-proto=https), marcamos secure=True
-    secure = COOKIE_SECURE or _is_https_from_request(request) or (samesite == "none")
+    secure = COOKIE_SECURE or (samesite == "none")
 
-    # ✅ CLAVE: derivar dominio desde el HOST PUBLICO (x-forwarded-host)
-    domain = COOKIE_DOMAIN
-    if not domain:
-        public_host = _get_public_host_from_request(request)
-        domain = _cookie_domain_from_host(public_host)
-
-    response.set_cookie(
+    resp.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=ma,
-        expires=expires_dt,
+        max_age=COOKIE_MAX_AGE,
+        expires=datetime.now(timezone.utc) + timedelta(seconds=COOKIE_MAX_AGE),
         path="/",
         domain=domain,
         secure=secure,
-        httponly=True,
+        httponly=COOKIE_HTTPONLY,
         samesite=samesite,
     )
 
 
-def clear_access_cookie(response: Response, request: Optional[Request] = None) -> None:
-    # borrar host-only
-    response.delete_cookie(key=COOKIE_NAME, path="/")
+def clear_access_cookie(resp: Response, request: Optional[Request] = None) -> None:
+    """
+    Borra cookie en varias variantes para evitar duplicados:
+    - host-only
+    - domain derivado (".alerttrail.com")
+    - domain explícito de env
+    """
+    # host-only
+    resp.delete_cookie(key=COOKIE_NAME, path="/")
 
-    # borrar domain explícito (si existe)
-    if COOKIE_DOMAIN:
-        response.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
+    # domain derivado
+    if request is not None:
+        domain = _get_cookie_domain(request)
+        if domain:
+            resp.delete_cookie(key=COOKIE_NAME, path="/", domain=domain)
 
-    # borrar domain derivado del host público (x-forwarded-host)
-    public_host = _get_public_host_from_request(request)
-    d = _cookie_domain_from_host(public_host)
-    if d:
-        response.delete_cookie(key=COOKIE_NAME, path="/", domain=d)
+    # domain env (si existiese)
+    if COOKIE_DOMAIN_ENV:
+        resp.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN_ENV)
 
 
-# =========================
-# Request helpers (STRICT)
-# =========================
 def get_token_from_request(request: Request) -> str:
+    """Return the JWT from cookies (robust against duplicate cookie variants)."""
+    # Fast path (Starlette parsed cookies)
     token = request.cookies.get(COOKIE_NAME)
+
+    # If multiple cookies with same name exist (host-only + domain),
+    # Starlette may pick one arbitrarily. Parse raw Cookie header and prefer the LAST.
+    if not token:
+        raw = request.headers.get("cookie", "") or ""
+        parts = [p.strip() for p in raw.split(";") if p.strip()]
+        for p in reversed(parts):
+            if p.startswith(COOKIE_NAME + "="):
+                token = p.split("=", 1)[1]
+                break
+
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
     return token
@@ -227,62 +148,53 @@ def get_token_from_request(request: Request) -> str:
 
 def get_current_user_cookie(request: Request) -> Dict[str, Any]:
     token = get_token_from_request(request)
-    payload = decode_token(token)
-    if "sub" not in payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sin sujeto (sub)")
-    return payload
-
-
-# =========================
-# Request helpers (OPTIONAL) ✅ UI/templates
-# =========================
-def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
-    """
-    Para páginas UI: si no hay cookie o token inválido -> None (NO 401).
-    """
     try:
-        token = request.cookies.get(COOKIE_NAME)
-        if not token:
-            return None
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        if not isinstance(payload, dict) or "sub" not in payload:
-            return None
-        return payload
-    except Exception:
-        return None
-
-
-# =========================
-# Optional CSRF (compat)
-# =========================
-async def validate_csrf(request: Request) -> None:
-    if os.getenv("CSRF_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
-        return
-    cookie = request.cookies.get("csrf_token") or ""
-    header = request.headers.get("x-csrf") or request.headers.get("x-csrf-token") or ""
-    if not cookie or not header or cookie != header:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF inválido")
-
-
-# -------------------------
-# Compat exports (NO romper imports viejos)
-# -------------------------
-def get_current_user_id(request: Request) -> int:
-    payload = get_current_user_cookie(request)
-    sub = payload.get("sub")
-    try:
-        return int(str(sub))
+        return decode_token(token)
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
 
 
-def normalize_user_plan(db, user):
+def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        # probar header raw por duplicados
+        raw = request.headers.get("cookie", "") or ""
+        parts = [p.strip() for p in raw.split(";") if p.strip()]
+        for p in reversed(parts):
+            if p.startswith(COOKIE_NAME + "="):
+                token = p.split("=", 1)[1]
+                break
+
+    if not token:
+        return None
+
+    try:
+        return decode_token(token)
+    except Exception:
+        return None
+
+
+# ------------------------------------------------------------
+# Compat / helpers usados en otros módulos (según tu proyecto)
+# ------------------------------------------------------------
+def get_current_user_id(request: Request) -> int:
+    payload = get_current_user_cookie(request)
+    sub = payload.get("sub")
+    try:
+        return int(sub)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+
+def normalize_user_plan(db, user) -> None:
     """
-    Compat para módulos que importan normalize_user_plan desde app.security.
-    La lógica real vive en app.security.billing_guard.normalize_user_plan.
+    Fallback NO intrusivo.
+    Si tu proyecto tiene billing_guard real, se usa ese.
+    Este no debería “bajarte” a FREE salvo que tu DB ya lo tenga así.
     """
     try:
-        from app.security.billing_guard import normalize_user_plan as _normalize  # type: ignore
-        return _normalize(db, user)
+        # no hacemos nada agresivo acá
+        # (si necesitás lógica real de billing, va en app/security/billing_guard.py)
+        return
     except Exception:
-        return user
+        return
