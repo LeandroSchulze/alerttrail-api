@@ -53,7 +53,6 @@ def _templates(request: Request):
 def login_get(request: Request):
     tpl = _templates(request)
     lang = get_lang(request)
-    # login.html usa {{ t(lang, "...") }} => t tiene que estar en globals del template env
     return tpl.TemplateResponse("login.html", {"request": request, "lang": lang})
 
 
@@ -73,7 +72,6 @@ def login_web(
     )
 
     if not user or not verify_password(password, user.hashed_password):
-        # Re-render del login con error (sin romper)
         tpl = _templates(request)
         lang = get_lang(request)
         return tpl.TemplateResponse(
@@ -82,14 +80,12 @@ def login_web(
             status_code=400,
         )
 
-    # Normalizar plan si existe
     if normalize_user_plan:
         try:
             normalize_user_plan(db, user)
         except Exception:
             pass
 
-    # Token + cookie
     token = create_access_token({"sub": str(user.id), "email": user.email})
     r = RedirectResponse("/dashboard", status_code=303)
     issue_access_cookie(r, token, request=request)
@@ -111,8 +107,7 @@ def login_api(
     db: Session = Depends(get_db),
 ):
     """
-    Login API (si lo usás desde JS o integraciones).
-    Devuelve JSON, y también setea la cookie.
+    Login API. Devuelve JSON y setea cookie.
     """
     email = (email or "").strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
@@ -132,9 +127,9 @@ def login_api(
 
 
 @router.get("/logout", include_in_schema=False)
-def logout():
+def logout(request: Request):
     r = RedirectResponse("/", status_code=303)
-    clear_access_cookie(r)
+    clear_access_cookie(r, request=request)
     return r
 
 
@@ -168,10 +163,6 @@ def register(
     name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """
-    Registro simple (por si lo tenés habilitado).
-    Si no lo usás, igual no molesta.
-    """
     email = (email or "").strip().lower()
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email y password requeridos")
@@ -187,7 +178,6 @@ def register(
     if hasattr(u, "name") and name:
         u.name = name
 
-    # defaults razonables
     if hasattr(u, "plan"):
         u.plan = "FREE"
     if hasattr(u, "is_pro"):
