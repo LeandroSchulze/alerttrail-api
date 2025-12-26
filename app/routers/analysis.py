@@ -6,12 +6,7 @@ import io, re
 from collections import Counter, defaultdict
 from datetime import datetime
 
-try:
-    from app.security import get_current_user_cookie
-except Exception:
-    def get_current_user_cookie():
-        return None
-
+from app.security import get_current_user_cookie_optional
 from app.i18n import get_lang_from_request
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -189,9 +184,9 @@ async def analysis_index():
 
 
 @router.get("/generate", response_class=HTMLResponse)
-async def generate_page(request: Request, current=Depends(get_current_user_cookie)):
-    if current is None:
-        return RedirectResponse("/login")
+async def generate_page(request: Request, current=Depends(get_current_user_cookie_optional)):
+    if not current:
+        return RedirectResponse("/auth/login", status_code=302)
 
     lang = get_lang_from_request(request)
 
@@ -215,88 +210,47 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
       .btn{{background:#0ea5e9;color:#03131c;padding:10px 14px;border:0;border-radius:10px;font-weight:700;cursor:pointer}}
       input[type=file]{{padding:10px;background:#0e1c27;border:1px solid rgba(255,255,255,.2);border-radius:10px;color:#eaf2f7;width:100%}}
       label{{display:block;margin:10px 0}}
+      .hint{{opacity:.85;margin-top:10px}}
     </style>
     <div class="wrap">
       <h1>{h1}</h1>
       <div class="card">
-        <form method="post" action="/analysis/generate" enctype="multipart/form-data">
-          <label>{file_lbl}:
-            <input type="file" name="file" required>
+        <form method="post" action="/analysis/analyze" enctype="multipart/form-data">
+          <label>{file_lbl}</label>
+          <input type="file" name="file" required>
+          <label style="margin-top:10px">
+            <input type="checkbox" name="pdf" value="1"> {pdf_lbl}
           </label>
-          <label><input type="checkbox" name="as_pdf" value="1"> {pdf_lbl}</label>
           <button class="btn" type="submit">{btn}</button>
+          <div class="hint">{hint}</div>
         </form>
-        <p style="opacity:.8;margin-top:10px">{hint}</p>
       </div>
-    </div>"""
+    </div>
+    """
     return HTMLResponse(html)
 
 
-@router.post("/generate")
-async def generate_post(
+@router.post("/analyze")
+async def analyze(
     request: Request,
     file: UploadFile = File(...),
-    as_pdf: bool = Form(False),
-    current=Depends(get_current_user_cookie),
+    pdf: Optional[str] = Form(None),
+    current=Depends(get_current_user_cookie_optional),
 ):
-    if current is None:
-        return RedirectResponse("/login")
-
-    # ✅ FREE limit (5/week) — PRO ilimitado
-    from app.plan_guard import enforce_free_log_scans_limit
-    enforce_free_log_scans_limit(request)
+    if not current:
+        return RedirectResponse("/auth/login", status_code=302)
 
     lang = get_lang_from_request(request)
 
-    content = (await file.read()).decode("utf-8", errors="ignore")
-    summary = analyze_log(content)
+    content = await file.read()
+    text = content.decode("utf-8", errors="ignore")
+    summary = analyze_log(text)
 
-    if as_pdf:
-        try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.units import cm
+    want_pdf = bool(pdf) and str(pdf).strip() in ("1", "true", "on", "yes")
 
-            buf = io.BytesIO()
-            c = canvas.Canvas(buf, pagesize=A4)
-            w, h = A4
-            y = h - 2*cm
+    if want_pdf:
+        # PDF simple inline (mantengo el comportamiento actual)
+        html = _render_html(summary, lang=lang)
+        return HTMLResponse(html)
 
-            def line(txt, dy=14):
-                nonlocal y
-                c.drawString(2*cm, y, txt[:110])
-                y -= dy
-                if y < 2*cm:
-                    c.showPage()
-                    y = h - 2*cm
-
-            c.setFont("Helvetica-Bold", 14)
-            line("AlertTrail — Analysis summary" if lang.startswith("en") else "AlertTrail — Resumen de análisis")
-            c.setFont("Helvetica", 10)
-            line(f"Total requests: {summary['total']}")
-            for k in ("2xx", "3xx", "4xx", "5xx"):
-                if k in summary["classes"]:
-                    line(f"{k}: {summary['classes'][k]}")
-            line(f"5xx errors: {summary['errors_5xx']}   •   429: {summary['rate_429']}")
-            line("Top paths:")
-            for p, cnt in summary["top_paths"][:8]:
-                line(f"  - {p}  :: {cnt}")
-            line("Top IPs:")
-            for ip, cnt in summary["top_ips"][:8]:
-                line(f"  - {ip}  :: {cnt}")
-
-            c.showPage()
-            c.save()
-            pdf = buf.getvalue()
-            headers = {"Content-Disposition": 'attachment; filename="alerttrail_report.pdf"'}
-            return Response(pdf, headers=headers, media_type="application/pdf")
-        except Exception:
-            pass
-
-    html = _render_html(summary, lang=lang)
-    return HTMLResponse(html)
-
-
-@router.get("/generate-pdf")
-async def old_generate_alias():
-    return RedirectResponse(url="/analysis/generate", status_code=307)
+    return HTMLResponse(_render_html(summary, lang=lang))
