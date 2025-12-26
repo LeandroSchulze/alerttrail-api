@@ -86,32 +86,71 @@ COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # lax|
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None
 COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))
 
-def issue_access_cookie(response: Response, token: str, max_age: Optional[int] = None, request: Optional[Request] = None) -> None:
+def _cookie_domain_from_host(host: str) -> Optional[str]:
     """
-    Backward compatible: si no pasás request, funciona como antes.
+    Hace que la cookie funcione tanto en www.alerttrail.com como en alerttrail.com.
+    - www.alerttrail.com / alerttrail.com -> .alerttrail.com
+    - localhost/IP -> None
     """
+    if not host:
+        return None
+    host = host.split(":")[0].strip().lower()
+
+    if host in ("localhost",):
+        return None
+
+    parts = host.split(".")
+    # IP simple
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        return None
+
+    if len(parts) < 2:
+        return None
+
+    return "." + ".".join(parts[-2:])  # .alerttrail.com
+
+def issue_access_cookie(
+    response: Response,
+    token: str,
+    max_age: Optional[int] = None,
+    request: Optional[Request] = None,
+) -> None:
     ma = max_age if max_age is not None else COOKIE_MAX_AGE
     expires_dt = _now_utc() + timedelta(seconds=ma)
 
     samesite = COOKIE_SAMESITE
     secure = COOKIE_SECURE or (samesite == "none")
 
-    # IMPORTANTE: no forzamos domain si no está seteado, para no romper.
-    # (Si tenés COOKIE_DOMAIN en env, se usará igual que antes.)
+    # ✅ FIX: si no hay COOKIE_DOMAIN en env, derivamos del host (www vs root)
+    domain = COOKIE_DOMAIN
+    if not domain and request is not None:
+        domain = _cookie_domain_from_host(request.headers.get("host", ""))
+
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         max_age=ma,
         expires=expires_dt,
         path="/",
-        domain=COOKIE_DOMAIN,
+        domain=domain,
         secure=secure,
         httponly=True,
         samesite=samesite,
     )
 
 def clear_access_cookie(response: Response, request: Optional[Request] = None) -> None:
-    response.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
+    # borrar host-only
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+
+    # borrar domain explícito (si existe)
+    if COOKIE_DOMAIN:
+        response.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
+
+    # borrar domain derivado (www/root)
+    if request is not None:
+        d = _cookie_domain_from_host(request.headers.get("host", ""))
+        if d:
+            response.delete_cookie(key=COOKIE_NAME, path="/", domain=d)
 
 # =========================
 # Request helpers (STRICT)
@@ -130,12 +169,11 @@ def get_current_user_cookie(request: Request) -> Dict[str, Any]:
     return payload
 
 # =========================
-# Request helpers (OPTIONAL) ✅ FIX PARA TEMPLATES/UI
+# Request helpers (OPTIONAL) ✅ para UI/templates
 # =========================
 def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
     """
     Para páginas UI: si no hay cookie o token inválido -> None (NO 401).
-    Así los routers pueden redirigir a /auth/login en vez de romper con 401.
     """
     try:
         token = request.cookies.get(COOKIE_NAME)
