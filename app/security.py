@@ -196,3 +196,32 @@ async def validate_csrf(request: Request) -> None:
     header = request.headers.get("x-csrf") or request.headers.get("x-csrf-token") or ""
     if not cookie or not header or cookie != header:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF inválido")
+
+# -------------------------
+# Compat exports (NO ROMPER imports viejos)
+# -------------------------
+
+def get_current_user_id(request: Request) -> int:
+    """
+    Compat para app.guards / routers viejos.
+    Lee la cookie JWT y devuelve el user id (sub) como int.
+    """
+    payload = get_current_user_cookie(request)
+    sub = payload.get("sub")
+    try:
+        return int(str(sub))
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+
+def normalize_user_plan(db, user):
+    """
+    Compat para billing_ui u otros módulos que importan normalize_user_plan desde app.security.
+    La lógica real vive en app.security.billing_guard.normalize_user_plan.
+    Si no existe o falla, no rompe el server.
+    """
+    try:
+        from app.security.billing_guard import normalize_user_plan as _normalize  # type: ignore
+        return _normalize(db, user)
+    except Exception:
+        return user
