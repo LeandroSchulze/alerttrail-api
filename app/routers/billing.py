@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.security import get_current_user_cookie
+from app.security import get_current_user_cookie_optional
 from app.ui import templates
 from app.i18n import get_lang, t
 
@@ -12,13 +12,16 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 
 @router.get("/subscriptions", response_class=HTMLResponse, include_in_schema=False)
-def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
+def subscriptions(request: Request, user=Depends(get_current_user_cookie_optional)):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
     lang = get_lang(request)
 
-    current_plan = (getattr(user, "plan", None) or "FREE").upper()
-    is_pro = bool(getattr(user, "is_pro", False)) or current_plan == "PRO"
+    current_plan = (user.get("plan") or "FREE").upper()
+    is_pro = bool(user.get("is_pro", False)) or current_plan == "PRO"
 
-    had_trial = bool(getattr(user, "had_trial", False))
+    had_trial = bool(user.get("had_trial", False))
     trial_available = (not is_pro) and (not had_trial)
 
     return templates.TemplateResponse(
@@ -37,12 +40,11 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie)):
     )
 
 
-# -------------------------------------------------------------------
-# ✅ Checkout placeholder (pre Stripe/MercadoPago)
-#    Fix directo al error de /billing/checkout?plan=...
-# -------------------------------------------------------------------
 @router.get("/checkout", response_class=HTMLResponse, include_in_schema=False)
-def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_cookie)):
+def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_cookie_optional)):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
     lang = get_lang(request)
     plan = (plan or "PRO").upper().strip()
 
@@ -65,7 +67,10 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
 
 
 @router.get("/payments", response_class=HTMLResponse, include_in_schema=False)
-def payments(request: Request, user=Depends(get_current_user_cookie)):
+def payments(request: Request, user=Depends(get_current_user_cookie_optional)):
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+
     lang = get_lang(request)
     return templates.TemplateResponse(
         "billing_payments.html",
