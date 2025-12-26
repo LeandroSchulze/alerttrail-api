@@ -174,3 +174,14 @@ def normalize_user_plan(db, user):
         except Exception:
             pass
         return user
+
+# -----------------------------
+# Backwards-compat for init_db
+# -----------------------------
+def get_password_hash(plain_password: str) -> str:
+    """
+    Compat: scripts/init_db.py importa get_password_hash.
+    Internamente usamos hash_password.
+    """
+    return hash_password(plain_password)
+
