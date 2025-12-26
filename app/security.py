@@ -2,46 +2,30 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 
-from fastapi import HTTPException, Request, Response, status
-from jose import jwt
+from fastapi import Request, HTTPException
+from jose import jwt, JWTError
 from passlib.context import CryptContext
 
-# ------------------------------------------------------------
-# Config
-# ------------------------------------------------------------
-JWT_SECRET = os.getenv("JWT_SECRET", os.getenv("SESSION_SECRET", "change-me-in-env"))
-JWT_ALG = os.getenv("JWT_ALG", "HS256")
+# -----------------------------------------------------------------------------
+# JWT
+# -----------------------------------------------------------------------------
 
-COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
-COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 30)))  # 30 días
+JWT_SECRET = os.getenv("JWT_SECRET", "change-me-please")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()
-COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "") or "").lower() in ("1", "true", "yes", "on")
-COOKIE_HTTPONLY = (os.getenv("COOKIE_HTTPONLY", "1") or "1").lower() in ("1", "true", "yes", "on")
-
-COOKIE_DOMAIN_ENV = os.getenv("COOKIE_DOMAIN", "").strip() or None
-
-# ✅ IMPORTANTE:
-# bcrypt tiene límite de 72 bytes. Para passwords largos usamos pbkdf2_sha256.
+# -----------------------------------------------------------------------------
+# Password hashing
+# -----------------------------------------------------------------------------
+# Mantenemos ambos esquemas para verificar hashes viejos (bcrypt)
+# pero para crear hashes nuevos usamos pbkdf2_sha256 para evitar el límite de 72 bytes de bcrypt.
 pwd_context = CryptContext(
-    schemes=["bcrypt", "pbkdf2_sha256"],
+    schemes=["pbkdf2_sha256", "bcrypt"],
     deprecated="auto",
 )
-
-
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = dict(data)
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(seconds=COOKIE_MAX_AGE))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALG)
-
-
-def decode_token(token: str) -> Dict[str, Any]:
-    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
@@ -49,130 +33,124 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception:
         return False
 
-
 def get_password_hash(password: str) -> str:
-    """
-    bcrypt tiene límite duro de 72 bytes.
-    Si el password es largo, passlib automáticamente
-    usa pbkdf2_sha256 (configurado en CryptContext).
-    """
-    return pwd_context.hash(password)
+    # Usamos pbkdf2_sha256 para evitar:
+    # - límite de 72 bytes de bcrypt
+    # - problemas de backend bcrypt/passlib en algunos entornos
+    return pwd_context.hash(password, scheme="pbkdf2_sha256")
 
+# -----------------------------------------------------------------------------
+# Cookies
+# -----------------------------------------------------------------------------
 
+COOKIE_NAME = os.getenv("ACCESS_COOKIE_NAME", "access_token")
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")  # "lax" funciona bien para web normal
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
-def _cookie_domain_from_host(host: str) -> Optional[str]:
+def _cookie_domain_from_host(host: str | None) -> Optional[str]:
     if not host:
         return None
-
     host = host.split(":")[0].strip().lower()
-
-    if host == "localhost" or host.replace(".", "").isdigit():
+    if host in ("localhost", "127.0.0.1"):
         return None
-
+    # dominio base simple: www.alerttrail.com -> alerttrail.com
     parts = host.split(".")
-    if len(parts) < 2:
-        return None
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return host
 
-    root = ".".join(parts[-2:])
-    return f".{root}"
+def issue_access_cookie(response, token: str, request: Optional[Request] = None) -> None:
+    domain = COOKIE_DOMAIN
+    if domain is None and request is not None:
+        domain = _cookie_domain_from_host(request.headers.get("host"))
 
+    # En Render/Proxy, el scheme puede venir como http. Permitimos override si hace falta.
+    force_secure = os.getenv("FORCE_COOKIE_SECURE", "").lower() in ("1", "true", "yes", "on")
+    secure = force_secure or (request is not None and request.url.scheme == "https")
 
-def _get_cookie_domain(request: Optional[Request] = None) -> Optional[str]:
-    if COOKIE_DOMAIN_ENV:
-        return COOKIE_DOMAIN_ENV
-    if request is None:
-        return None
-    host = request.headers.get("host") or ""
-    return _cookie_domain_from_host(host)
-
-
-def issue_access_cookie(resp: Response, token: str, request: Optional[Request] = None) -> None:
-    domain = _get_cookie_domain(request)
-
-    samesite = COOKIE_SAMESITE
-    if samesite not in ("lax", "strict", "none"):
-        samesite = "lax"
-
-    secure = COOKIE_SECURE or (samesite == "none")
-
-    resp.set_cookie(
+    response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=COOKIE_MAX_AGE,
-        expires=datetime.now(timezone.utc) + timedelta(seconds=COOKIE_MAX_AGE),
+        httponly=True,
+        secure=secure,
+        samesite=COOKIE_SAMESITE,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
         domain=domain,
-        secure=secure,
-        httponly=COOKIE_HTTPONLY,
-        samesite=samesite,
     )
 
+def clear_access_cookie(response, request: Optional[Request] = None) -> None:
+    domain = COOKIE_DOMAIN
+    if domain is None and request is not None:
+        domain = _cookie_domain_from_host(request.headers.get("host"))
 
-def clear_access_cookie(resp: Response, request: Optional[Request] = None) -> None:
-    resp.delete_cookie(key=COOKIE_NAME, path="/")
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        domain=domain,
+    )
 
-    if request is not None:
-        domain = _get_cookie_domain(request)
-        if domain:
-            resp.delete_cookie(key=COOKIE_NAME, path="/", domain=domain)
+# -----------------------------------------------------------------------------
+# Token helpers
+# -----------------------------------------------------------------------------
 
-    if COOKIE_DOMAIN_ENV:
-        resp.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN_ENV)
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = dict(data)
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
+def decode_access_token(token: str) -> Dict[str, Any]:
+    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
 
-def get_token_from_request(request: Request) -> str:
-    token = request.cookies.get(COOKIE_NAME)
-
-    # fallback robusto si hay cookies duplicadas
-    if not token:
-        raw = request.headers.get("cookie", "") or ""
-        parts = [p.strip() for p in raw.split(";") if p.strip()]
-        for p in reversed(parts):
-            if p.startswith(COOKIE_NAME + "="):
-                token = p.split("=", 1)[1]
-                break
-
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
-    return token
-
-
-def get_current_user_cookie(request: Request) -> Dict[str, Any]:
-    token = get_token_from_request(request)
-    try:
-        return decode_token(token)
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
-
+# -----------------------------------------------------------------------------
+# Current user via cookie
+# -----------------------------------------------------------------------------
 
 def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
-        raw = request.headers.get("cookie", "") or ""
-        parts = [p.strip() for p in raw.split(";") if p.strip()]
-        for p in reversed(parts):
-            if p.startswith(COOKIE_NAME + "="):
-                token = p.split("=", 1)[1]
-                break
-
-    if not token:
         return None
-
     try:
-        return decode_token(token)
+        return decode_access_token(token)
+    except JWTError:
+        return None
     except Exception:
         return None
 
+def get_current_user_cookie(request: Request) -> Dict[str, Any]:
+    payload = get_current_user_cookie_optional(request)
+    if not payload:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    return payload
 
 def get_current_user_id(request: Request) -> int:
     payload = get_current_user_cookie(request)
     sub = payload.get("sub")
-    try:
-        return int(sub)
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+    if not sub:
+        raise HTTPException(status_code=401, detail="No autenticado")
+    return int(sub)
 
+# -----------------------------------------------------------------------------
+# Billing plan normalization (optional compatibility)
+# -----------------------------------------------------------------------------
 
 def normalize_user_plan(db, user) -> None:
-    # fallback no intrusivo
-    return
+    """
+    Mantengo esta función por compatibilidad porque algunos routers la importan.
+    Si tu lógica real está en app/security/billing_guard.py, podés seguir usándola desde ahí.
+    Esta versión NO pisa PRO -> FREE (evita que se te "rebaje" la cuenta).
+    """
+    try:
+        # Si el usuario ya tiene plan, no lo tocamos.
+        if getattr(user, "plan", None):
+            return
+        # Si no tiene plan, dejamos FREE por default
+        if hasattr(user, "plan"):
+            user.plan = "FREE"
+        db.add(user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        # no romper el login por billing
+        return
