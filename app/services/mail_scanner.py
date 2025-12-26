@@ -28,17 +28,18 @@ class MailScannerResult:
 
 
 def danger_level(score: int) -> str:
-    if score >= 70:
+    if score >= 80:
         return "high"
     if score >= 40:
         return "medium"
     return "low"
 
 
-def to_scanner_result(res) -> MailScannerResult:
-    scanned_at = getattr(res, "scanned_at", None) or datetime.utcnow().isoformat() + "Z"
-    items = []
-    for it in getattr(res, "items", []) or []:
+def to_scanner_result(res, scanned_at: Optional[datetime] = None) -> MailScannerResult:
+    scanned_at = scanned_at or datetime.utcnow()
+
+    items: List[MailScannerItem] = []
+    for it in list(getattr(res, "items", []) or []):
         items.append(
             MailScannerItem(
                 uid=str(getattr(it, "uid", "") or ""),
@@ -60,3 +61,13 @@ def to_scanner_result(res) -> MailScannerResult:
         counts=dict(getattr(res, "counts", {}) or {}),
         scanned_at=str(scanned_at),
     )
+
+
+def scan_all_connected_mailboxes():
+    """Compat: main.py / tasks_mail esperan esta función en mail_scanner.py.
+
+    La implementación real hoy vive en app.services.mail.scan_all_inboxes().
+    """
+    from app.services.mail import scan_all_inboxes
+
+    return scan_all_inboxes()
