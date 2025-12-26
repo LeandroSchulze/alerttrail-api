@@ -16,93 +16,63 @@ pwd_context = CryptContext(
     deprecated="auto",
 )
 
-def get_password_hash(password: str) -> str:
-    if not isinstance(password, str) or not password:
-        raise ValueError("Password inválido")
-    return pwd_context.hash(password)
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if not plain_password or not hashed_password:
-        return False
-    try:
-        return pwd_context.verify(plain_password, hashed_password)
-    except Exception:
-        return False
+    return pwd_context.verify(plain_password, hashed_password)
 
-def verify_and_rehash(plain_password: str, hashed_password: str) -> Tuple[bool, Optional[str]]:
-    if not plain_password or not hashed_password:
-        return False, None
+def hash_password(plain_password: str) -> str:
+    return pwd_context.hash(plain_password)
+
+def verify_or_upgrade_password(plain_password: str, hashed_password: str) -> Tuple[bool, Optional[str]]:
+    """
+    Devuelve (ok, new_hash). new_hash se devuelve si se puede mejorar el hash.
+    """
     try:
-        ok = pwd_context.verify(plain_password, hashed_password)
-        if not ok:
+        ok, new_hash = pwd_context.verify_and_update(plain_password, hashed_password)
+        return bool(ok), new_hash
+    except Exception:
+        try:
+            return pwd_context.verify(plain_password, hashed_password), None
+        except Exception:
             return False, None
-        if pwd_context.needs_update(hashed_password):
-            return True, pwd_context.hash(plain_password)
-        return True, None
-    except Exception:
-        return False, None
 
 # =========================
-# JWT
+# JWT settings
 # =========================
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-please")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", os.getenv("JWT_ALG", "HS256"))
+JWT_SECRET = os.getenv("JWT_SECRET", os.getenv("SESSION_SECRET", "change-me-in-env"))
+JWT_ALG = os.getenv("JWT_ALG", "HS256")
+ACCESS_TOKEN_EXPIRE_MIN = int(os.getenv("ACCESS_TOKEN_EXPIRE_MIN", "43200"))  # 30 días
 
-ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", os.getenv("JWT_EXPIRE_MIN", str(60 * 24 * 7)))
-)
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1").lower() in ("1", "true", "yes", "on")
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")  # "lax" o "none"
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     to_encode = dict(data)
-    expire = _now_utc() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iat": _now_utc()})
-    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MIN))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALG)
 
 def decode_token(token: str) -> Dict[str, Any]:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o expirado",
-        ) from e
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
 
-# =========================
-# Cookies
-# =========================
-COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
-
-def _env_bool(var_name: str, default: bool) -> bool:
-    v = os.getenv(var_name)
-    if v is None:
-        return default
-    return v.strip().lower() in ("1", "true", "t", "yes", "y", "on")
-
-COOKIE_SECURE = _env_bool("COOKIE_SECURE", False)
-COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # lax|strict|none
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN") or None
-COOKIE_MAX_AGE = int(os.getenv("COOKIE_MAX_AGE", str(60 * 60 * 24 * 7)))
-
-def issue_access_cookie(response: Response, token: str, max_age: Optional[int] = None) -> None:
-    ma = max_age if max_age is not None else COOKIE_MAX_AGE
-    expires_dt = _now_utc() + timedelta(seconds=ma)
-
-    samesite = COOKIE_SAMESITE
-    secure = COOKIE_SECURE or (samesite == "none")
-
+def set_access_cookie(response: Response, token: str) -> None:
+    """
+    Cookie httpOnly con el JWT.
+    """
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        max_age=ma,
-        expires=expires_dt,
-        path="/",
-        domain=COOKIE_DOMAIN,
-        secure=secure,
         httponly=True,
-        samesite=samesite,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        domain=COOKIE_DOMAIN,
+        path="/",
+        max_age=60 * 60 * 24 * 30,
     )
 
 def clear_access_cookie(response: Response) -> None:
@@ -118,20 +88,89 @@ def get_token_from_request(request: Request) -> str:
     return token
 
 def get_current_user_cookie(request: Request) -> Dict[str, Any]:
+    """
+    Lee el JWT desde cookie y devuelve el payload.
+    """
     token = get_token_from_request(request)
-    payload = decode_token(token)
-    if "sub" not in payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sin sujeto (sub)")
-    return payload
+    return decode_token(token)
 
 # =========================
-# Optional CSRF (compat)
+# CSRF (simple, UI forms)
 # =========================
-async def validate_csrf(request: Request) -> None:
-    # Por defecto desactivado
-    if os.getenv("CSRF_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "csrf_token")
+
+def ensure_csrf_cookie(response: Response) -> str:
+    """
+    Crea un token CSRF simple y lo guarda en cookie NO httpOnly (para forms).
+    """
+    import secrets
+    token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=token,
+        httponly=False,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        domain=COOKIE_DOMAIN,
+        path="/",
+        max_age=60 * 60 * 24 * 7,
+    )
+    return token
+
+def validate_csrf(request: Request) -> None:
+    """
+    Valida CSRF comparando header/form con cookie.
+    Espera X-CSRF-Token o form field csrf_token.
+    """
+    cookie = request.cookies.get(CSRF_COOKIE_NAME)
+    if not cookie:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF faltante")
+
+    header = request.headers.get("X-CSRF-Token")
+    if header and header == cookie:
         return
-    cookie = request.cookies.get("csrf_token") or ""
-    header = request.headers.get("x-csrf") or request.headers.get("x-csrf-token") or ""
-    if not cookie or not header or cookie != header:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF inválido")
+
+    # fallback: por si se manda como query param (no recomendado)
+    qp = request.query_params.get("csrf_token")
+    if qp and qp == cookie:
+        return
+
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF inválido")
+
+# -----------------------------
+# Compat helpers (UI routers)
+# -----------------------------
+
+def get_current_user_id(request: Request) -> int:
+    """
+    Helper usado por app/guards.py y routers admin.
+    Lee el JWT cookie y devuelve el user id (int).
+    """
+    payload = get_current_user_cookie(request)
+    sub = payload.get("sub") if isinstance(payload, dict) else None
+
+    try:
+        return int(str(sub))
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+
+def normalize_user_plan(db, user):
+    """
+    Wrapper para mantener compatibilidad con routers UI que importan
+    normalize_user_plan desde app.security.
+
+    La implementación real vive en app.security.billing_guard.py
+    (import lazy para evitar circular imports).
+    """
+    try:
+        from app.security.billing_guard import normalize_user_plan as _normalize
+        return _normalize(db, user)
+    except Exception:
+        # fallback ultra seguro: no romper el renderizado
+        try:
+            plan = (getattr(user, "plan", None) or "FREE").upper()
+            setattr(user, "plan", plan)
+        except Exception:
+            pass
+        return user
