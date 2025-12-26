@@ -107,7 +107,7 @@ def login_api(
     db: Session = Depends(get_db),
 ):
     """
-    Login API. Devuelve JSON y setea cookie.
+    Login API (JS/integraciones). Devuelve JSON y también setea la cookie.
     """
     email = (email or "").strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
