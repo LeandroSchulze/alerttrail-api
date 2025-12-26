@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -39,10 +39,6 @@ DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
 
 
 def _templates(request: Request):
-    """
-    Usa SIEMPRE los templates del main.py (app.state.templates),
-    que ya tienen templates.env.globals["t"] = t
-    """
     tpl = getattr(request.app.state, "templates", None)
     if tpl is None:
         raise RuntimeError("templates no inicializado en app.state (main.py)")
@@ -65,11 +61,7 @@ def login_web(
 ):
     email = (email or "").strip().lower()
 
-    user = (
-        db.query(User)
-        .filter(func.lower(User.email) == email)
-        .first()
-    )
+    user = db.query(User).filter(func.lower(User.email) == email).first()
 
     if not user or not verify_password(password, user.hashed_password):
         tpl = _templates(request)
@@ -88,6 +80,8 @@ def login_web(
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
     r = RedirectResponse("/dashboard", status_code=303)
+
+    # ✅ CLAVE: pasar request para que setee domain correcto (www/root)
     issue_access_cookie(r, token, request=request)
 
     if DEBUG_AUTH:
@@ -106,9 +100,6 @@ def login_api(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Login API (JS/integraciones). Devuelve JSON y también setea la cookie.
-    """
     email = (email or "").strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(password, user.hashed_password):
@@ -122,6 +113,8 @@ def login_api(
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
     resp = JSONResponse({"ok": True})
+
+    # ✅ también acá
     issue_access_cookie(resp, token, request=request)
     return resp
 
@@ -171,10 +164,7 @@ def register(
     if exists:
         raise HTTPException(status_code=400, detail="El email ya está registrado")
 
-    u = User(
-        email=email,
-        hashed_password=get_password_hash(password),
-    )
+    u = User(email=email, hashed_password=get_password_hash(password))
     if hasattr(u, "name") and name:
         u.name = name
 
