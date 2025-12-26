@@ -30,7 +30,7 @@ except Exception:
     try:
         from app.security import normalize_user_plan  # type: ignore
     except Exception:
-        normalize_user_plan = None  # noqa
+        normalize_user_plan = None  # type: ignore
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -39,6 +39,10 @@ DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
 
 
 def _templates(request: Request):
+    """
+    Usa SIEMPRE los templates del main.py (app.state.templates),
+    que ya tienen templates.env.globals["t"] = t
+    """
     tpl = getattr(request.app.state, "templates", None)
     if tpl is None:
         raise RuntimeError("templates no inicializado en app.state (main.py)")
@@ -72,16 +76,26 @@ def login_web(
             status_code=400,
         )
 
+    # Normalizar plan si existe
     if normalize_user_plan:
         try:
             normalize_user_plan(db, user)
         except Exception:
             pass
 
-    token = create_access_token({"sub": str(user.id), "email": user.email})
+    token = create_access_token(
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "role": getattr(user, "role", None),
+            "plan": getattr(user, "plan", None),
+        }
+    )
+
     r = RedirectResponse("/dashboard", status_code=303)
 
-    # ✅ CLAVE: pasar request para que setee domain correcto (www/root)
+    # ✅ CLAVE: borrar cookies previas (host-only vs domain) para evitar loop
+    clear_access_cookie(r, request=request)
     issue_access_cookie(r, token, request=request)
 
     if DEBUG_AUTH:
@@ -100,6 +114,10 @@ def login_api(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    """
+    Login API (si lo usás desde JS o integraciones).
+    Devuelve JSON, y también setea la cookie.
+    """
     email = (email or "").strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(password, user.hashed_password):
@@ -111,10 +129,19 @@ def login_api(
         except Exception:
             pass
 
-    token = create_access_token({"sub": str(user.id), "email": user.email})
+    token = create_access_token(
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "role": getattr(user, "role", None),
+            "plan": getattr(user, "plan", None),
+        }
+    )
+
     resp = JSONResponse({"ok": True})
 
-    # ✅ también acá
+    # ✅ idem: limpiar primero
+    clear_access_cookie(resp, request=request)
     issue_access_cookie(resp, token, request=request)
     return resp
 
@@ -145,7 +172,9 @@ def me(request: Request, db: Session = Depends(get_db)):
         "name": getattr(user, "name", None),
         "plan": getattr(user, "plan", "FREE"),
         "is_pro": bool(getattr(user, "is_pro", False)),
-        "pro_expires_at": getattr(user, "pro_expires_at", None).isoformat() if getattr(user, "pro_expires_at", None) else None,
+        "pro_expires_at": getattr(user, "pro_expires_at", None).isoformat()
+        if getattr(user, "pro_expires_at", None)
+        else None,
     }
 
 
@@ -156,6 +185,10 @@ def register(
     name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
+    """
+    Registro simple (por si lo tenés habilitado).
+    Si no lo usás, igual no molesta.
+    """
     email = (email or "").strip().lower()
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email y password requeridos")
@@ -164,7 +197,10 @@ def register(
     if exists:
         raise HTTPException(status_code=400, detail="El email ya está registrado")
 
-    u = User(email=email, hashed_password=get_password_hash(password))
+    u = User(
+        email=email,
+        hashed_password=get_password_hash(password),
+    )
     if hasattr(u, "name") and name:
         u.name = name
 
