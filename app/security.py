@@ -185,3 +185,12 @@ def get_password_hash(plain_password: str) -> str:
     """
     return hash_password(plain_password)
 
+# -----------------------------
+# Backwards-compat aliases
+# -----------------------------
+def issue_access_cookie(response, token: str) -> None:
+    """
+    Compat: routers/auth.py importa issue_access_cookie.
+    Internamente usamos set_access_cookie().
+    """
+    return set_access_cookie(response, token)
