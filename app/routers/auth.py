@@ -92,7 +92,8 @@ def login_web(
     # Token + cookie
     token = create_access_token({"sub": str(user.id), "email": user.email})
     r = RedirectResponse("/dashboard", status_code=303)
-    issue_access_cookie(r, token)
+    issue_access_cookie(r, token, request=request)
+
 
     if DEBUG_AUTH:
         try:
