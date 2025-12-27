@@ -2,29 +2,59 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import HTTPException, Request, Response
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+# =============================================================================
+# Config
+# =============================================================================
+
+JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_ME_PLEASE")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 COOKIE_NAME = os.getenv("COOKIE_NAME", "access_token")
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None  # e.g. ".alerttrail.com"
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes", "on")
-COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax")  # lax/none/strict
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
+COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # "lax"|"strict"|"none"
+COOKIE_HTTPONLY = os.getenv("COOKIE_HTTPONLY", "1").lower() in ("1", "true", "yes", "on")
 
-pwd_context = CryptContext(
-    schemes=["pbkdf2_sha256", "bcrypt"],
-    deprecated="auto",
-)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
+def _truncate_bcrypt_secret(secret: str) -> str:
+    """Ensure bcrypt input is <= 72 bytes (bcrypt limitation).
+    Passlib/bcrypt effectively truncates; we do the same to avoid ValueError
+    and keep hashing & verification consistent.
+    """
+    if not isinstance(secret, str):
+        secret = str(secret)
+
+    b = secret.encode("utf-8")
+    if len(b) <= 72:
+        return secret
+
+    out_chars: list[str] = []
+    size = 0
+    for ch in secret:
+        cb = ch.encode("utf-8")
+        if size + len(cb) > 72:
+            break
+        out_chars.append(ch)
+        size += len(cb)
+    return "".join(out_chars)
+
+
+# =============================================================================
+# Passwords
+# =============================================================================
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    plain_password = _truncate_bcrypt_secret(plain_password)
     try:
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
@@ -32,132 +62,212 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def get_password_hash(password: str) -> str:
-    if not isinstance(password, str) or not password:
-        raise ValueError("Password inválido")
-
-    # Importante: bcrypt tiene límite práctico de 72 bytes y en Render se usa
-    # ADMIN_PASSWORD desde env (a veces muy largo). Para evitar que init_db
-    # rompa el deploy, forzamos pbkdf2_sha256 para generar hashes nuevos.
-    # (verify_password sigue soportando bcrypt si ya existían hashes viejos.)
-    return pwd_context.hash(password, scheme="pbkdf2_sha256")
+    password = _truncate_bcrypt_secret(password)
+    return pwd_context.hash(password)
 
 
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+def verify_and_rehash(plain_password: str, hashed_password: str) -> tuple[bool, str | None]:
+    """Verify password and (optionally) return a rehashed version if needed."""
+    plain_password = _truncate_bcrypt_secret(plain_password)
+    try:
+        ok, new_hash = pwd_context.verify_and_update(plain_password, hashed_password)
+        return ok, new_hash
+    except Exception:
+        return False, None
+
+
+# =============================================================================
+# Tokens
+# =============================================================================
+
+def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     to_encode = dict(data)
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def _cookie_domain_from_host(host: str) -> Optional[str]:
+def decode_token(token: str) -> dict[str, Any]:
+    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+
+
+# =============================================================================
+# Cookies
+# =============================================================================
+
+def _cookie_domain_from_host(host: str) -> str | None:
     """
-    Dominio de cookie *solo* para alerttrail.com (evita setear .onrender.com por error).
+    Given "www.alerttrail.com" -> ".alerttrail.com"
+    Given "alerttrail.com"     -> ".alerttrail.com"
+    Given "localhost" / IP     -> None
     """
     if not host:
         return None
 
-    host = host.split(":")[0].strip().lower()
+    host = host.strip().lower()
+    if ":" in host:
+        host = host.split(":")[0].strip()
 
-    # Localhost / IP => host-only
-    if host in ("localhost",):
+    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
         return None
+    if host.count(".") < 1:
+        return None
+
     parts = host.split(".")
-    if len(parts) == 4 and all(p.isdigit() for p in parts):
+    if len(parts) < 2:
         return None
-
-    # Solo permitimos compartir cookie entre subdominios de alerttrail.com
-    if host == "alerttrail.com" or host.endswith(".alerttrail.com"):
-        return ".alerttrail.com"
-
-    return None
+    return "." + ".".join(parts[-2:])
 
 
-def _host_from_request(request: Request) -> str:
+def issue_access_cookie(
+    response: Response,
+    token: str,
+    request: Request | None = None,
+) -> None:
+    """Set the auth cookie.
+
+    Important: when behind a proxy (Render, etc), FastAPI's request.url.hostname can
+    be the internal host. We prefer X-Forwarded-Host / Host to compute cookie domain.
     """
-    Render/proxies a veces no preservan Host como esperás.
-    Para que la cookie quede en el dominio correcto, priorizamos:
-      - X-Forwarded-Host (puede traer lista: "www..., ...")
-      - X-Original-Host
-      - Host
-      - request.url.hostname
-    """
-    xf_host = (request.headers.get("x-forwarded-host") or "").strip()
-    if xf_host:
-        # puede venir "www.alerttrail.com, internal.onrender.com"
-        xf_host = xf_host.split(",")[0].strip()
-        if xf_host:
-            return xf_host
+    max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    secure = COOKIE_SECURE
+    samesite = COOKIE_SAMESITE
+    httponly = COOKIE_HTTPONLY
 
-    x_orig = (request.headers.get("x-original-host") or "").strip()
-    if x_orig:
-        return x_orig
+    # Determine host for cookie domain (proxy-safe)
+    host: str | None = None
+    if request is not None:
+        host_hdr = (
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("X-Forwarded-Host")
+            or request.headers.get("host")
+            or request.headers.get("Host")
+        )
+        if host_hdr:
+            host = host_hdr.split(",")[0].strip()
+            if ":" in host:
+                host = host.split(":")[0].strip()
+            host = host.lower() or None
+        if not host:
+            try:
+                host = (request.url.hostname or "").lower() or None
+            except Exception:
+                host = None
 
-    host = (request.headers.get("host") or "").strip()
-    if host:
-        return host
+        xf_proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
+        if xf_proto and xf_proto.split(",")[0].strip().lower() == "https":
+            secure = True
 
-    return (request.url.hostname or "").strip()
-
-
-def issue_access_cookie(response: Response, token: str, request: Optional[Request] = None):
-    # Determinar domain (prioridad: env -> derivado del host real)
     domain = COOKIE_DOMAIN
-    if not domain and request is not None:
-        domain = _cookie_domain_from_host(_host_from_request(request))
+    if not domain and host:
+        domain = _cookie_domain_from_host(host)
 
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
+        max_age=max_age,
+        expires=max_age,
         path="/",
-        domain=domain,
+        secure=secure,
+        httponly=httponly,
+        samesite=samesite,
+        domain=domain or None,
     )
 
 
-def clear_access_cookie(response: Response, request: Optional[Request] = None):
-    # borrar por env (si existe)
-    response.delete_cookie(key=COOKIE_NAME, path="/", domain=COOKIE_DOMAIN or None)
-
-    # borrar también con domain derivado (por si quedó una cookie vieja)
-    if request is not None:
-        d = _cookie_domain_from_host(_host_from_request(request))
-        if d:
-            response.delete_cookie(key=COOKIE_NAME, path="/", domain=d)
+def clear_access_cookie(response: Response) -> None:
+    response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN or None)
 
 
-def get_current_user_cookie(request: Request) -> Dict[str, Any]:
+def get_token_from_request(request: Request) -> str | None:
+    # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
+    if token:
+        return token
+
+    # 2) Authorization: Bearer
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+
+    return None
+
+
+def get_current_user_cookie(request: Request) -> dict[str, Any]:
+    token = get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="No autenticado")
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if "sub" not in payload:
-            raise HTTPException(status_code=401, detail="Token inválido")
+        payload = decode_token(token)
         return payload
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
 
-def get_current_user_cookie_optional(request: Request) -> Optional[Dict[str, Any]]:
-    token = request.cookies.get(COOKIE_NAME)
+def get_current_user_cookie_optional(request: Request) -> dict[str, Any] | None:
+    token = get_token_from_request(request)
     if not token:
         return None
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if "sub" not in payload:
-            return None
-        return payload
+        return decode_token(token)
     except JWTError:
         return None
 
 
-# Compat: algunos módulos viejos esperan estas funciones
-def issue_access_cookie_legacy(response: Response, token: str):
-    issue_access_cookie(response, token, request=None)
+def get_current_user_id(request: Request) -> int:
+    payload = get_current_user_cookie(request)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    try:
+        return int(sub)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token inválido")
 
 
-def clear_access_cookie_legacy(response: Response):
-    clear_access_cookie(response, request=None)
+# =============================================================================
+# Billing helpers (kept for backwards-compat imports)
+# =============================================================================
+
+def normalize_user_plan(db, user) -> None:
+    """
+    Backwards-compat shim:
+    Some routers import normalize_user_plan from app.security.
+    If your real implementation lives elsewhere, you can keep using it,
+    but this function prevents import crashes.
+    """
+    # If user has is_pro / pro_expires_at, try to maintain plan coherency.
+    try:
+        plan = getattr(user, "plan", None)
+        is_pro = getattr(user, "is_pro", None)
+        exp = getattr(user, "pro_expires_at", None)
+
+        now = datetime.now(timezone.utc)
+
+        if exp is not None:
+            try:
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+
+        active_pro = bool(is_pro) or (exp is not None and exp > now)
+
+        if hasattr(user, "plan"):
+            if active_pro:
+                user.plan = "PRO"
+            else:
+                if plan is None:
+                    user.plan = "FREE"
+
+        if hasattr(user, "is_pro"):
+            user.is_pro = bool(active_pro)
+
+        db.add(user)
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
