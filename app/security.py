@@ -23,7 +23,6 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes", "
 COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # "lax"|"strict"|"none"
 COOKIE_HTTPONLY = os.getenv("COOKIE_HTTPONLY", "1").lower() in ("1", "true", "yes", "on")
 
-# bcrypt tiene límite duro de 72 bytes
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -31,49 +30,30 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # Helpers
 # =============================================================================
 
-def _truncate_bcrypt_secret(secret: str) -> str:
+def _bcrypt72(secret: Any) -> bytes:
     """
-    bcrypt limita el input a 72 BYTES (no caracteres). Si supera, puede explotar
-    (según backend/versión) con ValueError.
-
-    Truncamos de forma segura por BYTES (utf-8), manteniendo consistencia entre
-    hash y verify.
+    bcrypt limita el input a 72 BYTES.
+    Esta función SIEMPRE devuelve bytes <= 72 para hash/verify (sin excepciones).
     """
     if secret is None:
-        secret = ""
-    if not isinstance(secret, str):
-        secret = str(secret)
+        s = ""
+    elif isinstance(secret, bytes):
+        b = secret
+        return b[:72]
+    else:
+        s = secret if isinstance(secret, str) else str(secret)
 
-    b = secret.encode("utf-8")
-    if len(b) <= 72:
-        return secret
-
-    out: list[str] = []
-    size = 0
-    for ch in secret:
-        cb = ch.encode("utf-8")
-        if size + len(cb) > 72:
-            break
-        out.append(ch)
-        size += len(cb)
-    return "".join(out)
+    b = s.encode("utf-8")
+    return b[:72]
 
 
 def _cookie_domain_from_host(host: str) -> Optional[str]:
-    """
-    Given "www.alerttrail.com" -> ".alerttrail.com"
-    Given "alerttrail.com"     -> ".alerttrail.com"
-    Given "localhost" / IP     -> None
-    """
     if not host:
         return None
 
     host = host.strip().lower()
-    # si viene "a,b" (proxies), nos quedamos con el primero
     if "," in host:
         host = host.split(",", 1)[0].strip()
-
-    # quitar puerto
     if ":" in host:
         host = host.split(":", 1)[0].strip()
 
@@ -89,9 +69,6 @@ def _cookie_domain_from_host(host: str) -> Optional[str]:
 
 
 def _proxy_safe_host_and_proto(request: Request) -> tuple[Optional[str], Optional[str]]:
-    """
-    Render / proxies: usar X-Forwarded-Host y X-Forwarded-Proto para host/proto reales.
-    """
     host = (
         request.headers.get("x-forwarded-host")
         or request.headers.get("X-Forwarded-Host")
@@ -108,10 +85,7 @@ def _proxy_safe_host_and_proto(request: Request) -> tuple[Optional[str], Optiona
         except Exception:
             host = None
 
-    proto = (
-        request.headers.get("x-forwarded-proto")
-        or request.headers.get("X-Forwarded-Proto")
-    )
+    proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
     if proto:
         proto = proto.split(",", 1)[0].strip().lower()
     else:
@@ -128,22 +102,21 @@ def _proxy_safe_host_and_proto(request: Request) -> tuple[Optional[str], Optiona
 # =============================================================================
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    plain_password = _truncate_bcrypt_secret(plain_password)
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        # usamos bytes <=72
+        return pwd_context.verify(_bcrypt72(plain_password), hashed_password)
     except Exception:
         return False
 
 
 def get_password_hash(password: str) -> str:
-    password = _truncate_bcrypt_secret(password)
-    return pwd_context.hash(password)
+    # usamos bytes <=72
+    return pwd_context.hash(_bcrypt72(password))
 
 
 def verify_and_rehash(plain_password: str, hashed_password: str) -> tuple[bool, Optional[str]]:
-    plain_password = _truncate_bcrypt_secret(plain_password)
     try:
-        ok, new_hash = pwd_context.verify_and_update(plain_password, hashed_password)
+        ok, new_hash = pwd_context.verify_and_update(_bcrypt72(plain_password), hashed_password)
         return ok, new_hash
     except Exception:
         return False, None
@@ -169,12 +142,6 @@ def decode_token(token: str) -> dict[str, Any]:
 # =============================================================================
 
 def issue_access_cookie(response: Response, token: str, request: Optional[Request] = None) -> None:
-    """
-    Setea cookie de auth de forma robusta en proxys (Render):
-    - domain calculado desde X-Forwarded-Host/Host si COOKIE_DOMAIN no está seteado
-    - secure forzado si proto https (x-forwarded-proto)
-    - samesite "none" => secure True (requisito browsers)
-    """
     max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
 
     secure = COOKIE_SECURE
@@ -188,7 +155,7 @@ def issue_access_cookie(response: Response, token: str, request: Optional[Reques
         if proto == "https":
             secure = True
 
-    # Si SameSite=None, browsers exigen Secure=True
+    # SameSite=None requiere Secure=True en browsers modernos
     if samesite == "none":
         secure = True
 
@@ -210,26 +177,19 @@ def issue_access_cookie(response: Response, token: str, request: Optional[Reques
 
 
 def clear_access_cookie(response: Response, request: Optional[Request] = None) -> None:
-    """
-    Borra cookie respetando el mismo domain que usamos al setear.
-    Si COOKIE_DOMAIN está seteado lo usa; si no, intenta calcular desde request host.
-    """
     domain = COOKIE_DOMAIN
     if not domain and request is not None:
         host, _ = _proxy_safe_host_and_proto(request)
         if host:
             domain = _cookie_domain_from_host(host)
-
     response.delete_cookie(COOKIE_NAME, path="/", domain=domain or None)
 
 
 def get_token_from_request(request: Request) -> Optional[str]:
-    # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
     if token:
         return token
 
-    # 2) Authorization: Bearer
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
@@ -273,10 +233,6 @@ def get_current_user_id(request: Request) -> int:
 # =============================================================================
 
 def normalize_user_plan(db, user) -> None:
-    """
-    Compat: algunos routers importan normalize_user_plan desde app.security.
-    Mantiene coherencia plan/is_pro/pro_expires_at sin romper imports.
-    """
     try:
         plan = getattr(user, "plan", None)
         is_pro = getattr(user, "is_pro", None)
