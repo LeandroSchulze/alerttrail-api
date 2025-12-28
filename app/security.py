@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -23,33 +24,35 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes", "
 COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # "lax"|"strict"|"none"
 COOKIE_HTTPONLY = os.getenv("COOKIE_HTTPONLY", "1").lower() in ("1", "true", "yes", "on")
 
-# Nota:
-# Igual vamos a truncar nosotros a 72 bytes SIEMPRE.
-# Esta opción ayuda a evitar errores si alguna vez se saltea nuestro helper.
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__truncate_error=False,
-)
-
-BCRYPT_MAX_BYTES = 72
+# IMPORTANT:
+# - Con bcrypt>=4, passlib 1.7.4 suele romperse (y bcrypt>=5 levanta ValueError si secret>72 bytes).
+# - Por eso: en requirements.txt fijar bcrypt==3.2.2.
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def _to_bytes(secret: Any) -> bytes:
+# =============================================================================
+# Helpers
+# =============================================================================
+
+def _bcrypt_input(secret: str) -> str:
+    """
+    bcrypt tiene un límite práctico de 72 bytes en el input.
+    En vez de truncar (que es inseguro y confuso), si excede:
+    -> usamos sha256(secret) como "input" (siempre <= 72 chars).
+    Esto hace que passwords largos funcionen y sean verificables de forma estable.
+    """
     if secret is None:
-        return b""
-    if isinstance(secret, (bytes, bytearray, memoryview)):
-        return bytes(secret)
-    # forzar a str y encode UTF-8
-    return str(secret).encode("utf-8", errors="ignore")
+        secret = ""
+    if not isinstance(secret, str):
+        secret = str(secret)
 
+    b = secret.encode("utf-8")
+    if len(b) <= 72:
+        return secret
 
-def _bcrypt72(secret: Any) -> bytes:
-    """Return bytes <= 72 for bcrypt (hard limit)."""
-    b = _to_bytes(secret)
-    if len(b) <= BCRYPT_MAX_BYTES:
-        return b
-    return b[:BCRYPT_MAX_BYTES]
+    # Pre-hash determinístico (64 chars hex + prefijo corto)
+    digest = hashlib.sha256(b).hexdigest()
+    return f"sha256:{digest}"
 
 
 # =============================================================================
@@ -58,20 +61,19 @@ def _bcrypt72(secret: Any) -> bytes:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
-        # PASAMOS BYTES ya truncados: evita ValueError sí o sí
-        return pwd_context.verify(_bcrypt72(plain_password), hashed_password)
+        return pwd_context.verify(_bcrypt_input(plain_password), hashed_password)
     except Exception:
         return False
 
 
 def get_password_hash(password: str) -> str:
-    # PASAMOS BYTES ya truncados: evita ValueError sí o sí
-    return pwd_context.hash(_bcrypt72(password))
+    return pwd_context.hash(_bcrypt_input(password))
 
 
 def verify_and_rehash(plain_password: str, hashed_password: str) -> tuple[bool, str | None]:
+    """Verify password and (optionally) return a rehashed version if needed."""
     try:
-        ok, new_hash = pwd_context.verify_and_update(_bcrypt72(plain_password), hashed_password)
+        ok, new_hash = pwd_context.verify_and_update(_bcrypt_input(plain_password), hashed_password)
         return ok, new_hash
     except Exception:
         return False, None
@@ -125,12 +127,12 @@ def issue_access_cookie(
     token: str,
     request: Request | None = None,
 ) -> None:
+    """Set the auth cookie (proxy-safe)."""
     max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
     secure = COOKIE_SECURE
     samesite = COOKIE_SAMESITE
     httponly = COOKIE_HTTPONLY
 
-    # Determine host for cookie domain (proxy-safe)
     host: str | None = None
     if request is not None:
         host_hdr = (
@@ -177,10 +179,12 @@ def clear_access_cookie(response: Response) -> None:
 
 
 def get_token_from_request(request: Request) -> str | None:
+    # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
     if token:
         return token
 
+    # 2) Authorization: Bearer
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
@@ -192,8 +196,10 @@ def get_current_user_cookie(request: Request) -> dict[str, Any]:
     token = get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="No autenticado")
+
     try:
-        return decode_token(token)
+        payload = decode_token(token)
+        return payload
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
@@ -227,7 +233,7 @@ def normalize_user_plan(db, user) -> None:
     """
     Backwards-compat shim:
     Some routers import normalize_user_plan from app.security.
-    Keeps plan/is_pro coherent.
+    This keeps imports from crashing.
     """
     try:
         plan = getattr(user, "plan", None)
@@ -246,11 +252,7 @@ def normalize_user_plan(db, user) -> None:
         active_pro = bool(is_pro) or (exp is not None and exp > now)
 
         if hasattr(user, "plan"):
-            if active_pro:
-                user.plan = "PRO"
-            else:
-                if plan is None:
-                    user.plan = "FREE"
+            user.plan = "PRO" if active_pro else (plan or "FREE")
 
         if hasattr(user, "is_pro"):
             user.is_pro = bool(active_pro)
