@@ -18,6 +18,7 @@ beautifulsoup4>=4.12
 APScheduler==3.10.4
 python-dateutil
 python-jose[cryptography]==3.3.0
+bcrypt==3.2.2
 
 # ✅ IMAP engine dependency (missing on Render)
 imapclient==2.3.1
