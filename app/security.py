@@ -23,39 +23,33 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes", "
 COOKIE_SAMESITE = (os.getenv("COOKIE_SAMESITE", "lax") or "lax").lower()  # "lax"|"strict"|"none"
 COOKIE_HTTPONLY = os.getenv("COOKIE_HTTPONLY", "1").lower() in ("1", "true", "yes", "on")
 
-# IMPORTANT:
-# passlib + bcrypt can raise ValueError for >72 bytes unless we disable truncate_error.
-# This is the real fix for the deploy crash you saw in init_db seed_admin().
+# Nota:
+# Igual vamos a truncar nosotros a 72 bytes SIEMPRE.
+# Esta opción ayuda a evitar errores si alguna vez se saltea nuestro helper.
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
-    bcrypt__truncate_error=False,  # <- FIX: avoid ValueError for passwords >72 bytes
+    bcrypt__truncate_error=False,
 )
 
+BCRYPT_MAX_BYTES = 72
 
-def _truncate_bcrypt_secret(secret: str) -> str:
-    """Ensure bcrypt input is <= 72 bytes (bcrypt limitation).
 
-    Note: even though passlib can truncate internally (with bcrypt__truncate_error=False),
-    we keep this to guarantee consistent behavior for verify/hash, and to avoid surprises
-    when other backends or configs change.
-    """
-    if not isinstance(secret, str):
-        secret = str(secret)
+def _to_bytes(secret: Any) -> bytes:
+    if secret is None:
+        return b""
+    if isinstance(secret, (bytes, bytearray, memoryview)):
+        return bytes(secret)
+    # forzar a str y encode UTF-8
+    return str(secret).encode("utf-8", errors="ignore")
 
-    b = secret.encode("utf-8")
-    if len(b) <= 72:
-        return secret
 
-    out_chars: list[str] = []
-    size = 0
-    for ch in secret:
-        cb = ch.encode("utf-8")
-        if size + len(cb) > 72:
-            break
-        out_chars.append(ch)
-        size += len(cb)
-    return "".join(out_chars)
+def _bcrypt72(secret: Any) -> bytes:
+    """Return bytes <= 72 for bcrypt (hard limit)."""
+    b = _to_bytes(secret)
+    if len(b) <= BCRYPT_MAX_BYTES:
+        return b
+    return b[:BCRYPT_MAX_BYTES]
 
 
 # =============================================================================
@@ -63,23 +57,21 @@ def _truncate_bcrypt_secret(secret: str) -> str:
 # =============================================================================
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    plain_password = _truncate_bcrypt_secret(plain_password)
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        # PASAMOS BYTES ya truncados: evita ValueError sí o sí
+        return pwd_context.verify(_bcrypt72(plain_password), hashed_password)
     except Exception:
         return False
 
 
 def get_password_hash(password: str) -> str:
-    password = _truncate_bcrypt_secret(password)
-    return pwd_context.hash(password)
+    # PASAMOS BYTES ya truncados: evita ValueError sí o sí
+    return pwd_context.hash(_bcrypt72(password))
 
 
 def verify_and_rehash(plain_password: str, hashed_password: str) -> tuple[bool, str | None]:
-    """Verify password and (optionally) return a rehashed version if needed."""
-    plain_password = _truncate_bcrypt_secret(plain_password)
     try:
-        ok, new_hash = pwd_context.verify_and_update(plain_password, hashed_password)
+        ok, new_hash = pwd_context.verify_and_update(_bcrypt72(plain_password), hashed_password)
         return ok, new_hash
     except Exception:
         return False, None
@@ -133,11 +125,6 @@ def issue_access_cookie(
     token: str,
     request: Request | None = None,
 ) -> None:
-    """Set the auth cookie.
-
-    Important: when behind a proxy (Render, etc), FastAPI's request.url.hostname can
-    be the internal host. We prefer X-Forwarded-Host / Host to compute cookie domain.
-    """
     max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
     secure = COOKIE_SECURE
     samesite = COOKIE_SAMESITE
@@ -157,6 +144,7 @@ def issue_access_cookie(
             if ":" in host:
                 host = host.split(":")[0].strip()
             host = host.lower() or None
+
         if not host:
             try:
                 host = (request.url.hostname or "").lower() or None
@@ -189,12 +177,10 @@ def clear_access_cookie(response: Response) -> None:
 
 
 def get_token_from_request(request: Request) -> str | None:
-    # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
     if token:
         return token
 
-    # 2) Authorization: Bearer
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
@@ -206,10 +192,8 @@ def get_current_user_cookie(request: Request) -> dict[str, Any]:
     token = get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="No autenticado")
-
     try:
-        payload = decode_token(token)
-        return payload
+        return decode_token(token)
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
@@ -236,14 +220,14 @@ def get_current_user_id(request: Request) -> int:
 
 
 # =============================================================================
-# Billing helpers (kept for backwards-compat imports)
+# Billing helpers (backwards-compat imports)
 # =============================================================================
 
 def normalize_user_plan(db, user) -> None:
     """
     Backwards-compat shim:
     Some routers import normalize_user_plan from app.security.
-    This function prevents import crashes and keeps plan/is_pro coherent.
+    Keeps plan/is_pro coherent.
     """
     try:
         plan = getattr(user, "plan", None)
