@@ -27,9 +27,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _truncate_bcrypt_secret(secret: str) -> str:
-    """Ensure bcrypt input is <= 72 bytes (bcrypt limitation).
-    Passlib/bcrypt effectively truncates; we do the same to avoid ValueError
-    and keep hashing & verification consistent.
+    """
+    bcrypt limita a 72 bytes. Truncamos en bytes UTF-8 para evitar ValueError
+    y mantener consistencia entre hash y verify.
     """
     if not isinstance(secret, str):
         secret = str(secret)
@@ -119,6 +119,26 @@ def _cookie_domain_from_host(host: str) -> str | None:
     return "." + ".".join(parts[-2:])
 
 
+def _get_effective_host(request: Request) -> str | None:
+    host_hdr = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("X-Forwarded-Host")
+        or request.headers.get("host")
+        or request.headers.get("Host")
+    )
+    if host_hdr:
+        host = host_hdr.split(",")[0].strip()
+        if ":" in host:
+            host = host.split(":")[0].strip()
+        host = host.lower() or None
+        return host
+
+    try:
+        return (request.url.hostname or "").lower() or None
+    except Exception:
+        return None
+
+
 def issue_access_cookie(
     response: Response,
     token: str,
@@ -134,29 +154,18 @@ def issue_access_cookie(
     samesite = COOKIE_SAMESITE
     httponly = COOKIE_HTTPONLY
 
-    # Determine host for cookie domain (proxy-safe)
     host: str | None = None
     if request is not None:
-        host_hdr = (
-            request.headers.get("x-forwarded-host")
-            or request.headers.get("X-Forwarded-Host")
-            or request.headers.get("host")
-            or request.headers.get("Host")
-        )
-        if host_hdr:
-            host = host_hdr.split(",")[0].strip()
-            if ":" in host:
-                host = host.split(":")[0].strip()
-            host = host.lower() or None
-        if not host:
-            try:
-                host = (request.url.hostname or "").lower() or None
-            except Exception:
-                host = None
+        host = _get_effective_host(request)
 
+        # If proxy says https, force secure
         xf_proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
         if xf_proto and xf_proto.split(",")[0].strip().lower() == "https":
             secure = True
+
+    # Browsers require Secure when SameSite=None
+    if samesite == "none":
+        secure = True
 
     domain = COOKIE_DOMAIN
     if not domain and host:
@@ -175,8 +184,33 @@ def issue_access_cookie(
     )
 
 
-def clear_access_cookie(response: Response) -> None:
-    response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN or None)
+def clear_access_cookie(response: Response, request: Request | None = None) -> None:
+    """
+    Delete cookie robustly:
+    - delete with configured COOKIE_DOMAIN (if any)
+    - also delete with calculated ".domain.tld" derived from request host (if provided)
+    """
+    # Always attempt delete without domain too (covers host-only cookies)
+    try:
+        response.delete_cookie(COOKIE_NAME, path="/")
+    except Exception:
+        pass
+
+    # Delete with configured domain
+    try:
+        response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN or None)
+    except Exception:
+        pass
+
+    # Delete with computed domain from host (prevents "cookie ghost" causing loops)
+    if request is not None:
+        try:
+            host = _get_effective_host(request)
+            dom = _cookie_domain_from_host(host) if host else None
+            if dom:
+                response.delete_cookie(COOKIE_NAME, path="/", domain=dom)
+        except Exception:
+            pass
 
 
 def get_token_from_request(request: Request) -> str | None:
@@ -237,7 +271,6 @@ def normalize_user_plan(db, user) -> None:
     If your real implementation lives elsewhere, you can keep using it,
     but this function prevents import crashes.
     """
-    # If user has is_pro / pro_expires_at, try to maintain plan coherency.
     try:
         plan = getattr(user, "plan", None)
         is_pro = getattr(user, "is_pro", None)
