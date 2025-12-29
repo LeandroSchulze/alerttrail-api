@@ -254,15 +254,21 @@ def get_token_from_request(request: Request) -> str | None:
     return None
 
 
-def get_current_user_cookie(request: Request) -> dict[str, Any]:
+def get_current_user_cookie_optional(request: Request) -> dict[str, Any] | None:
     token = get_token_from_request(request)
     if not token:
-        raise HTTPException(status_code=401, detail="No autenticado")
+        return None
+
     try:
         payload = decode_token(token)
+        # aseguramos que tenga sub (id)
+        if not payload.get("sub"):
+            return None
         return payload
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Token inválido")
+    except Exception:
+        # NO tragamos silenciosamente errores raros
+        return None
+
 
 
 def get_current_user_cookie_optional(request: Request) -> dict[str, Any] | None:
