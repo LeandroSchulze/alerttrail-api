@@ -1,13 +1,12 @@
 # app/routers/admin.py
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse, JSONResponse
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from calendar import monthrange
 from pydantic import BaseModel, EmailStr
 
-from app.database import SessionLocal, get_db
+from app.database import get_db
 from app.security import get_current_user_cookie
 from app.models import User
 
@@ -24,16 +23,33 @@ except Exception:
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 # ----------------- Helpers -----------------
-def require_admin(u: User):
+def require_admin(current):
     """
-    Acepta distintos indicadores de admin para ser más robusto:
-      - role == 'admin' (tu caso actual)
-      - is_admin / is_superuser (por si existen en el modelo)
+    current normalmente viene de get_current_user_cookie -> dict payload JWT.
+    Pero lo hacemos compatible si en algún lado llega un User.
+    Acepta:
+      - role == 'admin'
+      - is_admin / is_superuser (si existen)
     """
-    role = (getattr(u, "role", "") or "").lower()
-    is_admin_flag = bool(getattr(u, "is_admin", False)) or bool(getattr(u, "is_superuser", False))
-    if not u or (role != "admin" and not is_admin_flag):
+    if not current:
         raise HTTPException(status_code=403, detail="Solo admin")
+
+    # Caso 1: payload dict (JWT)
+    if isinstance(current, dict):
+        role = str(current.get("role") or "").lower()
+        if role == "admin":
+            return
+        # si algún día guardás flags en el token
+        if bool(current.get("is_admin")) or bool(current.get("is_superuser")):
+            return
+        raise HTTPException(status_code=403, detail="Solo admin")
+
+    # Caso 2: modelo User (SQLAlchemy)
+    role = (getattr(current, "role", "") or "").lower()
+    is_admin_flag = bool(getattr(current, "is_admin", False)) or bool(getattr(current, "is_superuser", False))
+    if role != "admin" and not is_admin_flag:
+        raise HTTPException(status_code=403, detail="Solo admin")
+
 
 # ----------------- Aliases / Redirecciones -----------------
 @router.get("/subscriptions", include_in_schema=False)
@@ -41,15 +57,18 @@ def admin_subscriptions_redirect():
     # Si el dashboard apunta a /admin/subscriptions, llevá al destino correcto
     return RedirectResponse(url="/billing/subscriptions", status_code=302)
 
+
 @router.get("/billing", include_in_schema=False)
 def admin_billing_redirect():
     # Alias por si algún botón apunta a /admin/billing
     return RedirectResponse(url="/billing", status_code=302)
 
+
 # ----------------- Stats (JSON) -----------------
 @router.get("/stats", name="admin_stats")
-def stats(db= Depends(get_db), current=Depends(get_current_user_cookie)):
+def stats(db=Depends(get_db), current=Depends(get_current_user_cookie)):
     require_admin(current)
+
     now = datetime.utcnow()
     start = datetime(now.year, now.month, 1)
     end = datetime(now.year, now.month, monthrange(now.year, now.month)[1], 23, 59, 59)
@@ -76,18 +95,19 @@ def stats(db= Depends(get_db), current=Depends(get_current_user_cookie)):
         "hasta": end.isoformat(),
     }
 
-# ----------------- Suscripciones (nuevo, mínimo) -----------------
 
+# ----------------- Suscripciones (nuevo, mínimo) -----------------
 @router.get("/user/{email}/subscription", tags=["admin"])
 def admin_get_subscription(
     email: str,
-    db= Depends(get_db),
+    db=Depends(get_db),
     current=Depends(get_current_user_cookie),
 ):
     """
     Ver estado de suscripción de un usuario por email (case-insensitive).
     """
     require_admin(current)
+
     email_norm = email.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email_norm).first()
     if not user:
@@ -100,19 +120,21 @@ def admin_get_subscription(
         "plan_expires": getattr(user, "plan_expires", None),
     }
 
+
 class ForceProReq(BaseModel):
     email: EmailStr
     months: int = 1
 
+
 @router.post("/force_pro", tags=["admin"])
 def admin_force_pro(
     req: ForceProReq,
-    db= Depends(get_db),
+    db=Depends(get_db),
     current=Depends(get_current_user_cookie),
 ):
     """
     Activar PRO manualmente a un usuario por X meses (default 1).
-    Deja el plan como 'PRO' (coherente con /admin/stats).
+    Deja el plan como 'PRO'.
     """
     require_admin(current)
 
@@ -127,9 +149,13 @@ def admin_force_pro(
         expires = now
     expires = expires + timedelta(days=30 * max(req.months, 1))
 
-    user.is_pro = True
-    user.plan = "PRO"
-    user.plan_expires = expires
+    if hasattr(user, "is_pro"):
+        user.is_pro = True
+    if hasattr(user, "plan"):
+        user.plan = "PRO"
+    if hasattr(user, "plan_expires"):
+        user.plan_expires = expires
+
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -138,6 +164,6 @@ def admin_force_pro(
         "ok": True,
         "email": user.email,
         "is_pro": True,
-        "plan": user.plan,
-        "plan_expires": user.plan_expires,
+        "plan": getattr(user, "plan", "PRO"),
+        "plan_expires": getattr(user, "plan_expires", None),
     }
