@@ -27,11 +27,17 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # =============================================================================
-# bcrypt helpers (72 bytes limit)
+# Password helpers (bcrypt 72 bytes)
 # =============================================================================
 
 def _truncate_bcrypt_secret(secret: str) -> str:
-    """Ensure bcrypt input is <= 72 bytes (bcrypt limitation)."""
+    """
+    bcrypt only considers first 72 bytes.
+    We truncate to <=72 bytes to avoid ValueError in some backends.
+    IMPORTANT: truncation is done by bytes, not chars.
+    """
+    if secret is None:
+        secret = ""
     if not isinstance(secret, str):
         secret = str(secret)
 
@@ -49,10 +55,6 @@ def _truncate_bcrypt_secret(secret: str) -> str:
         size += len(cb)
     return "".join(out_chars)
 
-
-# =============================================================================
-# Passwords
-# =============================================================================
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     plain_password = _truncate_bcrypt_secret(plain_password)
@@ -92,21 +94,23 @@ def decode_token(token: str) -> dict[str, Any]:
 
 
 # =============================================================================
-# Cookie domain helpers
+# Cookie helpers
 # =============================================================================
 
 def _cookie_domain_from_host(host: str) -> str | None:
     """
-    Given "www.alerttrail.com" -> ".alerttrail.com"
-    Given "alerttrail.com"     -> ".alerttrail.com"
-    Given "localhost" / IP     -> None
+    "www.alerttrail.com" -> ".alerttrail.com"
+    "alerttrail.com"     -> ".alerttrail.com"
+    "localhost" / IP     -> None
     """
     if not host:
         return None
 
     host = host.strip().lower()
+    if "," in host:
+        host = host.split(",", 1)[0].strip()
     if ":" in host:
-        host = host.split(":")[0].strip()
+        host = host.split(":", 1)[0].strip()
 
     if host in ("localhost", "127.0.0.1", "0.0.0.0"):
         return None
@@ -119,41 +123,31 @@ def _cookie_domain_from_host(host: str) -> str | None:
     return "." + ".".join(parts[-2:])
 
 
-def _host_from_request(request: Request) -> str | None:
-    host_hdr = (
+def _request_host_and_proto(request: Request) -> tuple[str | None, str | None]:
+    host = (
         request.headers.get("x-forwarded-host")
         or request.headers.get("X-Forwarded-Host")
         or request.headers.get("host")
         or request.headers.get("Host")
+        or None
     )
-    if host_hdr:
-        host = host_hdr.split(",")[0].strip()
+    if host:
+        host = host.split(",", 1)[0].strip()
         if ":" in host:
-            host = host.split(":")[0].strip()
-        return host.lower() or None
+            host = host.split(":", 1)[0].strip()
+        host = host.lower() or None
 
-    try:
-        return (request.url.hostname or "").lower() or None
-    except Exception:
-        return None
+    proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
+    if proto:
+        proto = proto.split(",", 1)[0].strip().lower()
 
+    return host, proto
 
-def _is_https(request: Request) -> bool:
-    xf_proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
-    if xf_proto:
-        return xf_proto.split(",")[0].strip().lower() == "https"
-    try:
-        return (request.url.scheme or "").lower() == "https"
-    except Exception:
-        return False
-
-
-# =============================================================================
-# Cookies
-# =============================================================================
 
 def issue_access_cookie(response: Response, token: str, request: Request | None = None) -> None:
-    """Set the auth cookie (proxy-safe)."""
+    """
+    Set auth cookie. Proxy-safe: uses forwarded headers for secure/domain.
+    """
     max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
     secure = COOKIE_SECURE
     samesite = COOKIE_SAMESITE
@@ -161,8 +155,8 @@ def issue_access_cookie(response: Response, token: str, request: Request | None 
 
     host: str | None = None
     if request is not None:
-        host = _host_from_request(request)
-        if _is_https(request):
+        host, proto = _request_host_and_proto(request)
+        if proto == "https":
             secure = True
 
     domain = COOKIE_DOMAIN
@@ -184,64 +178,28 @@ def issue_access_cookie(response: Response, token: str, request: Request | None 
 
 def clear_access_cookie(response: Response, request: Request | None = None) -> None:
     """
-    IMPORTANT:
-    Borramos TODAS las variantes comunes del cookie para evitar el loop:
-      - host-only (domain=None)
-      - domain calculado por host (".alerttrail.com")
-      - COOKIE_DOMAIN si viene por env
+    Delete BOTH:
+      - host-only cookie (domain=None)
+      - domain cookie (".alerttrail.com" / COOKIE_DOMAIN)
+    This avoids the classic login loop where an old cookie keeps winning.
     """
     # 1) host-only
-    try:
-        response.delete_cookie(COOKIE_NAME, path="/", domain=None)
-    except Exception:
-        pass
+    response.delete_cookie(COOKIE_NAME, path="/")
 
-    # 2) domain explícito por env
+    # 2) configured domain
     if COOKIE_DOMAIN:
-        try:
-            response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
-        except Exception:
-            pass
+        response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
 
-    # 3) domain calculado por request (proxy-safe)
+    # 3) inferred domain from request host (proxy-safe)
     if request is not None:
-        try:
-            host = _host_from_request(request) or ""
-            dom = _cookie_domain_from_host(host)
-            if dom:
-                response.delete_cookie(COOKIE_NAME, path="/", domain=dom)
-        except Exception:
-            pass
-
-
-def _get_cookie_last_value(raw_cookie_header: str, name: str) -> str | None:
-    """
-    Si el browser manda dos cookies con el mismo nombre,
-    tomamos la ÚLTIMA (normalmente es la más nueva).
-    """
-    if not raw_cookie_header:
-        return None
-
-    # Split naive por ';' (suficiente para cookies normales)
-    parts = [p.strip() for p in raw_cookie_header.split(";") if p.strip()]
-    found: list[str] = []
-    prefix = name + "="
-    for p in parts:
-        if p.startswith(prefix):
-            found.append(p[len(prefix):])
-    if not found:
-        return None
-    return found[-1] or None
+        host, _proto = _request_host_and_proto(request)
+        inferred = _cookie_domain_from_host(host) if host else None
+        if inferred:
+            response.delete_cookie(COOKIE_NAME, path="/", domain=inferred)
 
 
 def get_token_from_request(request: Request) -> str | None:
-    # 0) Cookie header raw (maneja duplicados de forma determinística)
-    raw = request.headers.get("cookie") or request.headers.get("Cookie") or ""
-    v = _get_cookie_last_value(raw, COOKIE_NAME)
-    if v:
-        return v
-
-    # 1) Fallback: parsed cookies
+    # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
     if token:
         return token
@@ -254,29 +212,42 @@ def get_token_from_request(request: Request) -> str | None:
     return None
 
 
-def get_current_user_cookie_optional(request: Request) -> dict[str, Any] | None:
+# =============================================================================
+# Current user helpers (THIS FIXES YOUR IMPORT ERROR)
+# =============================================================================
+
+def get_current_user_cookie(request: Request) -> dict[str, Any]:
+    """
+    Strict: must be authenticated, otherwise 401.
+    """
     token = get_token_from_request(request)
     if not token:
-        return None
+        raise HTTPException(status_code=401, detail="No autenticado")
 
     try:
         payload = decode_token(token)
-        # aseguramos que tenga sub (id)
-        if not payload.get("sub"):
-            return None
-        return payload
-    except Exception:
-        # NO tragamos silenciosamente errores raros
-        return None
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token inválido")
 
+    # require sub to avoid "truthy dict" edge cases
+    if not payload or not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+    return payload
 
 
 def get_current_user_cookie_optional(request: Request) -> dict[str, Any] | None:
+    """
+    Optional: returns payload if valid, else None.
+    """
     token = get_token_from_request(request)
     if not token:
         return None
     try:
-        return decode_token(token)
+        payload = decode_token(token)
+        if not payload or not payload.get("sub"):
+            return None
+        return payload
     except JWTError:
         return None
 
@@ -297,6 +268,10 @@ def get_current_user_id(request: Request) -> int:
 # =============================================================================
 
 def normalize_user_plan(db, user) -> None:
+    """
+    Backwards-compat shim:
+    Some routers import normalize_user_plan from app.security.
+    """
     try:
         plan = getattr(user, "plan", None)
         is_pro = getattr(user, "is_pro", None)
