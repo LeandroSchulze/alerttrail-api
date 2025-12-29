@@ -145,25 +145,7 @@ def _request_host_and_proto(request: Request) -> tuple[str | None, str | None]:
 
 
 def issue_access_cookie(response: Response, token: str, request: Request | None = None) -> None:
-    """
-    Set auth cookie.
-    FIX: do NOT infer cookie domain automatically.
-    Only set domain if COOKIE_DOMAIN env is explicitly provided.
-    """
     max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
-
-    secure = COOKIE_SECURE
-    samesite = COOKIE_SAMESITE
-    httponly = COOKIE_HTTPONLY
-
-    # If behind proxy and request says https, force secure True
-    if request is not None:
-        xf_proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
-        if xf_proto and xf_proto.split(",")[0].strip().lower() == "https":
-            secure = True
-
-    # 🔥 IMPORTANT: only use COOKIE_DOMAIN if explicitly set in env.
-    domain = COOKIE_DOMAIN  # else None
 
     response.set_cookie(
         key=COOKIE_NAME,
@@ -171,10 +153,9 @@ def issue_access_cookie(response: Response, token: str, request: Request | None 
         max_age=max_age,
         expires=max_age,
         path="/",
-        secure=secure,
-        httponly=httponly,
-        samesite=samesite,
-        domain=domain or None,
+        httponly=True,
+        secure=False,          # 🔥 CLAVE
+        samesite="lax",        # 🔥 CLAVE
     )
 
 
