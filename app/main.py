@@ -205,6 +205,42 @@ def dashboard(request: Request):
     )
 
 
+def _cookie_domain_from_host(host: str) -> str | None:
+    """
+    Given "www.alerttrail.com" -> ".alerttrail.com"
+    Given "alerttrail.com"     -> ".alerttrail.com"
+    Given "localhost" / IP     -> None
+    """
+    if not host:
+        return None
+    host = host.strip().lower()
+    if ":" in host:
+        host = host.split(":")[0].strip()
+
+    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
+        return None
+    if host.count(".") < 1:
+        return None
+
+    parts = host.split(".")
+    if len(parts) < 2:
+        return None
+    return "." + ".".join(parts[-2:])
+
+
+def _safe_next(next_url: str | None) -> str:
+    # evita loops por URLs externas o valores raros
+    if not next_url:
+        return "/dashboard"
+    next_url = str(next_url).strip()
+    if not next_url.startswith("/"):
+        return "/dashboard"
+    # hardening mínimo: evita //, y paths vacíos
+    if next_url.startswith("//"):
+        return "/dashboard"
+    return next_url or "/dashboard"
+
+
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
     """
@@ -213,8 +249,34 @@ def set_lang(request: Request, lang: str = "es", next: str = "/dashboard"):
     Stores cookie "lang" and redirects back.
     """
     lang = (lang or "es").lower()
-    resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    resp.set_cookie("lang", lang, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax")
+    next_url = _safe_next(next)
+
+    # Host/proxy-safe domain + secure
+    host_hdr = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("X-Forwarded-Host")
+        or request.headers.get("host")
+        or request.headers.get("Host")
+    )
+    host = None
+    if host_hdr:
+        host = host_hdr.split(",")[0].strip()
+    domain = _cookie_domain_from_host(host or "")
+
+    xf_proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
+    secure = bool(xf_proto and xf_proto.split(",")[0].strip().lower() == "https")
+
+    resp = RedirectResponse(url=next_url, status_code=302)
+    resp.set_cookie(
+        "lang",
+        lang,
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="lax",
+        secure=secure,
+        domain=domain or None,
+        path="/",
+    )
     return resp
 
 
