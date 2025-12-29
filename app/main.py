@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.ui import templates
 from app.i18n import get_lang_from_request
@@ -42,6 +43,9 @@ REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_NAME)
+
+# ✅ Trust Render proxy headers (X-Forwarded-Proto / X-Forwarded-Host)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # ✅ Needed for routers that expect request.app.state.templates
 app.state.templates = templates
