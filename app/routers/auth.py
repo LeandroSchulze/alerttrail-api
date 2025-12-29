@@ -177,6 +177,16 @@ def me(request: Request, db: Session = Depends(get_db)):
         else None,
     }
 
+@router.get("/debug", include_in_schema=False)
+def auth_debug(request: Request):
+    return {
+        "host": request.headers.get("host"),
+        "x_forwarded_host": request.headers.get("x-forwarded-host"),
+        "x_forwarded_proto": request.headers.get("x-forwarded-proto"),
+        "cookies": dict(request.cookies),
+        "cookie_name": COOKIE_NAME if "COOKIE_NAME" in globals() else "access_token",
+    }
+
 
 @router.post("/register", response_class=JSONResponse)
 def register(
