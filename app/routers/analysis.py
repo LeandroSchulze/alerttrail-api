@@ -177,6 +177,11 @@ code{{white-space:pre-wrap}}
 </html>"""
 
 
+def _is_authed(payload: Optional[Dict[str, Any]]) -> bool:
+    """Auth robusto: no alcanza con 'truthy', necesitamos sub."""
+    return bool(payload) and bool(payload.get("sub"))
+
+
 @router.get("", include_in_schema=False)
 @router.get("/", include_in_schema=False)
 async def analysis_index():
@@ -185,7 +190,7 @@ async def analysis_index():
 
 @router.get("/generate", response_class=HTMLResponse)
 async def generate_page(request: Request, current=Depends(get_current_user_cookie_optional)):
-    if not current:
+    if not _is_authed(current):
         return RedirectResponse("/auth/login", status_code=302)
 
     lang = get_lang_from_request(request)
@@ -237,7 +242,7 @@ async def analyze(
     pdf: Optional[str] = Form(None),
     current=Depends(get_current_user_cookie_optional),
 ):
-    if not current:
+    if not _is_authed(current):
         return RedirectResponse("/auth/login", status_code=302)
 
     lang = get_lang_from_request(request)
