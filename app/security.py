@@ -146,22 +146,24 @@ def _request_host_and_proto(request: Request) -> tuple[str | None, str | None]:
 
 def issue_access_cookie(response: Response, token: str, request: Request | None = None) -> None:
     """
-    Set auth cookie. Proxy-safe: uses forwarded headers for secure/domain.
+    Set auth cookie.
+    FIX: do NOT infer cookie domain automatically.
+    Only set domain if COOKIE_DOMAIN env is explicitly provided.
     """
     max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
     secure = COOKIE_SECURE
     samesite = COOKIE_SAMESITE
     httponly = COOKIE_HTTPONLY
 
-    host: str | None = None
+    # If behind proxy and request says https, force secure True
     if request is not None:
-        host, proto = _request_host_and_proto(request)
-        if proto == "https":
+        xf_proto = request.headers.get("x-forwarded-proto") or request.headers.get("X-Forwarded-Proto")
+        if xf_proto and xf_proto.split(",")[0].strip().lower() == "https":
             secure = True
 
-    domain = COOKIE_DOMAIN
-    if not domain and host:
-        domain = _cookie_domain_from_host(host)
+    # 🔥 IMPORTANT: only use COOKIE_DOMAIN if explicitly set in env.
+    domain = COOKIE_DOMAIN  # else None
 
     response.set_cookie(
         key=COOKIE_NAME,
@@ -178,24 +180,14 @@ def issue_access_cookie(response: Response, token: str, request: Request | None 
 
 def clear_access_cookie(response: Response, request: Request | None = None) -> None:
     """
-    Delete BOTH:
-      - host-only cookie (domain=None)
-      - domain cookie (".alerttrail.com" / COOKIE_DOMAIN)
-    This avoids the classic login loop where an old cookie keeps winning.
+    Delete host-only cookie and also COOKIE_DOMAIN cookie if configured.
     """
-    # 1) host-only
+    # host-only
     response.delete_cookie(COOKIE_NAME, path="/")
 
-    # 2) configured domain
+    # explicit domain cookie (only if you set it in env)
     if COOKIE_DOMAIN:
         response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
-
-    # 3) inferred domain from request host (proxy-safe)
-    if request is not None:
-        host, _proto = _request_host_and_proto(request)
-        inferred = _cookie_domain_from_host(host) if host else None
-        if inferred:
-            response.delete_cookie(COOKIE_NAME, path="/", domain=inferred)
 
 
 def get_token_from_request(request: Request) -> str | None:
