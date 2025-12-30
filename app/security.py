@@ -160,15 +160,9 @@ def issue_access_cookie(response: Response, token: str, request: Request | None 
 
 
 def clear_access_cookie(response: Response, request: Request | None = None) -> None:
-    """
-    Delete host-only cookie and also COOKIE_DOMAIN cookie if configured.
-    """
-    # host-only
+    # Mantenerlo simple y estable: borrar la cookie host-only.
+    # (No usar domain/secure/inferencias para evitar loops en proxies/CDNs.)
     response.delete_cookie(COOKIE_NAME, path="/")
-
-    # explicit domain cookie (only if you set it in env)
-    if COOKIE_DOMAIN:
-        response.delete_cookie(COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
 
 
 def get_token_from_request(request: Request) -> str | None:
