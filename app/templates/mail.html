@@ -20,7 +20,7 @@
         <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
           <div>
             <div style="font-weight:600;margin-bottom:2px;">{{ t(lang, "mail.linked_label") }}</div>
-            <div style="color:#334155;">{{ linked.address }}</div>
+            <div style="color:#334155;">{{ linked.address or linked.email or linked.username or linked }}</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <a href="/mail/connect" style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
