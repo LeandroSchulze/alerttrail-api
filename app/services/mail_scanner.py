@@ -64,11 +64,14 @@ def to_scanner_result(res, scanned_at: Optional[datetime] = None) -> MailScanner
     )
 
 
-def scan_all_connected_mailboxes():
-    """Compat: main.py / tasks_mail esperan esta función en mail_scanner.py.
+def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: bool = False, **kwargs):
+    """Compat: /tasks/mail/poll espera db/limit/dry_run.
 
-    La implementación real hoy vive en app.services.mail.scan_all_inboxes().
+    La implementación real vive en app.services.mail.scan_all_inboxes().
     """
     from app.services.mail import scan_all_inboxes
 
-    return scan_all_inboxes()
+    result = scan_all_inboxes(limit=int(limit or 50))
+    # scan_all_inboxes devuelve un dict con {"scanned": ...}
+    return int((result or {}).get("scanned", 0))
+
