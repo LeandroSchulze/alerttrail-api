@@ -1,77 +1,112 @@
 # app/services/mail_scanner.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, List
-from datetime import datetime
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict
+
+from app.services.mail_scan import scan_mailbox
+
+MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
+MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
 
 
-@dataclass
-class MailScannerItem:
-    uid: str
-    subject: str
-    from_email: str
-    date: str
-    score: int
-    reasons: List[str]
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-@dataclass
-class MailScannerResult:
-    ok: bool
-    message: str
-    total_found: int
-    unread: int
-    dangerous: int
-    items: List[MailScannerItem]
-    counts: dict
-    scanned_at: str
+def _load_json(path: Path, default):
+    try:
+        if not path.exists():
+            return default
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
 
 
-def danger_level(score: int) -> str:
-    if score >= 80:
-        return "high"
-    if score >= 40:
-        return "medium"
-    return "low"
+def _save_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def to_scanner_result(res, scanned_at: Optional[datetime] = None) -> MailScannerResult:
-    scanned_at = scanned_at or datetime.utcnow()
-
-    items: List[MailScannerItem] = []
-    for it in list(getattr(res, "items", []) or []):
-        items.append(
-            MailScannerItem(
-                uid=str(getattr(it, "uid", "") or ""),
-                subject=str(getattr(it, "subject", "") or ""),
-                from_email=str(getattr(it, "from_email", "") or ""),
-                date=str(getattr(it, "date", "") or ""),
-                score=int(getattr(it, "score", 0) or 0),
-                reasons=list(getattr(it, "reasons", []) or []),
-            )
-        )
-
-    return MailScannerResult(
-        ok=bool(getattr(res, "ok", False)),
-        message=str(getattr(res, "message", "") or ""),
-        total_found=int(getattr(res, "total_found", 0) or 0),
-        unread=int(getattr(res, "unread", 0) or 0),
-        dangerous=int(getattr(res, "dangerous", 0) or 0),
-        items=items,
-        counts=dict(getattr(res, "counts", {}) or {}),
-        scanned_at=str(scanned_at),
-    )
+def _verdict_from_level(level: str) -> str:
+    lvl = (level or "low").lower()
+    if lvl == "high":
+        return "ALTO"
+    if lvl == "medium":
+        return "MEDIO"
+    return "BAJO"
 
 
-def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: bool = False, **kwargs):
-    """Compat: /tasks/mail/poll espera db/limit/dry_run.
-
-    La implementación real vive en app.services.mail.scan_all_inboxes().
+def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: bool = False, **kwargs) -> int:
     """
-    from app.services.mail import scan_all_inboxes
+    Lo llama /tasks/mail/poll.
+    Escanea TODAS las casillas guardadas en linked_accounts.json y actualiza scan_last_<user>.json
+    """
+    all_linked: Dict[str, Any] = _load_json(LINKED_FILE, {}) or {}
+    if not isinstance(all_linked, dict):
+        all_linked = {}
 
-    result = scan_all_inboxes(limit=int(limit or 50))
-    # scan_all_inboxes devuelve un dict con {"scanned": ...}
-    return int((result or {}).get("scanned", 0))
+    lim = int(limit or 50)
+    scanned = 0
 
+    for user_id, linked in all_linked.items():
+        if not isinstance(linked, dict):
+            continue
+
+        scanned += 1
+        try:
+            res = scan_mailbox(
+                host=linked.get("host") or "imap.gmail.com",
+                port=int(linked.get("port") or 993),
+                username=linked.get("username") or "",
+                password=linked.get("password") or "",
+                folder=linked.get("folder") or "INBOX",
+                use_ssl=bool(linked.get("use_ssl", True)),
+                limit=lim,
+                mark_read=bool(linked.get("mark_read", False)),
+            )
+
+            items = []
+            for it in (res.items or []):
+                analysis = getattr(it, "analysis", None)
+                danger_level = str(getattr(analysis, "danger_level", "") or "low").lower()
+                reasons = list(getattr(analysis, "reasons", []) or [])
+                items.append(
+                    {
+                        "uid": str(it.uid or ""),
+                        "subject": str(it.subject or ""),
+                        "from": str(it.from_email or ""),
+                        "date": str(it.date or ""),
+                        "verdict": _verdict_from_level(danger_level),
+                        "reasons": reasons,
+                    }
+                )
+
+            payload = {
+                "ok": bool(res.ok),
+                "scanned_at": _now_iso(),
+                "folder": linked.get("folder") or "INBOX",
+                "address": linked.get("address") or linked.get("username") or "",
+                "total": int(res.total_found or 0),
+                "unread": int(res.unread or 0),
+                "items": items,
+                "error": (res.message or "") if not res.ok else None,
+                "limit": lim,
+            }
+
+            if not dry_run:
+                _save_json(MAIL_DATA_DIR / f"scan_last_{user_id}.json", payload)
+
+        except Exception as e:
+            if not dry_run:
+                _save_json(
+                    MAIL_DATA_DIR / f"scan_last_{user_id}.json",
+                    {"ok": False, "scanned_at": _now_iso(), "error": str(e), "items": [], "limit": lim},
+                )
+
+    return scanned
