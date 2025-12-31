@@ -1,10 +1,9 @@
 # app/services/mail_scan.py
 from __future__ import annotations
 
-import re
 import socket
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any
 
 from imapclient import IMAPClient
 from email import message_from_bytes
@@ -191,18 +190,15 @@ def scan_inbox(
             M.login(username, password)
             M.select_folder(folder)
 
-            # ✅ FIX: siempre usar ALL para tomar los últimos N más recientes.
-            # Si priorizamos UNSEEN y hay no-leídos viejos, el listado “salta días”
-            # y no muestra los últimos correos nuevos.
+            # Tomar los últimos N más recientes por UID
             uids = M.search(["ALL"]) or []
-
-            # Tomamos últimos N por UID (lo más nuevo)
             uids = uids[-max_msgs:] if len(uids) > max_msgs else uids
 
             # Procesar newest-first
             for uid in reversed(uids):
-               data = M.fetch([uid], ["RFC822", "FLAGS"])
-               raw = data.get(uid, {}).get(b"RFC822")
+                data = M.fetch([uid], ["RFC822", "FLAGS"])
+                raw = (data or {}).get(uid, {}).get(b"RFC822")
+
                 if not raw:
                     continue
 
@@ -223,18 +219,28 @@ def scan_inbox(
                             disp = (part.get("Content-Disposition", "") or "").lower()
                             if "attachment" in disp:
                                 continue
+
                             if ctype == "text/plain" and not body_text:
                                 payload = part.get_payload(decode=True)
                                 if payload:
-                                    body_text = payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+                                    body_text = payload.decode(
+                                        part.get_content_charset() or "utf-8",
+                                        errors="ignore",
+                                    )
                             elif ctype == "text/html" and not body_html:
                                 payload = part.get_payload(decode=True)
                                 if payload:
-                                    body_html = payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+                                    body_html = payload.decode(
+                                        part.get_content_charset() or "utf-8",
+                                        errors="ignore",
+                                    )
                     else:
                         payload = msg.get_payload(decode=True)
                         if payload:
-                            body_text = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
+                            body_text = payload.decode(
+                                msg.get_content_charset() or "utf-8",
+                                errors="ignore",
+                            )
                 except Exception:
                     pass
 
