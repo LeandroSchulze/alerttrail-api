@@ -130,10 +130,10 @@ def scan_mailbox(
         for it in raw.get("items", []) or []:
             analysis = analyze_email_quick(
                 subject=it.get("subject", ""),
-                from_email=it.get("from", ""),
-                body=it.get("body", ""),
-                html=it.get("html", ""),
+                sender=it.get("from", ""),
+                body=(it.get("body", "") or "") + ("\n\n" + (it.get("html", "") or "") if it.get("html") else ""),
             )
+
             lvl = (analysis.get("danger_level") or "low").lower()
             counts[lvl] = int(counts.get(lvl, 0)) + 1
             if lvl in ("medium", "high"):
