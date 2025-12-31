@@ -194,15 +194,15 @@ def scan_inbox(
             # ✅ FIX: siempre usar ALL para tomar los últimos N más recientes.
             # Si priorizamos UNSEEN y hay no-leídos viejos, el listado “salta días”
             # y no muestra los últimos correos nuevos.
-            uids = M.uid_search("ALL") or []
+            uids = M.search(["ALL"]) or []
 
             # Tomamos últimos N por UID (lo más nuevo)
             uids = uids[-max_msgs:] if len(uids) > max_msgs else uids
 
             # Procesar newest-first
             for uid in reversed(uids):
-                data = M.uid_fetch(uid, ["RFC822", "FLAGS"])
-                raw = data.get(uid, {}).get(b"RFC822")
+               data = M.fetch([uid], ["RFC822", "FLAGS"])
+               raw = data.get(uid, {}).get(b"RFC822")
                 if not raw:
                     continue
 
@@ -260,7 +260,7 @@ def scan_inbox(
             # unread count (best-effort)
             unread = 0
             try:
-                unseen = M.uid_search("(UNSEEN)") or []
+                unseen = M.search(["UNSEEN"]) or []
                 unread = len(unseen)
             except Exception:
                 unread = 0
