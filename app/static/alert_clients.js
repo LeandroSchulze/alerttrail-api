@@ -7,14 +7,28 @@
   let permissionAsked = false;
 
   function notifyToast(a) {
-    try {
-      if (window.toaster && typeof window.toaster.notify === 'function') {
-        window.toaster.notify(a.title || 'Alerta', a.body || '', a.severity || 'info');
-        return true;
-      }
-    } catch (e) {}
+  try {
+    if (!window.toaster) return false;
+
+    const sev = String(a.severity || 'info').toLowerCase();
+    const title = a.title || 'Alerta';
+    const body = a.body || '';
+
+    if (sev === 'high') {
+      window.toaster.error(title, body);
+      return true;
+    }
+    if (sev === 'medium' || sev === 'warn' || sev === 'warning') {
+      window.toaster.warning(title, body);
+      return true;
+    }
+    window.toaster.info(title, body);
+    return true;
+  } catch (e) {
     return false;
   }
+}
+
 
   async function ensureNotificationPermission() {
     if (!('Notification' in window)) return 'unsupported';
