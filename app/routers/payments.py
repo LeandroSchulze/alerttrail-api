@@ -45,6 +45,35 @@ def _secure_compare(a: str, b: str) -> bool:
 
 
 # -------------------------
+# URL helpers (ABS back_url)
+# -------------------------
+def _base_url() -> str:
+    """
+    Devuelve URL base absoluta para construir back_url.
+    Recomendado en Render:
+      APP_BASE_URL=https://www.alerttrail.com
+    Fallbacks: PUBLIC_URL, RENDER_EXTERNAL_URL, https://www.alerttrail.com
+    """
+    base = (
+        (os.getenv("APP_BASE_URL") or "").strip()
+        or (os.getenv("PUBLIC_URL") or "").strip()
+        or (os.getenv("RENDER_EXTERNAL_URL") or "").strip()
+        or "https://www.alerttrail.com"
+    )
+    return base[:-1] if base.endswith("/") else base
+
+
+def _abs_url(path: str) -> str:
+    if not path:
+        path = "/"
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    if not path.startswith("/"):
+        path = "/" + path
+    return _base_url() + path
+
+
+# -------------------------
 # User helpers (dict or ORM)
 # -------------------------
 def _user_get(user, key: str, default=None):
@@ -146,7 +175,11 @@ except Exception:
 def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reason: str, external_ref: str):
     """
     Crea el payload para /preapproval (suscripción).
+    MercadoPago exige back_url ABSOLUTA.
     """
+    back = (os.getenv("MP_BACK_URL") or "").strip()
+    back_url = _abs_url(back or "/billing/return")
+
     return {
         "payer_email": payer_email,
         "auto_recurring": {
@@ -157,8 +190,7 @@ def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reas
         },
         "reason": reason,
         "external_reference": external_ref,
-        # Opcional: back_url de retorno (no es webhook)
-        "back_url": os.getenv("MP_BACK_URL") or "/billing/return",
+        "back_url": back_url,
     }
 
 
