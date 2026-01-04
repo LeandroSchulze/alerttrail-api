@@ -1,6 +1,5 @@
 # app/routers/payments.py
-# --- Updated: webhook signature (optional), robust MP calls, idempotent sync/activate ---
-# --- Tweaks: FastAPI v2-friendly param validation (no regex in Query), SQLAlchemy .get() usage, minor hardening ---
+# --- Updated: back_url must be absolute, robust MP calls, dict/ORM user safe, retry w/o currency_id if MP rejects it ---
 
 import os
 import json
@@ -33,7 +32,11 @@ def _require_mp_token():
 
 
 def _mp_headers():
-    return {"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Content-Type": "application/json"}
+    return {
+        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
 
 def _secure_compare(a: str, b: str) -> bool:
@@ -42,35 +45,6 @@ def _secure_compare(a: str, b: str) -> bool:
         return hmac.compare_digest(a.encode(), b.encode())
     except Exception:
         return False
-
-
-# -------------------------
-# URL helpers (ABS back_url)
-# -------------------------
-def _base_url() -> str:
-    """
-    Devuelve URL base absoluta para construir back_url.
-    Recomendado en Render:
-      APP_BASE_URL=https://www.alerttrail.com
-    Fallbacks: PUBLIC_URL, RENDER_EXTERNAL_URL, https://www.alerttrail.com
-    """
-    base = (
-        (os.getenv("APP_BASE_URL") or "").strip()
-        or (os.getenv("PUBLIC_URL") or "").strip()
-        or (os.getenv("RENDER_EXTERNAL_URL") or "").strip()
-        or "https://www.alerttrail.com"
-    )
-    return base[:-1] if base.endswith("/") else base
-
-
-def _abs_url(path: str) -> str:
-    if not path:
-        path = "/"
-    if path.startswith("http://") or path.startswith("https://"):
-        return path
-    if not path.startswith("/"):
-        path = "/" + path
-    return _base_url() + path
 
 
 # -------------------------
@@ -108,6 +82,38 @@ def _user_id(user) -> Optional[int]:
 def _user_email(user) -> Optional[str]:
     email = _user_get(user, "email", None)
     return str(email).strip() if email else None
+
+
+# -------------------------
+# URL helpers
+# -------------------------
+def _is_abs_url(u: str) -> bool:
+    u = (u or "").strip().lower()
+    return u.startswith("http://") or u.startswith("https://")
+
+
+def _absolute_url_from_request(request: Request, path: str) -> str:
+    base = str(request.base_url).rstrip("/")  # e.g. https://alerttrail.com
+    path = (path or "").strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    return base + path
+
+
+def _resolve_back_url(request: Request) -> str:
+    """
+    Mercado Pago requiere back_url ABSOLUTA.
+    - Si MP_BACK_URL está seteada y es absoluta -> se usa.
+    - Si MP_BACK_URL es relativa -> se convierte a absoluta usando request.base_url.
+    - Si no está -> default /billing/return absoluto.
+    """
+    env_url = (os.getenv("MP_BACK_URL") or "").strip()
+    if env_url:
+        if _is_abs_url(env_url):
+            return env_url
+        return _absolute_url_from_request(request, env_url)
+
+    return _absolute_url_from_request(request, "/billing/return")
 
 
 # ====== Precio / moneda ======
@@ -172,25 +178,36 @@ except Exception:
 
 
 # ====== Helpers Mercado Pago ======
-def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reason: str, external_ref: str):
+def _preapproval_payload(
+    *,
+    payer_email: str,
+    amount: float,
+    currency: Optional[str],
+    reason: str,
+    external_ref: str,
+    back_url: str,
+    include_currency: bool = True,
+):
     """
     Crea el payload para /preapproval (suscripción).
-    MercadoPago exige back_url ABSOLUTA.
+
+    Nota: Algunas cuentas/entornos rechazan auto_recurring.currency_id.
+    Por eso soportamos include_currency=False para reintentar sin ese campo.
     """
-    back = (os.getenv("MP_BACK_URL") or "").strip()
-    back_url = _abs_url(back or "/billing/return")
+    auto_recurring = {
+        "frequency": 1,
+        "frequency_type": "months",
+        "transaction_amount": float(amount),
+    }
+    if include_currency and currency:
+        auto_recurring["currency_id"] = currency
 
     return {
         "payer_email": payer_email,
-        "auto_recurring": {
-            "frequency": 1,
-            "frequency_type": "months",
-            "transaction_amount": float(amount),
-            "currency_id": currency,
-        },
+        "auto_recurring": auto_recurring,
         "reason": reason,
         "external_reference": external_ref,
-        "back_url": back_url,
+        "back_url": back_url,  # ABSOLUTA
     }
 
 
@@ -213,6 +230,17 @@ def _mp_update_preapproval(preapproval_id: str, payload: dict) -> dict:
         raise HTTPException(status_code=502, detail=f"MP PUT preapproval error: {e}")
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"MP PUT preapproval error {r.status_code}: {r.text}")
+    return r.json()
+
+
+def _mp_create_preapproval(payload: dict) -> dict:
+    url = "https://api.mercadopago.com/preapproval"
+    try:
+        r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"MP preapproval error {r.status_code}: {r.text}")
     return r.json()
 
 
@@ -281,7 +309,6 @@ def _upsert_subscription(
 def _activate_user_plan_if_authorized(db: Session, *, sub: Subscription):
     """
     Si la sub está 'authorized', activar plan del usuario.
-    Mejora mínima: setea pro_expires_at (si existe en el modelo) usando next_payment_date.
     """
     if (sub.status or "").lower() == "authorized" and sub.user_id:
         u = db.get(User, sub.user_id)
@@ -357,23 +384,38 @@ def payments_subscribe(
     amount, currency = _amount_currency(plan_norm, seats)
     external_ref = f"sub-{plan_norm}-{uid}-{uuid.uuid4().hex[:8]}"
     reason = f"AlertTrail {plan_norm} ({currency} {amount})"
+    back_url = _resolve_back_url(request)
 
+    # 1) Intento normal (con currency_id)
     payload = _preapproval_payload(
         payer_email=email,
         amount=amount,
         currency=currency,
         reason=reason,
         external_ref=external_ref,
+        back_url=back_url,
+        include_currency=True,
     )
-    url = "https://api.mercadopago.com/preapproval"
-    try:
-        r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"MP preapproval error {r.status_code}: {r.text}")
 
-    data = r.json()
+    try:
+        data = _mp_create_preapproval(payload)
+    except HTTPException as he:
+        # Si MP rechaza currency_id dentro de auto_recurring, reintentamos sin currency_id
+        msg = str(he.detail or "")
+        if "auto_recurring.currency_id" in msg or "Invalid field -> auto_recurring.currency_id" in msg:
+            payload2 = _preapproval_payload(
+                payer_email=email,
+                amount=amount,
+                currency=None,
+                reason=reason,
+                external_ref=external_ref,
+                back_url=back_url,
+                include_currency=False,
+            )
+            data = _mp_create_preapproval(payload2)
+        else:
+            raise
+
     preapproval_id = data.get("id")
     init_point = data.get("init_point") or data.get("sandbox_init_point")
 
@@ -423,10 +465,6 @@ def payments_cancel(
 async def payments_webhook(request: Request, db: Session = Depends(get_db)):
     """
     Webhook para notificaciones de Mercado Pago.
-    MP envía típicamente:
-      - body: {"type":"preapproval", "action":"status", "data":{"id":"<preapproval_id>"}, ...}
-    o query params: ?type=preapproval&id=<preapproval_id>&topic=preapproval
-    Este endpoint sincroniza la suscripción local y activa el plan si corresponde.
     Si seteaste MP_WEBHOOK_SECRET, se valida contra el header `X-Webhook-Secret`.
     """
     _require_mp_token()
