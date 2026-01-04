@@ -10,15 +10,15 @@
   try {
     if (!window.toaster) return false;
 
-    const sev = String(a.severity || 'info').toLowerCase();
-    const title = a.title || 'Alerta';
-    const body = a.body || '';
+    const sev = String(a.severity || "info").toLowerCase();
+    const title = a.title || "Alerta";
+    const body = a.body || "";
 
-    if (sev === 'high') {
+    if (sev === "high" || sev === "error") {
       window.toaster.error(title, body);
       return true;
     }
-    if (sev === 'medium' || sev === 'warn' || sev === 'warning') {
+    if (sev === "medium" || sev === "warn" || sev === "warning") {
       window.toaster.warning(title, body);
       return true;
     }
@@ -28,6 +28,7 @@
     return false;
   }
 }
+
 
 
   async function ensureNotificationPermission() {
