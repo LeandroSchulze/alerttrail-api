@@ -18,33 +18,53 @@
         </div>
       {% endif %}
 
+      <!-- ✅ Detalle del plan -->
+      <div style="margin:12px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:12px;">
+        <div style="font-weight:700;margin-bottom:6px;">
+          Plan seleccionado: {{ plan }}
+        </div>
+
+        {% if plan == "BIZ" %}
+          <div style="color:#334155;font-size:14px;line-height:1.45;">
+            <b>Empresas:</b> {{ included_seats }} asientos incluidos<br/>
+            <b>Precio:</b> {{ currency_symbol }}{{ price_month }} {{ currency }}/mes<br/>
+            <b>Asiento adicional:</b> {{ currency_symbol }}{{ extra_seat_price }} {{ currency }} c/u
+          </div>
+        {% else %}
+          <div style="color:#334155;font-size:14px;line-height:1.45;">
+            <b>PRO:</b> 1 usuario<br/>
+            <b>Precio:</b> {{ currency_symbol }}{{ price_month }} {{ currency }}/mes
+          </div>
+        {% endif %}
+      </div>
+
       {% if mp_enabled %}
         <p class="muted" style="margin-top:10px;">
-          {{ t(lang, "billing.checkout_open_mp") }}
+          Te vamos a redirigir a Mercado Pago para completar el pago.
         </p>
 
         {% if init_point %}
           <a class="btn" href="{{ init_point }}" style="margin-top:10px;">
-            {{ t(lang, "billing.checkout_continue") }}
+            Continuar a Mercado Pago
           </a>
         {% else %}
           <p class="muted" style="margin-top:10px;">
-            {{ t(lang, "billing.checkout_no_init_point") }}
+            No se pudo iniciar el checkout.
           </p>
         {% endif %}
       {% else %}
         <p class="muted" style="margin-top:10px;">
-          {{ t(lang, "billing.checkout_disabled") }}
+          Checkout deshabilitado (faltan credenciales de Mercado Pago).
         </p>
         <p class="muted" style="margin-top:6px;">
-          {{ t(lang, "billing.checkout_contact") }}
+          Contacto:
           <a href="mailto:info.alerttrail@gmail.com" style="text-decoration:none;">info.alerttrail@gmail.com</a>
         </p>
       {% endif %}
 
       <div style="margin-top:14px;">
         <a href="/billing/subscriptions" style="text-decoration:none;color:#1d4ed8;">
-          ← {{ t(lang, "billing.back_subscriptions") }}
+          ← Volver a suscripciones
         </a>
       </div>
     </div>
