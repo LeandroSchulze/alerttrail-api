@@ -122,9 +122,9 @@ def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
     Define el monto y moneda para el preapproval.
     Variables soportadas (todas opcionales, con defaults razonables):
       - PLAN_CURRENCY (default USD)
-      - PRO_PRICE_USD (default 10.0)
-      - BIZ_PRICE_USD (default 25.0)
-      - BIZ_EXTRA_SEAT_USD (default 5.0)  # por asiento adicional
+      - PRO_PRICE_USD (default 15.0)
+      - BIZ_PRICE_USD (default 99.0)
+      - BIZ_EXTRA_SEAT_USD (default 3.0)  # por asiento adicional
       - BIZ_INCLUDED_SEATS (default 25)   # asientos incluidos en EMPRESAS
     """
     currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
