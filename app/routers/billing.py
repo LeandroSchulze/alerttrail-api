@@ -99,14 +99,25 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
 
     plan_norm = "BIZ" if plan in ("BIZ", "BUSINESS", "EMPRESA", "EMPRESAS") else "PRO"
 
-    # ✅ Si existe MP_ACCESS_TOKEN, mostramos botón que dispara /payments/subscribe (que redirige a MercadoPago)
+    # ✅ Detalles del plan (lo que vos pediste)
+    currency = "USD"
+    currency_symbol = "$"
+
+    if plan_norm == "BIZ":
+        price_month = 99
+        included_seats = 25
+        extra_seat_price = 3
+        # mandamos seats=25 por defecto (lo que incluye el plan)
+        init_point = f"/payments/subscribe?plan=BIZ&seats={included_seats}"
+    else:
+        # PRO (podés ajustar por ENV si querés)
+        price_month = 9.99
+        included_seats = 1
+        extra_seat_price = 0
+        init_point = "/payments/subscribe?plan=PRO&seats=1"
+
     mp_access_token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
     mp_enabled = bool(mp_access_token)
-
-    init_point = None
-    if mp_enabled:
-        # Este endpoint es el que crea el preapproval y redirige a MP
-        init_point = f"/payments/subscribe?plan={plan_norm}"
 
     return templates.TemplateResponse(
         "billing_checkout.html",
@@ -118,11 +129,16 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
             "current_user": user,
             "plan": plan_norm,
             "mp_enabled": mp_enabled,
-            "init_point": init_point,
+            "init_point": init_point if mp_enabled else None,
             "error": None,
+            # ✅ variables para mostrar detalle en el checkout
+            "currency": currency,
+            "currency_symbol": currency_symbol,
+            "price_month": price_month,
+            "included_seats": included_seats,
+            "extra_seat_price": extra_seat_price,
         },
     )
-
 
 
 @router.get("/payments", response_class=HTMLResponse, include_in_schema=False)
