@@ -23,7 +23,7 @@ from app.models import User
 from app.security import get_current_user_cookie
 
 # Routers
-from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing
+from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing, payments
 from app.routers import tasks_mail  # cron / task endpoints
 
 # Background scheduler (auto mail scan)
@@ -89,6 +89,9 @@ app.include_router(admin.router)
 
 # Billing (this is the one that provides /billing/subscriptions and /billing/payments)
 app.include_router(billing.router)
+
+# ✅ Payments (MercadoPago subscription endpoints: /payments/subscribe, etc.)
+app.include_router(payments.router)
 
 # misc / ui
 app.include_router(profile.router)
