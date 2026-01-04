@@ -1,8 +1,5 @@
 # app/routers/payments.py
-# Fixes:
-# - back_url must be absolute
-# - retry without auto_recurring.currency_id if MP rejects it
-# - enforce/auto-adjust minimum amount for preapproval (MP_MIN_AMOUNT, default 15)
+# --- Updated: fix absolute back_url, robust currency_id handling (retry), cookie-user safe, clearer MP errors ---
 
 import os
 import json
@@ -22,13 +19,17 @@ from ..models import User
 
 router = APIRouter()
 
+# ====== Config / Env ======
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
 MP_WEBHOOK_SECRET = (os.getenv("MP_WEBHOOK_SECRET") or "").strip()
-
 REQ_TIMEOUT = int(os.getenv("MP_REQ_TIMEOUT_SEC", "25"))
 
-# ✅ Mercado Pago min amount (varía por cuenta/país). Default: 15
-MP_MIN_AMOUNT = float(os.getenv("MP_MIN_AMOUNT") or 15.0)
+# Si tu cuenta MP NO soporta USD en suscripciones, poné esto en ENV:
+# MP_CURRENCY_ID=ARS   (o la moneda correcta para tu cuenta)
+MP_CURRENCY_ID = (os.getenv("MP_CURRENCY_ID") or "").strip().upper()
+
+# MercadoPago a veces impone mínimos por país/moneda
+MP_MIN_AMOUNT = float(os.getenv("MP_MIN_AMOUNT", "0") or 0)
 
 
 def _require_mp_token():
@@ -37,11 +38,7 @@ def _require_mp_token():
 
 
 def _mp_headers():
-    return {
-        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+    return {"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Content-Type": "application/json"}
 
 
 def _secure_compare(a: str, b: str) -> bool:
@@ -52,7 +49,11 @@ def _secure_compare(a: str, b: str) -> bool:
         return False
 
 
+# -------------------------
+# User helpers (dict or ORM)
+# -------------------------
 def _user_get(user, key: str, default=None):
+    """Soporta user como dict (cookie) o como ORM object."""
     if user is None:
         return default
     try:
@@ -64,12 +65,14 @@ def _user_get(user, key: str, default=None):
 
 
 def _user_id(user) -> Optional[int]:
+    """Intenta resolver id desde dict u objeto."""
     uid = _user_get(user, "id", None)
     if uid is not None:
         try:
             return int(str(uid))
         except Exception:
             return None
+
     sub = _user_get(user, "sub", None)
     try:
         return int(str(sub)) if sub is not None else None
@@ -82,33 +85,24 @@ def _user_email(user) -> Optional[str]:
     return str(email).strip() if email else None
 
 
-def _is_abs_url(u: str) -> bool:
-    u = (u or "").strip().lower()
-    return u.startswith("http://") or u.startswith("https://")
-
-
-def _absolute_url_from_request(request: Request, path: str) -> str:
-    base = str(request.base_url).rstrip("/")
-    path = (path or "").strip()
-    if not path.startswith("/"):
-        path = "/" + path
-    return base + path
-
-
-def _resolve_back_url(request: Request) -> str:
-    env_url = (os.getenv("MP_BACK_URL") or "").strip()
-    if env_url:
-        if _is_abs_url(env_url):
-            return env_url
-        return _absolute_url_from_request(request, env_url)
-    return _absolute_url_from_request(request, "/billing/return")
-
-
+# ====== Precio / moneda ======
 def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
-    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    """
+    Define el monto y moneda para el preapproval.
+    Variables soportadas:
+      - PLAN_CURRENCY (default USD)
+      - PRO_PRICE_USD (default 10.0) o PLAN_PRICE
+      - BIZ_PRICE_USD (default 25.0)
+      - BIZ_EXTRA_SEAT_USD (default 5.0)
+      - BIZ_INCLUDED_SEATS (default 25)
+      - MP_CURRENCY_ID (override fuerte)
+    """
+    currency_env = (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    currency = MP_CURRENCY_ID or currency_env or "USD"
+
     pro_price = float(os.getenv("PRO_PRICE_USD") or os.getenv("PLAN_PRICE") or 10.0)
-    biz_base = float(os.getenv("BIZ_PRICE_USD") or 99.0)  # ✅ tu default deseado
-    biz_extra = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 3.0)  # ✅ tu default deseado
+    biz_base = float(os.getenv("BIZ_PRICE_USD") or 25.0)
+    biz_extra = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 5.0)
     included = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
     plan_norm = (plan or "PRO").upper()
 
@@ -120,6 +114,22 @@ def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
         amount = pro_price
 
     return (float(amount), currency)
+
+
+def _abs_url(request: Request, path_or_url: str) -> str:
+    """
+    MercadoPago exige back_url ABSOLUTO.
+    Si viene url absoluto, lo deja.
+    Si viene path, lo convierte usando request.base_url.
+    """
+    s = (path_or_url or "").strip()
+    if not s:
+        return str(request.base_url).rstrip("/") + "/billing/return"
+    if s.startswith("http://") or s.startswith("https://"):
+        return s
+    if not s.startswith("/"):
+        s = "/" + s
+    return str(request.base_url).rstrip("/") + s
 
 
 # ====== Modelo local de suscripción ======
@@ -137,14 +147,14 @@ class Subscription(SubBase):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     preapproval_id = Column(String, unique=True, index=True)
-    status = Column(String, index=True)
-    plan = Column(String)
+    status = Column(String, index=True)  # authorized/paused/cancelled/pending
+    plan = Column(String)  # PRO / BIZ
     seats = Column(Integer, default=1)
     currency = Column(String, default="USD")
-    amount = Column(Integer)
+    amount = Column(Integer)  # monto por periodo (entero por simplicidad)
     next_payment_date = Column(String)
     external_reference = Column(String, index=True)
-    raw = Column(Text)
+    raw = Column(Text)  # JSON crudo de MP
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -155,42 +165,40 @@ except Exception:
     pass
 
 
+# ====== Helpers Mercado Pago ======
 def _preapproval_payload(
     *,
     payer_email: str,
     amount: float,
-    currency: Optional[str],
+    currency: str,
     reason: str,
     external_ref: str,
-    back_url: str,
-    include_currency: bool = True,
+    back_url_abs: str,
+    variant: str = "auto_recurring_currency",  # "auto_recurring_currency" | "root_currency"
 ):
-    auto_recurring = {
-        "frequency": 1,
-        "frequency_type": "months",
-        "transaction_amount": float(amount),
-    }
-    if include_currency and currency:
-        auto_recurring["currency_id"] = currency
-
-    return {
+    """
+    Variants por errores inconsistentes de MP:
+    - auto_recurring_currency: currency_id dentro de auto_recurring (lo "normal").
+    - root_currency: currency_id en raíz (fallback si MP dice "Invalid field -> auto_recurring.currency_id").
+    """
+    base = {
         "payer_email": payer_email,
-        "auto_recurring": auto_recurring,
+        "auto_recurring": {
+            "frequency": 1,
+            "frequency_type": "months",
+            "transaction_amount": float(amount),
+        },
         "reason": reason,
         "external_reference": external_ref,
-        "back_url": back_url,
+        "back_url": back_url_abs,
     }
 
+    if variant == "root_currency":
+        base["currency_id"] = currency
+    else:
+        base["auto_recurring"]["currency_id"] = currency
 
-def _mp_create_preapproval(payload: dict) -> dict:
-    url = "https://api.mercadopago.com/preapproval"
-    try:
-        r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"MP preapproval error {r.status_code}: {r.text}")
-    return r.json()
+    return base
 
 
 def _mp_get_preapproval(preapproval_id: str) -> dict:
@@ -215,6 +223,7 @@ def _mp_update_preapproval(preapproval_id: str, payload: dict) -> dict:
     return r.json()
 
 
+# ====== Persistencia local y activación de plan ======
 def _upsert_subscription(
     db: Session,
     *,
@@ -226,13 +235,17 @@ def _upsert_subscription(
 ):
     status_mp = (data.get("status") or "").lower()
     next_payment_date = (data.get("auto_recurring") or {}).get("next_payment_date") or ""
-    currency = (data.get("auto_recurring") or {}).get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    currency = (
+        (data.get("auto_recurring") or {}).get("currency_id")
+        or data.get("currency_id")
+        or (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    )
     amount = (data.get("auto_recurring") or {}).get("transaction_amount") or 0
     plan_final = (plan or data.get("reason") or "PRO").upper()
 
-    if "BIZ" in plan_final:
+    if "BIZ" in plan_final.upper():
         plan_final = "BIZ"
-    elif "PRO" in plan_final:
+    elif "PRO" in plan_final.upper():
         plan_final = "PRO"
     else:
         plan_final = (plan or "PRO").upper()
@@ -321,16 +334,78 @@ def _sync_preapproval(db: Session, *, preapproval_id: str) -> dict:
     }
 
 
-def _normalize_amount_for_mp(amount: float) -> float:
-    try:
-        a = float(amount)
-    except Exception:
-        a = 0.0
-    if a < MP_MIN_AMOUNT:
-        return float(MP_MIN_AMOUNT)
-    return a
+def _mp_post_preapproval_with_retries(*, headers: dict, payload: dict) -> dict:
+    """
+    MP te viene devolviendo:
+      - "Invalid value for back_url, must be a valid URL"
+      - "Invalid field -> auto_recurring.currency_id"
+      - "auto_recurring.currency_id is required"
+    Entonces hacemos retry con payload alternativo SOLO si hace falta.
+    """
+    url = "https://api.mercadopago.com/preapproval"
+
+    def _do(p: dict):
+        try:
+            r = requests.post(url, headers=headers, data=json.dumps(p), timeout=REQ_TIMEOUT)
+        except requests.RequestException as e:
+            raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
+        if r.status_code >= 400:
+            return None, r.status_code, r.text
+        return r.json(), 200, ""
+
+    data, code, text = _do(payload)
+    if data:
+        return data
+
+    msg = (text or "")
+    # 1) back_url inválida -> reintentar sin back_url
+    if "Invalid value for back_url" in msg:
+        p2 = dict(payload)
+        p2.pop("back_url", None)
+        data2, code2, text2 = _do(p2)
+        if data2:
+            return data2
+        msg = text2 or msg
+
+    # 2) currency_id inválida en auto_recurring -> probar en raíz
+    if "Invalid field -> auto_recurring.currency_id" in msg:
+        p3 = dict(payload)
+        ar = dict(p3.get("auto_recurring") or {})
+        cur = ar.pop("currency_id", None)
+        p3["auto_recurring"] = ar
+        if cur:
+            p3["currency_id"] = cur
+        data3, code3, text3 = _do(p3)
+        if data3:
+            return data3
+        msg = text3 or msg
+
+    # 3) currency_id requerida -> asegurarnos que esté (auto_recurring)
+    if "auto_recurring.currency_id is required" in msg:
+        p4 = dict(payload)
+        ar = dict(p4.get("auto_recurring") or {})
+        if "currency_id" not in ar:
+            cur = p4.get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper()
+            ar["currency_id"] = cur
+            p4["auto_recurring"] = ar
+        data4, code4, text4 = _do(p4)
+        if data4:
+            return data4
+        msg = text4 or msg
+
+    # 4) mínimo de pago
+    if "Cannot pay an amount lower than" in msg:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Mercado Pago rechazó el monto mínimo. Respuesta MP: {msg}. "
+                   f"Solución: subir el precio del plan en ENV (PRO_PRICE_USD/PLAN_PRICE o BIZ_PRICE_USD) "
+                   f"o usar la moneda soportada por tu cuenta (MP_CURRENCY_ID).",
+        )
+
+    raise HTTPException(status_code=502, detail=f"MP preapproval error {code}: {text}")
 
 
+# ====== Endpoints ======
 @router.get("/payments/subscribe", response_class=RedirectResponse)
 def payments_subscribe(
     request: Request,
@@ -353,69 +428,30 @@ def payments_subscribe(
         raise HTTPException(status_code=400, detail="Plan inválido: usar PRO o BIZ")
 
     amount, currency = _amount_currency(plan_norm, seats)
-    # ✅ ajustar por mínimo de MP (para evitar "Cannot pay an amount lower than ...")
-    amount = _normalize_amount_for_mp(amount)
+
+    # Si el usuario configuró un mínimo local (opcional)
+    if MP_MIN_AMOUNT and amount < MP_MIN_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El monto calculado ({amount} {currency}) es menor al mínimo configurado (MP_MIN_AMOUNT={MP_MIN_AMOUNT}).",
+        )
 
     external_ref = f"sub-{plan_norm}-{uid}-{uuid.uuid4().hex[:8]}"
     reason = f"AlertTrail {plan_norm} ({currency} {amount})"
-    back_url = _resolve_back_url(request)
 
-    # 1) Con currency_id
+    back_url_abs = _abs_url(request, os.getenv("MP_BACK_URL") or "/billing/return")
+
     payload = _preapproval_payload(
         payer_email=email,
         amount=amount,
         currency=currency,
         reason=reason,
         external_ref=external_ref,
-        back_url=back_url,
-        include_currency=True,
+        back_url_abs=back_url_abs,
+        variant="auto_recurring_currency",
     )
 
-    try:
-        data = _mp_create_preapproval(payload)
-    except HTTPException as he:
-        msg = str(he.detail or "")
-
-        # 2) Retry sin currency_id si MP lo rechaza
-        if "auto_recurring.currency_id" in msg or "Invalid field -> auto_recurring.currency_id" in msg:
-            payload2 = _preapproval_payload(
-                payer_email=email,
-                amount=amount,
-                currency=None,
-                reason=reason,
-                external_ref=external_ref,
-                back_url=back_url,
-                include_currency=False,
-            )
-            data = _mp_create_preapproval(payload2)
-        # 3) Si MP se queja por mínimo, subir al mínimo y reintentar
-        elif "Cannot pay an amount lower than" in msg:
-            amount2 = _normalize_amount_for_mp(MP_MIN_AMOUNT)
-            payload3 = _preapproval_payload(
-                payer_email=email,
-                amount=amount2,
-                currency=currency,
-                reason=f"AlertTrail {plan_norm} ({currency} {amount2})",
-                external_ref=external_ref,
-                back_url=back_url,
-                include_currency=True,
-            )
-            try:
-                data = _mp_create_preapproval(payload3)
-            except HTTPException:
-                # último intento sin currency
-                payload4 = _preapproval_payload(
-                    payer_email=email,
-                    amount=amount2,
-                    currency=None,
-                    reason=f"AlertTrail {plan_norm} ({currency} {amount2})",
-                    external_ref=external_ref,
-                    back_url=back_url,
-                    include_currency=False,
-                )
-                data = _mp_create_preapproval(payload4)
-        else:
-            raise
+    data = _mp_post_preapproval_with_retries(headers=_mp_headers(), payload=payload)
 
     preapproval_id = data.get("id")
     init_point = data.get("init_point") or data.get("sandbox_init_point")
@@ -442,7 +478,8 @@ def payments_status(
     user=Depends(get_current_user_cookie),
 ):
     _require_mp_token()
-    return _sync_preapproval(db, preapproval_id=preapproval_id)
+    result = _sync_preapproval(db, preapproval_id=preapproval_id)
+    return result
 
 
 @router.post("/payments/cancel", response_class=JSONResponse)
@@ -452,7 +489,8 @@ def payments_cancel(
     user=Depends(get_current_user_cookie),
 ):
     _require_mp_token()
-    detail = _mp_update_preapproval(preapproval_id, {"status": "paused"})
+    payload = {"status": "paused"}
+    detail = _mp_update_preapproval(preapproval_id, payload)
     _upsert_subscription(db, user_id=_user_id(user), preapproval_id=preapproval_id, data=detail)
     return {"ok": True, "status": (detail.get("status") or "").lower()}
 
@@ -529,4 +567,5 @@ def payments_sync_latest(db: Session = Depends(get_db), user=Depends(get_current
     if not sub:
         return {"ok": False, "reason": "sin suscripciones"}
 
-    return _sync_preapproval(db, preapproval_id=sub.preapproval_id)
+    res = _sync_preapproval(db, preapproval_id=sub.preapproval_id)
+    return res
