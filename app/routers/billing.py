@@ -99,6 +99,15 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
 
     plan_norm = "BIZ" if plan in ("BIZ", "BUSINESS", "EMPRESA", "EMPRESAS") else "PRO"
 
+    # ✅ Si existe MP_ACCESS_TOKEN, mostramos botón que dispara /payments/subscribe (que redirige a MercadoPago)
+    mp_access_token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
+    mp_enabled = bool(mp_access_token)
+
+    init_point = None
+    if mp_enabled:
+        # Este endpoint es el que crea el preapproval y redirige a MP
+        init_point = f"/payments/subscribe?plan={plan_norm}"
+
     return templates.TemplateResponse(
         "billing_checkout.html",
         {
@@ -108,8 +117,12 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
             "user": user,
             "current_user": user,
             "plan": plan_norm,
+            "mp_enabled": mp_enabled,
+            "init_point": init_point,
+            "error": None,
         },
     )
+
 
 
 @router.get("/payments", response_class=HTMLResponse, include_in_schema=False)
