@@ -99,22 +99,27 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
 
     plan_norm = "BIZ" if plan in ("BIZ", "BUSINESS", "EMPRESA", "EMPRESAS") else "PRO"
 
-    # ✅ Detalles del plan (lo que vos pediste)
-    currency = "USD"
-    currency_symbol = "$"
+    # ✅ Detalles del plan (desde ENV para que coincida con el backend)
+    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    currency_symbol = "$" if currency == "USD" else currency
+
+    # Defaults iguales a lo que configuraste
+    pro_price = float(os.getenv("PRO_PRICE_USD") or 15.0)
+    biz_price = float(os.getenv("BIZ_PRICE_USD") or 99.0)
+    biz_included = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
+    biz_extra = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 3.0)
 
     if plan_norm == "BIZ":
-        price_month = 99
-        included_seats = 25
-        extra_seat_price = 3
-        # mandamos seats=25 por defecto (lo que incluye el plan)
+        price_month = biz_price
+        included_seats = biz_included
+        extra_seat_price = biz_extra
         init_point = f"/payments/subscribe?plan=BIZ&seats={included_seats}"
     else:
-        # PRO (podés ajustar por ENV si querés)
-        price_month = 9.99
+        price_month = pro_price
         included_seats = 1
         extra_seat_price = 0
         init_point = "/payments/subscribe?plan=PRO&seats=1"
+
 
     mp_access_token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
     mp_enabled = bool(mp_access_token)
