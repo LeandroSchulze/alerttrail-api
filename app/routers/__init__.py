@@ -14,8 +14,10 @@ __all__ = [
     "admin",
     "admin_metrics",
     "alerts",
-    "alerts_pro",
     "billing",
+    "darkweb",
+    "i18n",
+    "legal",
     "mail",
     "payments",
     "profile",
@@ -23,6 +25,7 @@ __all__ = [
     "reports",
     "rules",
     "stats",
+    "webhooks",
 ]
 
 def __getattr__(name):
