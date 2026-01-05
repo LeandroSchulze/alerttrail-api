@@ -40,9 +40,8 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
 
     lang = get_lang(request)
 
-    role = str(user.get("role", "") or "").lower()
-    current_plan = str(user.get("plan", "FREE") or "FREE").upper()
-
+    current_plan = (user.get("plan") or "FREE").upper()
+    role = (user.get("role") or "").lower()
     is_admin = role == "admin"
     is_pro = bool(user.get("is_pro", False)) or current_plan == "PRO" or is_admin
 
@@ -59,10 +58,8 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
     # Año con descuento (por ejemplo 20% OFF)
     price_year = _env_float("PRICE_PRO_YEAR", round(price_month * 12 * (1 - (disc_pct / 100.0)), 2))
 
-    # BIZ
-    biz_price = _env_float("PRICE_BIZ_MONTH", 99.0)
-    biz_included = _env_int("BIZ_INCLUDED_SEATS", 25)
-    biz_extra = _env_float("BIZ_EXTRA_SEAT_USD", 3.0)
+    biz_included = _env_int("BIZ_INCLUDED", 10)
+    biz_extra = _env_float("BIZ_EXTRA_PRICE", 2.00)
 
     return templates.TemplateResponse(
         "billing_subscriptions.html",
@@ -70,17 +67,19 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
             "request": request,
             "lang": lang,
             "t": t,
-            "user": user,
             "current_user": user,
-            "plan": plan,
+            "user": user,
+            "current_plan": current_plan,
             "is_pro": is_pro,
             "is_admin": is_admin,
+            "had_trial": had_trial,
             "trial_available": trial_available,
+            # template vars:
+            "plan": plan,
             "currency": currency,
             "price_month": price_month,
             "price_year": price_year,
             "disc_pct": disc_pct,
-            "biz_price": biz_price,
             "biz_included": biz_included,
             "biz_extra": biz_extra,
         },
@@ -109,12 +108,14 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
         included_seats = 25
         extra_seat_price = 3
         # mandamos seats=25 por defecto (lo que incluye el plan)
+        # Pago único (checkout/preferences). Renovación/recordatorios se agregan después.
         init_point = f"/payments/pay?plan=BIZ&seats={included_seats}"
     else:
         # PRO (podés ajustar por ENV si querés)
         price_month = 9.99
         included_seats = 1
         extra_seat_price = 0
+        # Pago único (checkout/preferences). Renovación/recordatorios se agregan después.
         init_point = "/payments/pay?plan=PRO&seats=1"
 
     mp_access_token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
