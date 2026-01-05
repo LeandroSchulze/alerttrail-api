@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response, Depends  # ✅ FIX: agregué Dep
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi import HTTPException  # si ya lo tenés importado, no lo dupliques
 
 from app.ui import templates
 from app.i18n import get_lang_from_request
@@ -19,7 +20,7 @@ from app.database import get_db
 from app.models import User
 
 # Security
-from app.security import get_current_user_cookie
+from app.security import get_current_user_cookie_optional
 
 # Routers
 from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing, payments, webhooks
@@ -133,7 +134,8 @@ def root():
 # Dashboard
 # -------------------------
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-def dashboard(request: Request, user=Depends(get_current_user_cookie)):
+def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
+    # Si no hay user, redirige a login (como estaba antes)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
