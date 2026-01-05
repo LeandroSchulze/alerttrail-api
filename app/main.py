@@ -134,12 +134,42 @@ def root():
 # ✅ Alias retrocompatible para idioma
 # -------------------------
 @app.get("/set-lang", include_in_schema=False)
-def set_lang_alias(lang: str = Query("es"), next: str = Query("/dashboard")):
+def set_lang(lang: str = Query("es"), next: str = Query("/dashboard")):
     """
-    Alias retrocompatible para el cambio de idioma.
-    Antes muchos templates apuntan a /set-lang. La implementación real vive en /i18n/set-lang.
+    FIX definitivo:
+    - No depende de /i18n/set-lang.
+    - Setea idioma en cookie + session.
+    - Redirige a `next`.
     """
-    return RedirectResponse(url=f"/i18n/set-lang?lang={lang}&next={next}", status_code=302)
+    lang = (lang or "es").lower().strip()
+    if lang not in ("es", "en"):
+        lang = "es"
+
+    resp = RedirectResponse(url=next or "/dashboard", status_code=302)
+
+    # Cookie (muchas implementaciones de i18n leen esto)
+    resp.set_cookie(
+        key="lang",
+        value=lang,
+        max_age=60 * 60 * 24 * 365,  # 1 año
+        path="/",
+        samesite="lax",
+    )
+
+    # Session (por si get_lang_from_request usa request.session)
+    try:
+        # SessionMiddleware ya está agregado arriba
+        resp.set_cookie(
+            key="session_lang",
+            value=lang,
+            max_age=60 * 60 * 24 * 365,
+            path="/",
+            samesite="lax",
+        )
+    except Exception:
+        pass
+
+    return resp
 
 
 # -------------------------
