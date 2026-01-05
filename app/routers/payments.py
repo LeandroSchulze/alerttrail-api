@@ -1,7 +1,7 @@
 # app/routers/payments.py
 # --- Updated: webhook signature (optional), robust MP calls, idempotent sync/activate ---
 # --- Fixes: absolute back_url, retry strategy for currency_id placement, user dict/ORM safe, minimum USD clamp ---
-# --- NEW FIX: A -> B -> A fallback when MP requires auto_recurring.currency_id ---
+# --- NEW FIX: MP_CURRENCY_MODE to force currency_id placement (auto/root/auto_then_root) ---
 
 import os
 import json
@@ -168,7 +168,16 @@ def _absolute_url(request: Request, path_or_url: str) -> str:
 
 
 # ====== Helpers Mercado Pago ======
-def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reason: str, external_ref: str, back_url: str, include_currency_in_auto: bool):
+def _preapproval_payload(
+    *,
+    payer_email: str,
+    amount: float,
+    currency: str,
+    reason: str,
+    external_ref: str,
+    back_url: str,
+    include_currency_in_auto: bool,
+):
     """
     Payload para /preapproval (suscripción).
     OJO: en algunas cuentas/variantes, MP rechaza auto_recurring.currency_id.
@@ -230,7 +239,9 @@ def _upsert_subscription(
 ):
     status_mp = (data.get("status") or "").lower()
     next_payment_date = (data.get("auto_recurring") or {}).get("next_payment_date") or ""
-    currency = (data.get("auto_recurring") or {}).get("currency_id") or (data.get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper())
+    currency = (data.get("auto_recurring") or {}).get("currency_id") or (
+        data.get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    )
     amount = (data.get("auto_recurring") or {}).get("transaction_amount") or 0
     plan_final = (plan or data.get("reason") or "PRO").upper()
 
@@ -356,8 +367,19 @@ def payments_subscribe(
 
     url = "https://api.mercadopago.com/preapproval"
 
-    # 1) Intento A: currency_id dentro de auto_recurring (lo “clásico”)
-    payload_a = _preapproval_payload(
+    # ✅ NUEVO: estrategia configurable para currency_id
+    # - root: currency_id al nivel root
+    # - auto: currency_id dentro de auto_recurring
+    # - auto_then_root (default): intenta auto y si falla por invalid field, prueba root
+    mp_currency_mode = (os.getenv("MP_CURRENCY_MODE") or "auto_then_root").strip().lower()
+
+    def _post(payload: dict):
+        try:
+            return requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
+        except requests.RequestException as e:
+            raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
+
+    payload_auto = _preapproval_payload(
         payer_email=email,
         amount=amount,
         currency=currency,
@@ -367,48 +389,27 @@ def payments_subscribe(
         include_currency_in_auto=True,
     )
 
-    try:
-        r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload_a), timeout=REQ_TIMEOUT)
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
+    payload_root = _preapproval_payload(
+        payer_email=email,
+        amount=amount,
+        currency=currency,
+        reason=reason,
+        external_ref=external_ref,
+        back_url=back_url,
+        include_currency_in_auto=False,  # currency_id a nivel root
+    )
 
-    txt = (r.text or "")
-
-    # Si falla con invalid field auto_recurring.currency_id, reintentamos con estrategia B
-    if r.status_code >= 400 and ("auto_recurring.currency_id" in txt) and ("Invalid field" in txt):
-        payload_b = _preapproval_payload(
-            payer_email=email,
-            amount=amount,
-            currency=currency,
-            reason=reason,
-            external_ref=external_ref,
-            back_url=back_url,
-            include_currency_in_auto=False,  # currency_id a nivel root
-        )
-        try:
-            r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload_b), timeout=REQ_TIMEOUT)
-        except requests.RequestException as e:
-            raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
-
+    # Ejecutamos según modo
+    if mp_currency_mode == "root":
+        r = _post(payload_root)
+    elif mp_currency_mode == "auto":
+        r = _post(payload_auto)
+    else:
+        # default: auto_then_root
+        r = _post(payload_auto)
         txt = (r.text or "")
-
-        # ✅ NUEVO: algunas cuentas requieren auto_recurring.currency_id.
-        # Si el intento B falla con "required", volvemos a intentar A.
-        if r.status_code >= 400 and ("auto_recurring.currency_id" in txt) and ("required" in txt):
-            payload_a2 = _preapproval_payload(
-                payer_email=email,
-                amount=amount,
-                currency=currency,
-                reason=reason,
-                external_ref=external_ref,
-                back_url=back_url,
-                include_currency_in_auto=True,
-            )
-            try:
-                r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload_a2), timeout=REQ_TIMEOUT)
-            except requests.RequestException as e:
-                raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
-            txt = (r.text or "")
+        if r.status_code >= 400 and ("auto_recurring.currency_id" in txt) and ("Invalid field" in txt):
+            r = _post(payload_root)
 
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"MP preapproval error {r.status_code}: {r.text}")
