@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from importlib import import_module
 
-from fastapi import FastAPI, Request, Response, Depends  # ✅ FIX: agregué Depends
+from fastapi import FastAPI, Request, Response, Depends, Query  # ✅ incluye Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -128,6 +128,18 @@ def health():
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse(url="/dashboard", status_code=302)
+
+
+# -------------------------
+# ✅ Alias retrocompatible para idioma
+# -------------------------
+@app.get("/set-lang", include_in_schema=False)
+def set_lang_alias(lang: str = Query("es"), next: str = Query("/dashboard")):
+    """
+    Alias retrocompatible para el cambio de idioma.
+    Antes muchos templates apuntan a /set-lang. La implementación real vive en /i18n/set-lang.
+    """
+    return RedirectResponse(url=f"/i18n/set-lang?lang={lang}&next={next}", status_code=302)
 
 
 # -------------------------
