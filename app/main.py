@@ -4,10 +4,9 @@ from __future__ import annotations
 import os
 import logging
 from pathlib import Path
-from typing import Optional
 from importlib import import_module
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Depends  # ✅ FIX: agregué Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -87,10 +86,10 @@ app.include_router(analysis.router)
 app.include_router(mail.router)
 app.include_router(admin.router)
 
-# Billing (this is the one that provides /billing/subscriptions and /billing/payments)
+# Billing
 app.include_router(billing.router)
 
-# ✅ Payments (MercadoPago subscription endpoints: /payments/subscribe, etc.)
+# Payments
 app.include_router(payments.router)
 
 # ✅ Webhooks (MercadoPago notifications)
@@ -104,12 +103,10 @@ app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
 app.include_router(i18n.router)
 
-# cron/task endpoints (Render cron can hit /tasks/mail/poll)
+# cron/task endpoints
 app.include_router(tasks_mail.router)
 
-# -------------------------
-# Optional UI routers (templates)
-# -------------------------
+# Optional UI routers
 _try_include_router("app.routers.billing_ui")
 _try_include_router("app.routers.payments_ui")
 _try_include_router("app.routers.stats_ui")
@@ -133,17 +130,15 @@ def root():
 
 
 # -------------------------
-# Dashboard (simple)
+# Dashboard
 # -------------------------
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request, user=Depends(get_current_user_cookie)):
-    # Si no hay user, redirige a login
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
     lang = get_lang_from_request(request)
 
-    # Render simple
     return templates.TemplateResponse(
         "dashboard.html",
         {
