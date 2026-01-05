@@ -1,6 +1,7 @@
 # app/routers/payments.py
 # --- Updated: webhook signature (optional), robust MP calls, idempotent sync/activate ---
 # --- Fixes: absolute back_url, retry strategy for currency_id placement, user dict/ORM safe, minimum USD clamp ---
+# --- NEW FIX: A -> B -> A fallback when MP requires auto_recurring.currency_id ---
 
 import os
 import json
@@ -371,8 +372,10 @@ def payments_subscribe(
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
 
+    txt = (r.text or "")
+
     # Si falla con invalid field auto_recurring.currency_id, reintentamos con estrategia B
-    if r.status_code >= 400 and "auto_recurring.currency_id" in (r.text or "") and "Invalid field" in (r.text or ""):
+    if r.status_code >= 400 and ("auto_recurring.currency_id" in txt) and ("Invalid field" in txt):
         payload_b = _preapproval_payload(
             payer_email=email,
             amount=amount,
@@ -386,6 +389,26 @@ def payments_subscribe(
             r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload_b), timeout=REQ_TIMEOUT)
         except requests.RequestException as e:
             raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
+
+        txt = (r.text or "")
+
+        # ✅ NUEVO: algunas cuentas requieren auto_recurring.currency_id.
+        # Si el intento B falla con "required", volvemos a intentar A.
+        if r.status_code >= 400 and ("auto_recurring.currency_id" in txt) and ("required" in txt):
+            payload_a2 = _preapproval_payload(
+                payer_email=email,
+                amount=amount,
+                currency=currency,
+                reason=reason,
+                external_ref=external_ref,
+                back_url=back_url,
+                include_currency_in_auto=True,
+            )
+            try:
+                r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload_a2), timeout=REQ_TIMEOUT)
+            except requests.RequestException as e:
+                raise HTTPException(status_code=502, detail=f"MP preapproval error: {e}")
+            txt = (r.text or "")
 
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"MP preapproval error {r.status_code}: {r.text}")
