@@ -80,20 +80,35 @@ def _user_email(user) -> Optional[str]:
 # ====== Precio / moneda ======
 def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
     """
-    Define el monto y moneda para el preapproval.
-    Variables soportadas:
+    Define el monto y moneda para el pago/preference.
+
+    ENV soportadas (compat):
       - PLAN_CURRENCY (default USD)
-      - PRO_PRICE_USD (default 10.0)  (si USD y < MP_MIN_AMOUNT_USD, se clampa)
-      - BIZ_PRICE_USD (default 25.0)
+
+      PRO:
+      - PRO_PRICE_USD o PLAN_PRICE (default 10.0) (si USD y < MP_MIN_AMOUNT_USD, clampa)
+
+      BIZ/EMPRESA:
+      - BIZ_PRICE_MONTH_USD (preferida) o BIZ_PRICE_USD (compat) (default 25.0)
       - BIZ_EXTRA_SEAT_USD (default 5.0)
       - BIZ_INCLUDED_SEATS (default 25)
     """
-    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper().strip()
+
+    # PRO
     pro_price = float(os.getenv("PRO_PRICE_USD") or os.getenv("PLAN_PRICE") or 10.0)
-    biz_base = float(os.getenv("BIZ_PRICE_USD") or 25.0)
+
+    # BIZ (prioridad: BIZ_PRICE_MONTH_USD -> BIZ_PRICE_USD -> default)
+    biz_base = float(
+        os.getenv("BIZ_PRICE_MONTH_USD")
+        or os.getenv("BIZ_PRICE_USD")
+        or 25.0
+    )
+
     biz_extra = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 5.0)
     included = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
-    plan_norm = (plan or "PRO").upper()
+
+    plan_norm = (plan or "PRO").upper().strip()
 
     if plan_norm == "BIZ":
         total_seats = max(int(seats or included), 1)
