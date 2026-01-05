@@ -166,6 +166,58 @@ def _absolute_url(request: Request, path_or_url: str) -> str:
     return base + v
 
 
+# ====== Pago único (checkout/preferences) ======
+def _preference_payload(
+    *,
+    request: Request,
+    payer_email: str,
+    amount: float,
+    currency: str,
+    title: str,
+    description: str,
+    external_reference: str,
+    back_url: str,
+):
+    """Payload para Mercado Pago Checkout (pago único)."""
+    # notification_url debe ser absoluta
+    notification_url = _absolute_url(request, "/webhooks/mercadopago")
+
+    # back_urls debe ser absoluta
+    success = back_url
+    failure = back_url
+    pending = back_url
+
+    return {
+        "items": [
+            {
+                "title": title,
+                "description": description,
+                "quantity": 1,
+                "currency_id": currency,
+                "unit_price": float(amount),
+            }
+        ],
+        "payer": {"email": payer_email},
+        "external_reference": external_reference,
+        "back_urls": {"success": success, "failure": failure, "pending": pending},
+        "auto_return": "approved",
+        "notification_url": notification_url,
+        # evita que quede un pago eterno colgado si el usuario abandona
+        "expires": True,
+    }
+
+
+def _mp_create_preference(payload: dict) -> dict:
+    url = "https://api.mercadopago.com/checkout/preferences"
+    try:
+        r = requests.post(url, headers=_mp_headers(), data=json.dumps(payload), timeout=REQ_TIMEOUT)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"MP preference error: {e}")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"MP preference error {r.status_code}: {r.text}")
+    return r.json()
+
+
 # ====== Helpers Mercado Pago ======
 def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reason: str, external_ref: str, back_url: str, include_currency_in_auto: bool):
     """
@@ -325,6 +377,63 @@ def _sync_preapproval(db: Session, *, preapproval_id: str) -> dict:
 
 
 # ====== Endpoints ======
+@router.get("/payments/pay", response_class=RedirectResponse)
+def payments_pay(
+    request: Request,
+    plan: str = Query("PRO", description="Plan a pagar: PRO o BIZ"),
+    seats: int = Query(1, ge=1),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_cookie),
+):
+    """
+    Pago único (checkout/preferences).
+    - Crea una preference y redirige a Mercado Pago.
+    - El webhook (/webhooks/mercadopago) activa el plan cuando el pago está approved.
+    """
+    _require_mp_token()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Necesitás iniciar sesión")
+
+    uid = _user_id(user)
+    email = _user_email(user)
+    if not uid or not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Necesitás iniciar sesión")
+
+    plan_norm = (plan or "PRO").upper().strip()
+    if plan_norm not in {"PRO", "BIZ"}:
+        plan_norm = "PRO"
+
+    amount, currency = _amount_currency(plan_norm, seats)
+
+    # back_url absoluta (pantalla de "volvés a AlertTrail")
+    back_url_env = os.getenv("MP_BACK_URL") or "/billing/return"
+    back_url = _absolute_url(request, back_url_env)
+
+    # Importante: webhooks.py soporta "user:<id>:..." (con ':')
+    external_ref = f"user:{uid}:plan:{plan_norm}:seats:{max(int(seats or 1), 1)}:{uuid.uuid4().hex[:8]}"
+
+    title = f"AlertTrail {plan_norm}"
+    description = f"Plan {plan_norm} - 1 mes"
+
+    payload = _preference_payload(
+        request=request,
+        payer_email=email,
+        amount=amount,
+        currency=currency,
+        title=title,
+        description=description,
+        external_reference=external_ref,
+        back_url=back_url,
+    )
+
+    data = _mp_create_preference(payload)
+    init_point = data.get("init_point") or data.get("sandbox_init_point")
+    if not init_point:
+        raise HTTPException(status_code=502, detail="MP no devolvió init_point")
+
+    return RedirectResponse(init_point)
+
+
 @router.get("/payments/subscribe", response_class=RedirectResponse)
 def payments_subscribe(
     request: Request,
@@ -407,82 +516,6 @@ def payments_subscribe(
     )
 
     return RedirectResponse(init_point or "/billing")
-
-
-@router.get("/payments/pay", response_class=RedirectResponse)
-def payments_pay(
-    request: Request,
-    plan: str = Query(..., description="Plan a pagar: PRO o BIZ"),
-    seats: int = Query(1, ge=1),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_cookie),
-):
-    """
-    Checkout por PAGO ÚNICO (Mercado Pago Preferences).
-    Esto evita Preapprovals/Suscripciones (más frágiles) y permite renovar manualmente.
-    El webhook recomendado es /webhooks/mercadopago (router webhooks.py).
-    """
-    _require_mp_token()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Necesitás iniciar sesión")
-
-    uid = _user_id(user)
-    email = _user_email(user)
-    if not uid or not email:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Necesitás iniciar sesión")
-
-    plan_norm = (plan or "").upper().strip()
-    if plan_norm not in {"PRO", "BIZ"}:
-        raise HTTPException(status_code=400, detail="Plan inválido: usar PRO o BIZ")
-
-    amount, currency = _amount_currency(plan_norm, seats)
-
-    # Retornos (absolutos)
-    success = _absolute_url(request, os.getenv("MP_SUCCESS_URL") or "/billing/return")
-    failure = _absolute_url(request, os.getenv("MP_FAILURE_URL") or "/billing/return")
-    pending = _absolute_url(request, os.getenv("MP_PENDING_URL") or "/billing/return")
-
-    # Webhook (si existe webhooks.py y está incluido, éste es el endpoint correcto)
-    notification_url = _absolute_url(request, os.getenv("MP_NOTIFICATION_URL") or "/webhooks/mercadopago")
-
-    ext_seats = (seats if plan_norm == "BIZ" else 1)
-    external_ref = f"user:{uid}|plan:{plan_norm}|seats:{ext_seats}|period:monthly|ref:{uuid.uuid4().hex[:10]}"
-
-    pref_payload = {
-        "items": [
-            {
-                "title": f"AlertTrail {plan_norm} - 1 mes",
-                "quantity": 1,
-                "currency_id": currency,
-                "unit_price": float(amount),
-            }
-        ],
-        "payer": {"email": email},
-        "external_reference": external_ref,
-        "back_urls": {"success": success, "failure": failure, "pending": pending},
-        "auto_return": "approved",
-        "notification_url": notification_url,
-    }
-
-    try:
-        r = requests.post(
-            "https://api.mercadopago.com/checkout/preferences",
-            headers=_mp_headers(),
-            data=json.dumps(pref_payload),
-            timeout=REQ_TIMEOUT,
-        )
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"MP preference error: {e}")
-
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"MP preference error {r.status_code}: {r.text}")
-
-    data = r.json()
-    init_point = data.get("init_point") or data.get("sandbox_init_point")
-    if not init_point:
-        raise HTTPException(status_code=502, detail="MP no devolvió init_point")
-
-    return RedirectResponse(init_point)
 
 
 @router.get("/payments/status", response_class=JSONResponse)
