@@ -40,8 +40,9 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
 
     lang = get_lang(request)
 
-    current_plan = (user.get("plan") or "FREE").upper()
-    role = (user.get("role") or "").lower()
+    role = str(user.get("role", "") or "").lower()
+    current_plan = str(user.get("plan", "FREE") or "FREE").upper()
+
     is_admin = role == "admin"
     is_pro = bool(user.get("is_pro", False)) or current_plan == "PRO" or is_admin
 
@@ -58,8 +59,10 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
     # Año con descuento (por ejemplo 20% OFF)
     price_year = _env_float("PRICE_PRO_YEAR", round(price_month * 12 * (1 - (disc_pct / 100.0)), 2))
 
-    biz_included = _env_int("BIZ_INCLUDED", 10)
-    biz_extra = _env_float("BIZ_EXTRA_PRICE", 2.00)
+    # BIZ
+    biz_price = _env_float("PRICE_BIZ_MONTH", 99.0)
+    biz_included = _env_int("BIZ_INCLUDED_SEATS", 25)
+    biz_extra = _env_float("BIZ_EXTRA_SEAT_USD", 3.0)
 
     return templates.TemplateResponse(
         "billing_subscriptions.html",
@@ -67,19 +70,17 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
             "request": request,
             "lang": lang,
             "t": t,
-            "current_user": user,
             "user": user,
-            "current_plan": current_plan,
+            "current_user": user,
+            "plan": plan,
             "is_pro": is_pro,
             "is_admin": is_admin,
-            "had_trial": had_trial,
             "trial_available": trial_available,
-            # template vars:
-            "plan": plan,
             "currency": currency,
             "price_month": price_month,
             "price_year": price_year,
             "disc_pct": disc_pct,
+            "biz_price": biz_price,
             "biz_included": biz_included,
             "biz_extra": biz_extra,
         },
@@ -99,27 +100,22 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
 
     plan_norm = "BIZ" if plan in ("BIZ", "BUSINESS", "EMPRESA", "EMPRESAS") else "PRO"
 
-    # ✅ Detalles del plan (desde ENV para que coincida con el backend)
-    currency = (os.getenv("PLAN_CURRENCY") or "USD").upper()
-    currency_symbol = "$" if currency == "USD" else currency
-
-    # Defaults iguales a lo que configuraste
-    pro_price = float(os.getenv("PRO_PRICE_USD") or 15.0)
-    biz_price = float(os.getenv("BIZ_PRICE_USD") or 99.0)
-    biz_included = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
-    biz_extra = float(os.getenv("BIZ_EXTRA_SEAT_USD") or 3.0)
+    # ✅ Detalles del plan (lo que vos pediste)
+    currency = "USD"
+    currency_symbol = "$"
 
     if plan_norm == "BIZ":
-        price_month = biz_price
-        included_seats = biz_included
-        extra_seat_price = biz_extra
-        init_point = f"/payments/subscribe?plan=BIZ&seats={included_seats}"
+        price_month = 99
+        included_seats = 25
+        extra_seat_price = 3
+        # mandamos seats=25 por defecto (lo que incluye el plan)
+        init_point = f"/payments/pay?plan=BIZ&seats={included_seats}"
     else:
-        price_month = pro_price
+        # PRO (podés ajustar por ENV si querés)
+        price_month = 9.99
         included_seats = 1
         extra_seat_price = 0
-        init_point = "/payments/subscribe?plan=PRO&seats=1"
-
+        init_point = "/payments/pay?plan=PRO&seats=1"
 
     mp_access_token = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
     mp_enabled = bool(mp_access_token)
