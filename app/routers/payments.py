@@ -1,6 +1,7 @@
 # app/routers/payments.py
 # --- Updated: webhook signature (optional), robust MP calls, idempotent sync/activate ---
 # --- Fixes: absolute back_url, retry strategy for currency_id placement, user dict/ORM safe, minimum USD clamp ---
+# --- FIX: BIZ env compatibility (BIZ_PRICE_MONTH_USD) so Empresa uses USD 99 correctly ---
 
 import os
 import json
@@ -29,12 +30,15 @@ REQ_TIMEOUT = int(os.getenv("MP_REQ_TIMEOUT_SEC", "25"))
 # Mercado Pago a veces exige mínimo (ej: USD 15)
 MP_MIN_AMOUNT_USD = float(os.getenv("MP_MIN_AMOUNT_USD", "15"))
 
+
 def _require_mp_token():
     if not MP_ACCESS_TOKEN:
         raise HTTPException(status_code=500, detail="MP_ACCESS_TOKEN no configurado en el entorno")
 
+
 def _mp_headers():
     return {"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Content-Type": "application/json"}
+
 
 def _secure_compare(a: str, b: str) -> bool:
     try:
@@ -58,6 +62,7 @@ def _user_get(user, key: str, default=None):
     except Exception:
         return default
 
+
 def _user_id(user) -> Optional[int]:
     """Intenta resolver id desde dict u objeto."""
     uid = _user_get(user, "id", None)
@@ -71,6 +76,7 @@ def _user_id(user) -> Optional[int]:
         return int(str(sub)) if sub is not None else None
     except Exception:
         return None
+
 
 def _user_email(user) -> Optional[str]:
     email = _user_get(user, "email", None)
@@ -98,7 +104,7 @@ def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
     # PRO
     pro_price = float(os.getenv("PRO_PRICE_USD") or os.getenv("PLAN_PRICE") or 10.0)
 
-    # BIZ (prioridad: BIZ_PRICE_MONTH_USD -> BIZ_PRICE_USD -> default)
+    # ✅ BIZ (prioridad: BIZ_PRICE_MONTH_USD -> BIZ_PRICE_USD -> default)
     biz_base = float(
         os.getenv("BIZ_PRICE_MONTH_USD")
         or os.getenv("BIZ_PRICE_USD")
@@ -134,6 +140,7 @@ from sqlalchemy.orm import declarative_base
 SubBase = declarative_base()
 _engine = SessionLocal().get_bind() if hasattr(SessionLocal, "get_bind") else SessionLocal().bind
 
+
 class Subscription(SubBase):
     __tablename__ = "subscriptions"
     __table_args__ = (UniqueConstraint("preapproval_id", name="uq_preapproval_id"),)
@@ -152,6 +159,7 @@ class Subscription(SubBase):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+
 try:
     SubBase.metadata.create_all(_engine)
 except Exception:
@@ -164,6 +172,7 @@ except Exception:
 def _is_abs_url(s: str) -> bool:
     s = (s or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://")
+
 
 def _absolute_url(request: Request, path_or_url: str) -> str:
     """
@@ -234,7 +243,9 @@ def _mp_create_preference(payload: dict) -> dict:
 
 
 # ====== Helpers Mercado Pago ======
-def _preapproval_payload(*, payer_email: str, amount: float, currency: str, reason: str, external_ref: str, back_url: str, include_currency_in_auto: bool):
+def _preapproval_payload(
+    *, payer_email: str, amount: float, currency: str, reason: str, external_ref: str, back_url: str, include_currency_in_auto: bool
+):
     """
     Payload para /preapproval (suscripción).
     OJO: en algunas cuentas/variantes, MP rechaza auto_recurring.currency_id.
@@ -273,6 +284,7 @@ def _mp_get_preapproval(preapproval_id: str) -> dict:
         raise HTTPException(status_code=502, detail=f"MP GET preapproval error {r.status_code}: {r.text}")
     return r.json()
 
+
 def _mp_update_preapproval(preapproval_id: str, payload: dict) -> dict:
     url = f"https://api.mercadopago.com/preapproval/{preapproval_id}"
     try:
@@ -296,7 +308,9 @@ def _upsert_subscription(
 ):
     status_mp = (data.get("status") or "").lower()
     next_payment_date = (data.get("auto_recurring") or {}).get("next_payment_date") or ""
-    currency = (data.get("auto_recurring") or {}).get("currency_id") or (data.get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper())
+    currency = (data.get("auto_recurring") or {}).get("currency_id") or (
+        data.get("currency_id") or (os.getenv("PLAN_CURRENCY") or "USD").upper()
+    )
     amount = (data.get("auto_recurring") or {}).get("transaction_amount") or 0
     plan_final = (plan or data.get("reason") or "PRO").upper()
 
