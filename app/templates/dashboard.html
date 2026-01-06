@@ -240,6 +240,7 @@
       flex-wrap: wrap;
       gap: 8px;
       margin-top: 10px;
+      align-items: center;
     }
 
     .btn {
@@ -330,13 +331,12 @@
       text-align: center;
     }
 
-    /* Selector idioma (simple, alineado al header) */
+    /* Selector idioma */
     .lang-switcher form{
       display:flex;
       gap:6px;
       justify-content:flex-end;
       margin-top:8px;
-      flex-wrap: wrap;
     }
     .lang-pill{
       border:1px solid rgba(148,163,184,0.7);
@@ -366,6 +366,7 @@
           {{ t(lang, "dashboard.subtitle") }}
         </p>
       </div>
+
       <div>
         {% set plan = (user.plan or current_user.plan or "FREE")|upper %}
         <div class="pill-plan">
@@ -376,15 +377,21 @@
             <span class="pill-plan-badge pill-plan-free">{{ plan }}</span>
           {% endif %}
         </div>
+
         <div class="user-email">
           {{ current_user.email or user.email }}
         </div>
 
-        <!-- Selector de idioma ES / EN + Logout -->
-        <div class="lang-switcher">
-          <form method="get" action="/i18n/set-lang">
-            <input type="hidden" name="next" value="{{ request.url.path }}">
+        <div class="btn-row" style="justify-content:flex-end;margin-top:10px;">
+          <a class="btn btn-ghost" href="/auth/logout">
+            {{ "Salir" if (lang or "es") == "es" else "Logout" }}
+          </a>
+        </div>
 
+        <!-- Selector de idioma ES / EN (FIX: ruta real /i18n/set POST) -->
+        <div class="lang-switcher">
+          <form method="post" action="/i18n/set">
+            <input type="hidden" name="next" value="{{ request.url.path }}">
             <button type="submit" name="lang" value="es"
                     class="lang-pill {% if (lang or 'es') == 'es' %}active{% endif %}">
               ES
@@ -393,16 +400,12 @@
                     class="lang-pill {% if (lang or 'es') == 'en' %}active{% endif %}">
               EN
             </button>
-
-            <a class="btn btn-outline" href="/auth/logout" style="padding:6px 12px;font-size:12px;">
-              Logout
-            </a>
           </form>
         </div>
       </div>
     </header>
 
-    {# Banner de prueba PRO / downgrade #}
+    {# Banner trial #}
     {% set pro_source = (current_user.pro_source or '')|lower if current_user is defined else '' %}
     {% set had_trial = current_user.had_trial if current_user is defined and current_user.had_trial is not none else false %}
 
@@ -443,14 +446,11 @@
 
     <!-- Bloque principal -->
     <section class="grid-main">
-      <!-- Estado de cuenta + accesos -->
       <article class="card">
         <div class="section-title">
           <div>
             <div class="heading">{{ t(lang, "dashboard.account_status_title") }}</div>
-            <p class="muted">
-              {{ t(lang, "dashboard.account_status_subtitle") }}
-            </p>
+            <p class="muted">{{ t(lang, "dashboard.account_status_subtitle") }}</p>
           </div>
           <span class="badge badge-pill">{{ t(lang, "dashboard.quick_start") }}</span>
         </div>
@@ -474,14 +474,11 @@
         </ul>
       </article>
 
-      <!-- Funciones PRO / Empresas -->
       <article class="card card-soft">
         <div class="section-title">
           <div>
             <div class="heading">{{ t(lang, "dashboard.pro_title") }}</div>
-            <p class="muted">
-              {{ t(lang, "dashboard.pro_subtitle") }}
-            </p>
+            <p class="muted">{{ t(lang, "dashboard.pro_subtitle") }}</p>
           </div>
           <a href="/billing/subscriptions" class="badge">{{ t(lang, "dashboard.see_plans") }}</a>
         </div>
@@ -499,16 +496,12 @@
       </article>
     </section>
 
-    <!-- Herramientas nuevas + facturación -->
     <section class="grid-secondary">
-      <!-- Herramientas nuevas -->
       <article class="card card-soft">
         <div class="section-title">
           <div>
             <div class="heading">{{ t(lang, "dashboard.tools_title") }}</div>
-            <p class="muted">
-              {{ t(lang, "dashboard.tools_subtitle") }}
-            </p>
+            <p class="muted">{{ t(lang, "dashboard.tools_subtitle") }}</p>
           </div>
           <span class="badge">{{ t(lang, "dashboard.beta") }}</span>
         </div>
@@ -524,14 +517,11 @@
         </ul>
       </article>
 
-      <!-- Planes y facturación -->
       <article class="card">
         <div class="section-title">
           <div>
             <div class="heading">{{ t(lang, "dashboard.billing_title") }}</div>
-            <p class="muted">
-              {{ t(lang, "dashboard.billing_subtitle") }}
-            </p>
+            <p class="muted">{{ t(lang, "dashboard.billing_subtitle") }}</p>
           </div>
         </div>
 
@@ -549,33 +539,24 @@
       </article>
     </section>
 
-    <!-- Pagos -->
     <section class="grid-secondary">
-      <!-- Últimos pagos -->
       <article class="card card-soft">
         <div class="section-title">
           <div>
             <div class="heading">{{ t(lang, "dashboard.payments_title") }}</div>
-            <p class="muted">
-              {{ t(lang, "dashboard.payments_subtitle") }}
-            </p>
+            <p class="muted">{{ t(lang, "dashboard.payments_subtitle") }}</p>
           </div>
         </div>
 
         <a class="btn" href="/billing/payments">{{ t(lang, "dashboard.payments_view") }}</a>
-        <p class="payments-empty">
-          {{ t(lang, "dashboard.payments_empty") }}
-        </p>
+        <p class="payments-empty">{{ t(lang, "dashboard.payments_empty") }}</p>
       </article>
 
-      <!-- Placeholder para futuras métricas / seguridad -->
       <article class="card card-soft">
         <div class="section-title">
           <div>
             <div class="heading">{{ t(lang, "dashboard.security_health_title") }}</div>
-            <p class="muted">
-              {{ t(lang, "dashboard.security_health_subtitle") }}
-            </p>
+            <p class="muted">{{ t(lang, "dashboard.security_health_subtitle") }}</p>
           </div>
           <span class="badge">{{ t(lang, "dashboard.coming_soon") }}</span>
         </div>
@@ -592,5 +573,9 @@
       {{ t(lang, "dashboard.footer") }}
     </footer>
   </div>
+
+  <!-- ✅ Pop-ups / alerts -->
+  <script src="/static/toast.js"></script>
+  <script src="/static/alert_clients.js"></script>
 </body>
 </html>
