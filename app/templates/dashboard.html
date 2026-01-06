@@ -336,6 +336,7 @@
       gap:6px;
       justify-content:flex-end;
       margin-top:8px;
+      flex-wrap: wrap;
     }
     .lang-pill{
       border:1px solid rgba(148,163,184,0.7);
@@ -379,10 +380,11 @@
           {{ current_user.email or user.email }}
         </div>
 
-        <!-- Selector de idioma ES / EN -->
+        <!-- Selector de idioma ES / EN + Logout -->
         <div class="lang-switcher">
-          <form method="get" action="/set-lang">
+          <form method="get" action="/i18n/set-lang">
             <input type="hidden" name="next" value="{{ request.url.path }}">
+
             <button type="submit" name="lang" value="es"
                     class="lang-pill {% if (lang or 'es') == 'es' %}active{% endif %}">
               ES
@@ -391,6 +393,10 @@
                     class="lang-pill {% if (lang or 'es') == 'en' %}active{% endif %}">
               EN
             </button>
+
+            <a class="btn btn-outline" href="/auth/logout" style="padding:6px 12px;font-size:12px;">
+              Logout
+            </a>
           </form>
         </div>
       </div>
