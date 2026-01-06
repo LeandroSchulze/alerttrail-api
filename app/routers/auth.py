@@ -148,8 +148,18 @@ def login_api(
 
 @router.get("/logout", include_in_schema=False)
 def logout(request: Request):
-    r = RedirectResponse("/", status_code=303)
+    """
+    Logout + redirect a /auth/login (como pediste).
+    """
+    r = RedirectResponse("/auth/login", status_code=303)
     clear_access_cookie(r, request=request)
+
+    # Si estás usando SessionMiddleware, limpiamos también.
+    try:
+        request.session.clear()
+    except Exception:
+        pass
+
     return r
 
 
@@ -177,14 +187,22 @@ def me(request: Request, db: Session = Depends(get_db)):
         else None,
     }
 
+
 @router.get("/debug", include_in_schema=False)
 def auth_debug(request: Request):
+    # Evitamos referenciar COOKIE_NAME si no existe.
+    cookie_name = "access_token"
+    try:
+        cookie_name = os.getenv("COOKIE_NAME") or cookie_name
+    except Exception:
+        pass
+
     return {
         "host": request.headers.get("host"),
         "x_forwarded_host": request.headers.get("x-forwarded-host"),
         "x_forwarded_proto": request.headers.get("x-forwarded-proto"),
         "cookies": dict(request.cookies),
-        "cookie_name": COOKIE_NAME if "COOKIE_NAME" in globals() else "access_token",
+        "cookie_name": cookie_name,
     }
 
 
