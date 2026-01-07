@@ -1,182 +1,126 @@
-from __future__ import annotations
-
-import json
-import os
+from fastapi import APIRouter
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-
-from app.security import get_current_user_cookie
-from app.ui import templates
+import json
+from datetime import datetime
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
-MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
-MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-ALERTS_STATE_FILE = MAIL_DATA_DIR / "alerts_state.json"
+DATA_DIR = Path("data")
+MAIL_SCAN_PATH = DATA_DIR / "scan_last_mails.json"
 
 
-def _load_json(path: Path, default):
+def _safe_load_json(path: Path):
+    if not path.exists():
+        return None
     try:
-        if not path.exists():
-            return default
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-
-def _save_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _user_id(user: Dict[str, Any]) -> str:
-    if not user:
-        return "anon"
-    for k in ("sub", "id", "user_id", "email"):
-        v = user.get(k)
-        if v:
-            return str(v)
-    return "unknown"
-
-
-def _scan_file_for(user: Dict[str, Any]) -> Path:
-    return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
-
-
-def _safe_get_user(request: Request) -> Optional[Dict[str, Any]]:
-    try:
-        return get_current_user_cookie(request)
     except Exception:
         return None
 
 
-def _extract_level_and_reasons(item: Dict[str, Any]) -> Tuple[str, list]:
+def _parse_date_ts(v):
     """
-    Normaliza diferentes formatos de items:
-      - Nuevo: item['analysis']['danger_level'] + item['analysis']['reasons']
-      - Legacy: item['level'] + item['reasons']
+    Best-effort timestamp parse. Returns int seconds.
+    Supports:
+      - epoch seconds/int-like
+      - ISO strings
+      - RFC2822 (via email.utils in mail router; here we just try ISO)
     """
-    analysis = item.get("analysis") or {}
-    level = (analysis.get("danger_level") or item.get("level") or "").strip().lower()
-    reasons = analysis.get("reasons") or item.get("reasons") or []
-    if not isinstance(reasons, list):
-        reasons = []
-    return level, reasons
+    if v is None:
+        return 0
+
+    # already numeric
+    try:
+        if isinstance(v, (int, float)):
+            return int(v)
+        s = str(v).strip()
+        if s.isdigit():
+            return int(s)
+    except Exception:
+        pass
+
+    # try ISO formats
+    try:
+        s = str(v).strip()
+        # allow trailing Z
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return int(datetime.fromisoformat(s).timestamp())
+    except Exception:
+        return 0
 
 
-@router.get("", response_class=HTMLResponse, include_in_schema=False)
-def alerts_page(request: Request):
-    return templates.TemplateResponse("alerts.html", {"request": request})
-
-
-@router.get("/unread-count", include_in_schema=False)
-def unread_count(request: Request):
+def _mail_items_sorted(scan):
     """
-    Para el FAB del base.html.
-    Devuelve cantidad de alertas 'pendientes' (medium/high) no entregadas aún.
+    Returns scan items sorted newest-first, with date_ts normalized.
     """
-    user = _safe_get_user(request)
-    if not user:
-        return JSONResponse({"ok": True, "count": 0})
-
-    scan = _load_json(_scan_file_for(user), {}) or {}
-    items = scan.get("items") or []
+    if not isinstance(scan, dict):
+        return []
+    items = scan.get("items") or scan.get("mails") or []
     if not isinstance(items, list):
-        items = []
+        return []
 
-    state = _load_json(ALERTS_STATE_FILE, {}) or {}
-    uid_key = _user_id(user)
-    user_state = state.get(uid_key) or {}
-    last_delivered = str(user_state.get("last_delivered_id") or "")
-
-    count = 0
+    norm = []
     for it in items:
         if not isinstance(it, dict):
             continue
-        level, _reasons = _extract_level_and_reasons(it)
-        if level not in ("medium", "high"):
-            continue
+        # normalize date_ts if missing
+        if "date_ts" not in it:
+            it["date_ts"] = _parse_date_ts(it.get("date") or it.get("internalDate") or it.get("received_at"))
+        norm.append(it)
 
-        mail_id = str(it.get("uid") or it.get("id") or "")
-        if not mail_id:
-            continue
-
-        if last_delivered and mail_id == last_delivered:
-            break
-
-        count += 1
-
-    return JSONResponse({"ok": True, "count": count})
+    norm.sort(key=lambda x: x.get("date_ts", 0), reverse=True)
+    return norm
 
 
-@router.get("/pending", include_in_schema=False)
-def alerts_pending(request: Request):
+@router.get("/pending")
+def pending_alerts():
     """
-    Polling por JS:
-      GET /alerts/pending
-
-    Respuesta:
-      { ok: true, pending: false }
-      o
-      { ok: true, pending: true, alert: { id, title, body, severity } }
+    Returns newest suspicious mail alert (danger_level medium/high) if present.
     """
-    user = _safe_get_user(request)
-    if not user:
-        return JSONResponse({"ok": True, "pending": False})
+    scan = _safe_load_json(MAIL_SCAN_PATH)
+    items = _mail_items_sorted(scan)
 
-    scan = _load_json(_scan_file_for(user), {}) or {}
-    items = scan.get("items") or []
-    if not isinstance(items, list):
-        items = []
+    for it in items:
+        analysis = it.get("analysis") or {}
+        level = (analysis.get("danger_level") or it.get("level") or "").lower()
+        if level in ("high", "medium"):
+            # shape for frontend toast/notif
+            title = "Email sospechoso detectado"
+            subj = it.get("subject") or "(sin asunto)"
+            sender = it.get("from") or it.get("sender") or "(sin remitente)"
+            return {
+                "has_alert": True,
+                "type": "mail_suspicious",
+                "severity": level,
+                "title": title,
+                "message": f"{subj} — {sender}",
+                "data": {
+                    "subject": subj,
+                    "from": sender,
+                    "date": it.get("date"),
+                    "date_ts": it.get("date_ts"),
+                    "reasons": analysis.get("reasons") or [],
+                },
+            }
 
-    state = _load_json(ALERTS_STATE_FILE, {}) or {}
-    uid_key = _user_id(user)
-    user_state = state.get(uid_key) or {}
-    last_delivered = str(user_state.get("last_delivered_id") or "")
+    return {"has_alert": False}
 
-    # buscamos el más reciente (asumimos que items viene newest-first o, mínimo, append newest al final)
-    candidate = None
-    for it in reversed(items):
-        if not isinstance(it, dict):
-            continue
 
-        level, reasons = _extract_level_and_reasons(it)
-        if level not in ("medium", "high"):
-            continue
+@router.get("/unread-count")
+def unread_count():
+    """
+    Count suspicious mails in last scan (medium/high).
+    Used for badge in UI.
+    """
+    scan = _safe_load_json(MAIL_SCAN_PATH)
+    items = _mail_items_sorted(scan)
 
-        mail_id = str(it.get("uid") or it.get("id") or "")
-        if not mail_id:
-            continue
+    cnt = 0
+    for it in items:
+        analysis = it.get("analysis") or {}
+        level = (analysis.get("danger_level") or it.get("level") or "").lower()
+        if level in ("high", "medium"):
+            cnt += 1
 
-        if last_delivered and mail_id == last_delivered:
-            break
-
-        candidate = (mail_id, it, level, reasons)
-        break
-
-    if not candidate:
-        return JSONResponse({"ok": True, "pending": False})
-
-    mail_id, it, level, reasons = candidate
-
-    subj = str(it.get("subject") or "(sin asunto)")
-    frm = str(it.get("from") or it.get("from_email") or "")
-    reason_txt = (reasons[0] if reasons else "Se detectaron señales de riesgo en el correo.")
-
-    alert_obj = {
-        "id": mail_id,
-        "title": "⚠️ Alerta de seguridad" if level == "high" else "🔔 Posible phishing",
-        "body": f"{subj}\nDe: {frm}\nMotivo: {reason_txt}",
-        "severity": "high" if level == "high" else "medium",
-    }
-
-    # marcar como entregado
-    state.setdefault(uid_key, {})
-    state[uid_key]["last_delivered_id"] = mail_id
-    _save_json(ALERTS_STATE_FILE, state)
-
-    return JSONResponse({"ok": True, "pending": True, "alert": alert_obj})
+    return {"count": cnt}
