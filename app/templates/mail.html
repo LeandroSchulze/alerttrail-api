@@ -1,143 +1,81 @@
 <!doctype html>
-<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
-<head>
-  <meta charset="utf-8">
-  <title>{{ t(lang, "mail.page_title") }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AlertTrail — Mail</title>
 
-<body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
-  <div style="max-width:980px;margin:20px auto;padding:0 16px 32px;">
-    <h1 style="margin:0 0 6px;font-size:1.55rem;">{{ t(lang, "mail.title") }}</h1>
-    <p style="margin:0 0 14px;color:#64748b;">
-      {{ t(lang, "mail.subtitle") }}
-    </p>
+    <link rel="stylesheet" href="/static/style.css" />
 
-    <!-- Estado casilla guardada -->
-    <div style="background:white;border:1px solid #dbeafe;border-radius:14px;padding:14px 14px 12px;box-shadow:0 10px 25px rgba(15,23,42,.06);">
-      {% if linked %}
-        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
-          <div>
-            <div style="font-weight:600;margin-bottom:2px;">{{ t(lang, "mail.linked_label") }}</div>
-            <div style="color:#334155;">{{ linked.address or linked.email or linked.username or linked }}</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="/mail/connect" style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
-              {{ t(lang, "mail.replace") }}
-            </a>
-            <a href="/mail/scanner" style="text-decoration:none;border:none;padding:8px 12px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:600;">
-              {{ t(lang, "mail.open_scanner") }}
-            </a>
-          </div>
+    <!-- alerts popups -->
+    <script defer src="/static/toast.js"></script>
+    <script defer src="/static/alert_clients.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-title">AlertTrail</div>
+          <div class="brand-sub">Security Console</div>
         </div>
-      {% else %}
-        <p style="margin:0 0 12px;color:#475569;">
-          {{ t(lang, "mail.no_linked") }}
-        </p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <a href="/mail/connect" style="text-decoration:none;border:none;padding:8px 12px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:600;">
-            {{ t(lang, "mail.link") }}
-          </a>
-          <a href="/mail/scanner" style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:8px 12px;border-radius:999px;background:#f8fafc;color:#0f172a;">
-            {{ t(lang, "mail.try_scanner") }}
-          </a>
-        </div>
-      {% endif %}
+
+        <nav class="nav">
+          <a class="nav-item" href="/">Dashboard</a>
+          <a class="nav-item" href="/mail">Mail</a>
+          <a class="nav-item" href="/mail/scanner">Mail Scanner</a>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <header class="content-header">
+          <h1>Configuración de Mail</h1>
+          <p>Configurá tu casilla para escaneo y alertas.</p>
+        </header>
+
+        <section class="card">
+          <form method="post" action="/mail/save" class="form-grid">
+            <div class="form-row">
+              <label>Email</label>
+              <input name="email" placeholder="tu@mail.com" value="{{ settings.get('email','') }}" />
+            </div>
+
+            <div class="form-row">
+              <label>Proveedor</label>
+              <input name="provider" placeholder="Gmail / Outlook / IMAP" value="{{ settings.get('provider','') }}" />
+            </div>
+
+            <div class="form-row">
+              <label>Host</label>
+              <input name="host" placeholder="imap.gmail.com" value="{{ settings.get('host','') }}" />
+            </div>
+
+            <div class="form-row">
+              <label>Port</label>
+              <input name="port" type="number" placeholder="993" value="{{ settings.get('port', 993) }}" />
+            </div>
+
+            <div class="form-row">
+              <label>Username</label>
+              <input name="username" placeholder="usuario" value="{{ settings.get('username','') }}" />
+            </div>
+
+            <div class="form-row">
+              <label>Password</label>
+              <input name="password" type="password" placeholder="********" value="{{ settings.get('password','') }}" />
+            </div>
+
+            <div class="form-row">
+              <label>SSL</label>
+              <input name="ssl" type="checkbox" {% if settings.get('ssl', True) %}checked{% endif %} />
+            </div>
+
+            <div class="form-actions">
+              <button class="btn" type="submit">Guardar</button>
+              <a class="btn secondary" href="/mail/scanner">Ir al scanner</a>
+            </div>
+          </form>
+        </section>
+      </main>
     </div>
-
-    <div style="height:16px;"></div>
-
-    <!-- Config IMAP -->
-    <div style="background:white;border:1px solid #dbeafe;border-radius:14px;padding:14px 14px 12px;box-shadow:0 10px 25px rgba(15,23,42,.06);">
-      <h2 style="margin:0 0 8px;font-size:1.1rem;">{{ t(lang, "mail.imap_config") }}</h2>
-
-      <form method="post" action="/mail/settings" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        {% if not linked %}
-          <div style="grid-column:1/3;">
-            <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.email") }}</label>
-            <input name="address" required placeholder="name@domain.com"
-                   style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
-          </div>
-        {% endif %}
-
-        <div>
-          <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.server") }}</label>
-          <input name="host" value="{{ defaults.server if defaults else '' }}"
-                 style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
-        </div>
-
-        <div>
-          <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.port") }}</label>
-          <input name="port" value="{{ defaults.port if defaults else '993' }}"
-                 style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
-        </div>
-
-        <div>
-          <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.username") }}</label>
-          <input name="username" value="" placeholder="usuario@dominio.com"
-                 style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
-        </div>
-
-        <div>
-          <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.password") }}</label>
-          <input name="password" type="password" value="" placeholder="********"
-                 style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
-        </div>
-
-        <div>
-          <label style="display:block;font-size:.85rem;color:#475569;margin-bottom:4px;">{{ t(lang, "mail.folder") }}</label>
-          <input name="folder" value="{{ defaults.folder if defaults else 'INBOX' }}"
-                 style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #cbd5e1;">
-        </div>
-
-        <div style="display:flex;align-items:center;gap:10px;">
-          <label style="display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" name="use_ssl" {% if defaults and defaults.use_ssl %}checked{% endif %}>
-            <span style="font-size:.9rem;color:#334155;">{{ t(lang, "mail.use_ssl") }}</span>
-          </label>
-        </div>
-
-        <div style="grid-column:1/3;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <label style="display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" name="mark_read" {% if defaults and defaults.mark_read %}checked{% endif %}>
-            <span style="font-size:.9rem;color:#334155;">{{ t(lang, "mail.mark_read") }}</span>
-          </label>
-        </div>
-
-        <div style="grid-column:1/3;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px;">
-          <button type="submit"
-                  style="border:none;padding:9px 14px;border-radius:999px;background:#0f172a;color:white;font-weight:700;cursor:pointer;">
-            💾 {{ t(lang, "mail.save_config") }}
-          </button>
-
-          <a href="/mail/scanner"
-             style="text-decoration:none;border:1px solid rgba(148,163,184,.7);padding:9px 14px;border-radius:999px;background:#f8fafc;color:#0f172a;">
-            {{ t(lang, "mail.open_scanner") }}
-          </a>
-        </div>
-      </form>
-
-      <p style="margin:10px 0 0;color:#64748b;font-size:.9rem;">
-        {{ t(lang, "mail.config_hint") }}
-      </p>
-
-      {% if defaults %}
-        <div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;">
-          <div style="font-weight:600;margin-bottom:6px;">{{ t(lang, "mail.effective_params") }}</div>
-          <div style="font-size:.9rem;color:#334155;">
-            <div><b>{{ t(lang, "mail.server") }}</b> {{ defaults.server or '—' }}</div>
-            <div><b>{{ t(lang, "mail.port") }}</b> {{ defaults.port }}</div>
-            <div><b>{{ t(lang, "mail.use_ssl") }}</b> {{ t(lang, "common.yes") if defaults.use_ssl else t(lang, "common.no") }}</div>
-            <div><b>{{ t(lang, "mail.folder") }}</b> {{ defaults.folder }}</div>
-            <div><b>{{ t(lang, "mail.mark_read") }}</b> {{ t(lang, "common.yes") if defaults.mark_read else t(lang, "common.no") }}</div>
-          </div>
-        </div>
-      {% endif %}
-    </div>
-
-    <div style="height:14px;"></div>
-    <a href="/dashboard" style="color:#0369a1;text-decoration:none;">← {{ t(lang, "common.back_dashboard") }}</a>
-  </div>
-</body>
+  </body>
 </html>
