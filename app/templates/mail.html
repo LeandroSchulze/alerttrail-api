@@ -1,81 +1,84 @@
 <!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AlertTrail — Mail</title>
+<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t(lang, "mail.page_title") }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/toast.js"></script>
+  <script src="/static/alert_clients.js" defer></script>
+</head>
 
-    <link rel="stylesheet" href="/static/style.css" />
+<body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;background:#f8fafc;color:#0f172a;">
+  <div style="max-width:980px;margin:20px auto;padding:0 16px 32px;">
+    <h1 style="margin:0 0 6px;font-size:1.55rem;">{{ t(lang, "mail.title") }}</h1>
+    <p style="margin:0 0 14px;color:#64748b;">
+      {{ t(lang, "mail.subtitle") }}
+    </p>
 
-    <!-- alerts popups -->
-    <script defer src="/static/toast.js"></script>
-    <script defer src="/static/alert_clients.js"></script>
-  </head>
-  <body>
-    <div class="layout">
-      <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-title">AlertTrail</div>
-          <div class="brand-sub">Security Console</div>
+    <div style="background:white;border:1px solid #dbeafe;border-radius:14px;padding:14px;box-shadow:0 10px 25px rgba(15,23,42,.06);">
+      <form method="post" action="/mail/settings" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="grid-column:1/3;">
+          <label style="display:block;font-weight:700;margin-bottom:4px;">{{ t(lang, "mail.address") }}</label>
+          <input name="address" value="{{ (linked.address if linked else '') or '' }}"
+                 placeholder="tu@email.com"
+                 style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;">
         </div>
 
-        <nav class="nav">
-          <a class="nav-item" href="/">Dashboard</a>
-          <a class="nav-item" href="/mail">Mail</a>
-          <a class="nav-item" href="/mail/scanner">Mail Scanner</a>
-        </nav>
-      </aside>
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:4px;">{{ t(lang, "mail.host") }}</label>
+          <input name="host" value="{{ (linked.host if linked else defaults.host) }}"
+                 style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;">
+        </div>
 
-      <main class="content">
-        <header class="content-header">
-          <h1>Configuración de Mail</h1>
-          <p>Configurá tu casilla para escaneo y alertas.</p>
-        </header>
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:4px;">{{ t(lang, "mail.port") }}</label>
+          <input name="port" value="{{ (linked.port if linked else defaults.port) }}"
+                 style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;">
+        </div>
 
-        <section class="card">
-          <form method="post" action="/mail/save" class="form-grid">
-            <div class="form-row">
-              <label>Email</label>
-              <input name="email" placeholder="tu@mail.com" value="{{ settings.get('email','') }}" />
-            </div>
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:4px;">{{ t(lang, "mail.username") }}</label>
+          <input name="username" value="{{ (linked.username if linked else '') or '' }}"
+                 style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;">
+        </div>
 
-            <div class="form-row">
-              <label>Proveedor</label>
-              <input name="provider" placeholder="Gmail / Outlook / IMAP" value="{{ settings.get('provider','') }}" />
-            </div>
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:4px;">{{ t(lang, "mail.password") }}</label>
+          <input name="password" type="password" value="{{ (linked.password if linked else '') or '' }}"
+                 style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;">
+        </div>
 
-            <div class="form-row">
-              <label>Host</label>
-              <input name="host" placeholder="imap.gmail.com" value="{{ settings.get('host','') }}" />
-            </div>
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:4px;">{{ t(lang, "mail.folder") }}</label>
+          <input name="folder" value="{{ (linked.folder if linked else defaults.folder) }}"
+                 style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;">
+        </div>
 
-            <div class="form-row">
-              <label>Port</label>
-              <input name="port" type="number" placeholder="993" value="{{ settings.get('port', 993) }}" />
-            </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="use_ssl"
+                 {% if (linked.use_ssl if linked else true) %}checked{% endif %}>
+          <span>{{ t(lang, "mail.use_ssl") }}</span>
+        </div>
 
-            <div class="form-row">
-              <label>Username</label>
-              <input name="username" placeholder="usuario" value="{{ settings.get('username','') }}" />
-            </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="mark_read"
+                 {% if (linked.mark_read if linked else false) %}checked{% endif %}>
+          <span>{{ t(lang, "mail.mark_read") }}</span>
+        </div>
 
-            <div class="form-row">
-              <label>Password</label>
-              <input name="password" type="password" placeholder="********" value="{{ settings.get('password','') }}" />
-            </div>
-
-            <div class="form-row">
-              <label>SSL</label>
-              <input name="ssl" type="checkbox" {% if settings.get('ssl', True) %}checked{% endif %} />
-            </div>
-
-            <div class="form-actions">
-              <button class="btn" type="submit">Guardar</button>
-              <a class="btn secondary" href="/mail/scanner">Ir al scanner</a>
-            </div>
-          </form>
-        </section>
-      </main>
+        <div style="grid-column:1/3;display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
+          <button type="submit"
+                  style="border:none;padding:9px 14px;border-radius:999px;background:linear-gradient(135deg,#22c55e,#0ea5e9);color:white;font-weight:800;">
+            {{ t(lang, "common.save") }}
+          </button>
+          <a href="/mail/scanner"
+             style="text-decoration:none;border:1px solid rgba(148,163,184,.6);padding:9px 14px;border-radius:999px;background:#fff;color:#0f172a;font-weight:700;">
+            {{ t(lang, "mail.go_scanner") }}
+          </a>
+        </div>
+      </form>
     </div>
-  </body>
+  </div>
+</body>
 </html>
