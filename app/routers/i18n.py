@@ -14,27 +14,17 @@ def set_lang(request: Request, lang: str = "es", next: str | None = None):
     # 1) Si viene next explícito, lo usamos (preferido)
     target = (next or "").strip()
 
-    # 2) Si no hay next, usamos referer pero sanitizado
+    # 2) si no, intentamos referer
     if not target:
-        referer = (request.headers.get("referer") or "").strip()
-        if referer:
-            try:
-                p = urlparse(referer)
-                # nos quedamos solo con path + query (evita open redirects)
-                target = p.path or "/dashboard"
-                if p.query:
-                    target = f"{target}?{p.query}"
-            except Exception:
-                target = "/dashboard"
-        else:
-            target = "/dashboard"
+        ref = request.headers.get("referer") or ""
+        try:
+            u = urlparse(ref)
+            target = (u.path or "") + (("?" + u.query) if u.query else "")
+        except Exception:
+            target = ""
 
-    # 3) Seguridad mínima: solo paths relativos internos
-    if not target.startswith("/"):
-        target = "/dashboard"
-
-    # 4) Evitar loop infinito: si el target es este mismo endpoint, mandamos a dashboard
-    if target.startswith("/i18n/set"):
+    # 3) fallback
+    if not target or not target.startswith("/"):
         target = "/dashboard"
 
     resp = RedirectResponse(url=target, status_code=303)
