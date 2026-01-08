@@ -4,9 +4,6 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-
-# Heurística rápida (stub) para no romper imports en producción.
-# Podés reemplazar esto por tu motor real cuando lo tengas integrado.
 _SUSPICIOUS_KEYWORDS = [
     "verify", "verification", "password", "reset", "login", "account",
     "urgent", "immediately", "invoice", "payment", "wire", "bank",
@@ -17,13 +14,12 @@ _SUSPICIOUS_DOMAINS = [
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "is.gd", "cutt.ly",
 ]
 
-
 def analyze_email_quick(subject: str = "", sender: str = "", body: str = "") -> Dict[str, Any]:
     """
-    Analiza rápido un email y devuelve un dict consistente con lo típico:
-    - score: int 0..100
-    - risk: "low"|"medium"|"high"
-    - reasons: lista de strings
+    Analiza rápido un email y devuelve un dict consistente.
+    IMPORTANTE:
+      - mantiene 'risk' (legacy)
+      - agrega 'danger_level' (lo usa mail_scan.py / alertas)
     """
     text = f"{subject}\n{sender}\n{body}".lower()
     reasons: List[str] = []
@@ -44,7 +40,11 @@ def analyze_email_quick(subject: str = "", sender: str = "", body: str = "") -> 
     hits = [k for k in _SUSPICIOUS_KEYWORDS if k in text]
     if hits:
         score += min(30, 5 * len(hits))
-        reasons.append("Palabras típicas de phishing: " + ", ".join(sorted(set(hits))[:10]) + ("..." if len(hits) > 10 else ""))
+        reasons.append(
+            "Palabras típicas de phishing: "
+            + ", ".join(sorted(set(hits))[:10])
+            + ("..." if len(hits) > 10 else "")
+        )
 
     # Pedido de credenciales (muy básico)
     if "password" in text and ("enter" in text or "update" in text or "reset" in text):
@@ -68,4 +68,10 @@ def analyze_email_quick(subject: str = "", sender: str = "", body: str = "") -> 
     if not reasons:
         reasons.append("Sin señales obvias (análisis rápido).")
 
-    return {"risk": risk, "score": score, "reasons": reasons}
+    # ✅ CLAVE: agregar danger_level para que mail_scan.py no lo ponga en low siempre
+    return {
+        "risk": risk,
+        "danger_level": risk,
+        "score": score,
+        "reasons": reasons,
+    }
