@@ -1,4 +1,4 @@
-{
+  {
   "common.back_dashboard": "Volver al dashboard",
   "common.language": "Idioma",
   "common.search": "Buscar",
@@ -248,6 +248,9 @@
   "billing.checkout_no_init_point": "No pudimos generar el link de pago. Probá nuevamente.",
   "billing.checkout_disabled": "Los pagos todavía no están configurados en este despliegue.",
   "billing.checkout_contact": "Contacto:",
-  "billing.back_subscriptions": "Volver a suscripciones"
+  "billing.back_subscriptions": "Volver a suscripciones",
 
+  "mail.address": "Dirección de correo",
+  "mail.host": "Servidor IMAP",
+  "mail.go_scanner": "Ir al scanner"
 }
