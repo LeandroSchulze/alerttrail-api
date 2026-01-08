@@ -247,7 +247,10 @@
   "billing.checkout_no_init_point": "We couldn’t generate a payment link. Please try again.",
   "billing.checkout_disabled": "Payments are not configured yet on this deployment.",
   "billing.checkout_contact": "Contact:",
-  "billing.back_subscriptions": "Back to subscriptions"
+  "billing.back_subscriptions": "Back to subscriptions",
 
+  "mail.address": "Email address",
+  "mail.host": "IMAP server",
+  "mail.go_scanner": "Go to scanner"
 }
 
