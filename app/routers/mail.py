@@ -63,7 +63,10 @@ def _load_json(path: Path, default):
 
 def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _truthy(v: Any) -> bool:
@@ -159,22 +162,25 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     last_scan_raw = _load_json(_scan_file_for(user), {}) or {}
     scan_items = last_scan_raw.get("items", [])
     if not isinstance(scan_items, list):
-    scan_items = []
+        scan_items = []
 
     # ✅ FIX: ordenar siempre por fecha (más recientes primero)
     try:
         scan_items.sort(
             key=lambda x: int(x.get("date_ts") or 0),
-            reverse=True
-    )
-except Exception:
-    pass
-
+            reverse=True,
+        )
+    except Exception:
+        pass
 
     last_scan = {
-        "ts": last_scan_raw.get("scanned_at") or last_scan_raw.get("ts") or "",
+        "ts": last_scan_raw.get("scanned_at")
+        or last_scan_raw.get("ts")
+        or "",
         "folder": last_scan_raw.get("folder") or "",
-        "found": last_scan_raw.get("total") if isinstance(last_scan_raw.get("total"), int) else last_scan_raw.get("found", 0),
+        "found": last_scan_raw.get("total")
+        if isinstance(last_scan_raw.get("total"), int)
+        else last_scan_raw.get("found", 0),
         "limit": last_scan_raw.get("limit", 0),
         "error": last_scan_raw.get("error"),
     }
@@ -238,13 +244,22 @@ def scan_get(
     user=Depends(get_user),
     limit: int = Query(20, ge=1, le=500),
 ):
-    """Botones del template (/mail/scan?limit=20). Corre scan y vuelve al scanner."""
+    """Botones del template (/mail/scan?limit=20)."""
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
     linked = _load_linked_one(user)
     if not linked:
-        _save_json(_scan_file_for(user), {"ok": False, "scanned_at": _now_iso(), "error": "No hay casilla guardada", "items": [], "limit": limit})
+        _save_json(
+            _scan_file_for(user),
+            {
+                "ok": False,
+                "scanned_at": _now_iso(),
+                "error": "No hay casilla guardada",
+                "items": [],
+                "limit": limit,
+            },
+        )
         return RedirectResponse(url="/mail/scanner?error=1", status_code=303)
 
     res = scan_mailbox(
@@ -258,12 +273,14 @@ def scan_get(
         limit=int(limit),
     )
 
-    # Guardar en el formato que la UI ya lee (mail_scanner.html)
     items = []
     for it in (res.items or []):
         analysis = getattr(it, "analysis", None)
-        danger_level = str(getattr(analysis, "danger_level", "") or "low").lower()
+        danger_level = str(
+            getattr(analysis, "danger_level", "") or "low"
+        ).lower()
         reasons = list(getattr(analysis, "reasons", []) or [])
+
         items.append(
             {
                 "uid": str(it.uid or ""),
@@ -271,22 +288,25 @@ def scan_get(
                 "from": str(it.from_email or ""),
                 "date": str(it.date or ""),
                 "date_ts": _parse_date_ts(str(it.date or "")),
-                # ✅ CLAVE para alertas:
                 "danger_level": danger_level,
-                "analysis": {"danger_level": danger_level, "reasons": reasons},
+                "analysis": {
+                    "danger_level": danger_level,
+                    "reasons": reasons,
+                },
                 "verdict": _verdict_from_level(danger_level),
                 "reasons": reasons,
             }
         )
 
-    # Ordenar por fecha (más recientes primero)
     items.sort(key=lambda x: int(x.get("date_ts") or 0), reverse=True)
 
     payload = {
         "ok": bool(res.ok),
         "scanned_at": _now_iso(),
         "folder": linked.get("folder") or "INBOX",
-        "address": linked.get("address") or linked.get("username") or "",
+        "address": linked.get("address")
+        or linked.get("username")
+        or "",
         "total": int(res.total_found or 0),
         "unread": int(res.unread or 0),
         "items": items,
@@ -299,14 +319,24 @@ def scan_get(
 
 
 @router.post("/scan", response_class=JSONResponse)
-def scan_post(request: Request, user=Depends(get_user), limit: int = Query(50, ge=1, le=500)):
-    """Endpoint usado por /static/mail_scanner.js (POST /mail/scan). Devuelve JSON."""
+def scan_post(
+    request: Request,
+    user=Depends(get_user),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Endpoint usado por JS (POST /mail/scan)."""
     if not user:
-        return JSONResponse({"ok": False, "message": "not authenticated"}, status_code=401)
+        return JSONResponse(
+            {"ok": False, "message": "not authenticated"},
+            status_code=401,
+        )
 
     linked = _load_linked_one(user)
     if not linked:
-        return JSONResponse({"ok": False, "message": "no linked mailbox"}, status_code=400)
+        return JSONResponse(
+            {"ok": False, "message": "no linked mailbox"},
+            status_code=400,
+        )
 
     res = scan_mailbox(
         host=linked.get("host") or "imap.gmail.com",
@@ -322,8 +352,11 @@ def scan_post(request: Request, user=Depends(get_user), limit: int = Query(50, g
     items = []
     for it in (res.items or []):
         analysis = getattr(it, "analysis", None)
-        danger_level = str(getattr(analysis, "danger_level", "") or "low").lower()
+        danger_level = str(
+            getattr(analysis, "danger_level", "") or "low"
+        ).lower()
         reasons = list(getattr(analysis, "reasons", []) or [])
+
         items.append(
             {
                 "uid": str(it.uid or ""),
@@ -332,11 +365,15 @@ def scan_post(request: Request, user=Depends(get_user), limit: int = Query(50, g
                 "date": str(it.date or ""),
                 "date_ts": _parse_date_ts(str(it.date or "")),
                 "danger_level": danger_level,
-                "analysis": {"danger_level": danger_level, "reasons": reasons},
+                "analysis": {
+                    "danger_level": danger_level,
+                    "reasons": reasons,
+                },
                 "verdict": _verdict_from_level(danger_level),
                 "reasons": reasons,
             }
         )
+
     items.sort(key=lambda x: int(x.get("date_ts") or 0), reverse=True)
 
     return {
