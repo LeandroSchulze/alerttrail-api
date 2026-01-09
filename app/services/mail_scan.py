@@ -161,10 +161,12 @@ def scan_mailbox(
                 dangerous += 1
 
             # 🔑 Normalizar reasons (sin traducir)
-            analysis["reasons"] = _normalize_reasons(
-                analysis.get("reasons")
-            )
+            analysis_dict = dict(analysis) if isinstance(analysis, dict) else analysis.__dict__.copy()
 
+            analysis_dict["reasons"] = _normalize_reasons(
+            analysis_dict.get("reasons")
+            )
+            
             items.append(
                 MailScanItem(
                     uid=_safe_str(it.get("uid")),
@@ -172,7 +174,7 @@ def scan_mailbox(
                     from_email=_safe_str(it.get("from")),
                     date=_safe_str(it.get("date")),
                     attachments=list(it.get("attachments") or []),
-                    analysis=type("A", (), analysis)(),  # adapter obj-like
+                    analysis=type("A", (), analysis_dict)(),
                 )
             )
 
