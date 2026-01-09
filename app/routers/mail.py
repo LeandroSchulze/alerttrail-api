@@ -159,7 +159,17 @@ def mail_scanner(request: Request, user=Depends(get_user)):
     last_scan_raw = _load_json(_scan_file_for(user), {}) or {}
     scan_items = last_scan_raw.get("items", [])
     if not isinstance(scan_items, list):
-        scan_items = []
+    scan_items = []
+
+    # ✅ FIX: ordenar siempre por fecha (más recientes primero)
+    try:
+        scan_items.sort(
+            key=lambda x: int(x.get("date_ts") or 0),
+            reverse=True
+    )
+except Exception:
+    pass
+
 
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or last_scan_raw.get("ts") or "",
