@@ -251,6 +251,10 @@
 
   "mail.address": "Email address",
   "mail.host": "IMAP server",
-  "mail.go_scanner": "Go to scanner"
+  "mail.go_scanner": "Go to scanner",
+
+    "reason.links_count": "Contains {count} link(s)",
+  "reason.url_shortener": "Uses URL shorteners (possible phishing)",
+  "reason.phishing_words": "Common phishing words: {words}"
 }
 
