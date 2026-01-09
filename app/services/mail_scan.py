@@ -91,6 +91,22 @@ def _extract_attachments(msg) -> List[str]:
     return out
 
 
+def _normalize_reasons(raw_reasons: Any) -> List[Any]:
+    """
+    Convierte reasons legacy (strings) o mixtos a formato estructurado.
+    No traduce, solo normaliza.
+    """
+    reasons: List[Any] = []
+
+    for r in raw_reasons or []:
+        if isinstance(r, dict):
+            reasons.append(r)
+        elif isinstance(r, str):
+            # legacy → mantener string
+            reasons.append(r)
+    return reasons
+
+
 def scan_mailbox(
     host: str,
     port: int,
@@ -131,13 +147,23 @@ def scan_mailbox(
             analysis = analyze_email_quick(
                 subject=it.get("subject", ""),
                 sender=it.get("from", ""),
-                body=(it.get("body", "") or "") + ("\n\n" + (it.get("html", "") or "") if it.get("html") else ""),
+                body=(it.get("body", "") or "")
+                + (
+                    "\n\n" + (it.get("html", "") or "")
+                    if it.get("html")
+                    else ""
+                ),
             )
 
             lvl = (analysis.get("danger_level") or "low").lower()
             counts[lvl] = int(counts.get(lvl, 0)) + 1
             if lvl in ("medium", "high"):
                 dangerous += 1
+
+            # 🔑 Normalizar reasons (sin traducir)
+            analysis["reasons"] = _normalize_reasons(
+                analysis.get("reasons")
+            )
 
             items.append(
                 MailScanItem(
@@ -146,7 +172,7 @@ def scan_mailbox(
                     from_email=_safe_str(it.get("from")),
                     date=_safe_str(it.get("date")),
                     attachments=list(it.get("attachments") or []),
-                    analysis=type("A", (), analysis)(),  # tiny obj-like adapter
+                    analysis=type("A", (), analysis)(),  # adapter obj-like
                 )
             )
 
@@ -190,11 +216,9 @@ def scan_inbox(
             M.login(username, password)
             M.select_folder(folder)
 
-            # Tomar los últimos N más recientes por UID
             uids = M.search(["ALL"]) or []
             uids = uids[-max_msgs:] if len(uids) > max_msgs else uids
 
-            # Procesar newest-first
             for uid in reversed(uids):
                 data = M.fetch([uid], ["RFC822", "FLAGS"])
                 raw = (data or {}).get(uid, {}).get(b"RFC822")
@@ -244,7 +268,6 @@ def scan_inbox(
                 except Exception:
                     pass
 
-                # Mark as read if requested
                 try:
                     if mark_read:
                         M.add_flags(uid, [b"\\Seen"])
@@ -263,7 +286,6 @@ def scan_inbox(
                     }
                 )
 
-            # unread count (best-effort)
             unread = 0
             try:
                 unseen = M.search(["UNSEEN"]) or []
