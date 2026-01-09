@@ -252,5 +252,10 @@
 
   "mail.address": "Dirección de correo",
   "mail.host": "Servidor IMAP",
-  "mail.go_scanner": "Ir al scanner"
+  "mail.go_scanner": "Ir al scanner",
+
+  "reason.links_count": "Contiene {count} link(s)",
+  "reason.url_shortener": "Usa acortadores de URL (posible phishing)",
+  "reason.phishing_words": "Palabras típicas de phishing: {words}"
+  
 }
