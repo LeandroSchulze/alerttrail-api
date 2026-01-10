@@ -144,6 +144,8 @@
                           {{ it.verdict or 'BAJO' }}
                         </span>
                       </td>
+
+                      <!-- ✅ ÚNICO CAMBIO: reasons i18n-safe -->
                       <td style="
                         padding:10px 8px;
                         border-bottom:1px solid #f1f5f9;
@@ -162,6 +164,12 @@
                               {{ t(lang, "reason.url_shortener") }}
                             {% elif r.key == "phishing_words" %}
                               {{ t(lang, "reason.phishing_words", words=r.words|join(", ")) }}
+                            {% elif r.key == "password_action" %}
+                              {{ t(lang, "reason.password_action") }}
+                            {% elif r.key == "urgency_language" %}
+                              {{ t(lang, "reason.urgency_language") }}
+                            {% elif r.key == "no_signals" %}
+                              {{ t(lang, "reason.no_signals") }}
                             {% endif %}
                             {% if not loop.last %}, {% endif %}
                           {% endfor %}
