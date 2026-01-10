@@ -2,46 +2,36 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+import sys
 
-from app.database import SessionLocal
+from app.services.mail_scanner import scan_all_connected_mailboxes
 
-logger = logging.getLogger("alerttrail.mail")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [mail-poll] %(levelname)s: %(message)s",
+)
+
+log = logging.getLogger(__name__)
 
 
-def poll_all_accounts(limit: Optional[int] = None, dry_run: bool = False) -> int:
+def poll_all_accounts() -> int:
     """
-    Entry-point llamado por el BackgroundScheduler en app/main.py.
-
-    - Recorre casillas conectadas (MailAccount, etc.)
-    - Genera alertas si corresponde
-    - Devuelve cantidad escaneada/procesada (según tu implementación)
+    Entry point REAL del auto scan.
+    Llamado por:
+      - cron
+      - APScheduler (si está activo)
     """
-    db = SessionLocal()
     try:
-        try:
-            # Tu lógica real (según tu tasks_mail.py)
-            from app.services.mail_scanner import scan_all_connected_mailboxes
-        except Exception as e:
-            logger.exception("No se pudo importar scan_all_connected_mailboxes: %s", e)
-            return 0
-
-        try:
-            # Intento con kwargs (limit/dry_run)
-            scanned = scan_all_connected_mailboxes(db=db, limit=limit, dry_run=dry_run)  # type: ignore
-        except TypeError:
-            # Firma legacy
-            scanned = scan_all_connected_mailboxes(db)  # type: ignore
-
-        try:
-            return int(scanned or 0)
-        except Exception:
-            return 0
-    except Exception:
-        logger.exception("Mail poll failed (poll_all_accounts)")
+        scanned = scan_all_connected_mailboxes()
+        log.info("Mail poll completed. Accounts scanned: %s", scanned)
+        return scanned
+    except Exception as e:
+        log.exception("Mail poll failed: %s", e)
         return 0
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
+
+
+# 🔑 CLAVE: permitir ejecución standalone (cron)
+if __name__ == "__main__":
+    scanned = poll_all_accounts()
+    # exit code útil para cron / logs
+    sys.exit(0 if scanned >= 0 else 1)
