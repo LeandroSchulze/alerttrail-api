@@ -10,51 +10,62 @@ _SUSPICIOUS_KEYWORDS = [
     "suspended", "locked", "security alert",
     "confirm", "update", "billing", "refund",
 ]
+
 _SUSPICIOUS_DOMAINS = [
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "is.gd", "cutt.ly",
 ]
+
 
 def analyze_email_quick(subject: str = "", sender: str = "", body: str = "") -> Dict[str, Any]:
     """
     Analiza rápido un email y devuelve un dict consistente.
     IMPORTANTE:
-      - mantiene 'risk' (legacy)
-      - agrega 'danger_level' (lo usa mail_scan.py / alertas)
+      - NO traduce texto (i18n se hace en el template)
+      - reasons se devuelven como objetos estructurados
+      - mantiene compatibilidad con mail_scan.py
     """
     text = f"{subject}\n{sender}\n{body}".lower()
-    reasons: List[str] = []
+    reasons: List[Dict[str, Any]] = []
     score = 0
 
     # Links
     urls = re.findall(r"https?://[^\s)>\]]+", text)
     if urls:
         score += 10
-        reasons.append(f"Contiene {len(urls)} link(s).")
+        reasons.append({
+            "key": "links_count",
+            "count": len(urls),
+        })
 
-    # Acortadores comunes
+    # Acortadores de URL
     if any(d in text for d in _SUSPICIOUS_DOMAINS):
         score += 15
-        reasons.append("Usa acortadores de URL (posible phishing).")
+        reasons.append({
+            "key": "url_shortener",
+        })
 
-    # Keywords
+    # Keywords típicas de phishing
     hits = [k for k in _SUSPICIOUS_KEYWORDS if k in text]
     if hits:
         score += min(30, 5 * len(hits))
-        reasons.append(
-            "Palabras típicas de phishing: "
-            + ", ".join(sorted(set(hits))[:10])
-            + ("..." if len(hits) > 10 else "")
-        )
+        reasons.append({
+            "key": "phishing_words",
+            "words": sorted(set(hits))[:10],
+        })
 
     # Pedido de credenciales (muy básico)
-    if "password" in text and ("enter" in text or "update" in text or "reset" in text):
+    if "password" in text and any(w in text for w in ("enter", "update", "reset")):
         score += 20
-        reasons.append("Menciona contraseña + acción (reset/update).")
+        reasons.append({
+            "key": "password_action",
+        })
 
-    # “Urgencia” / presión
+    # Lenguaje de urgencia / presión
     if any(w in text for w in ["urgent", "immediately", "asap", "within 24", "24 hours"]):
         score += 10
-        reasons.append("Lenguaje de urgencia/presión.")
+        reasons.append({
+            "key": "urgency_language",
+        })
 
     # Ajuste final
     score = max(0, min(100, score))
@@ -66,9 +77,10 @@ def analyze_email_quick(subject: str = "", sender: str = "", body: str = "") -> 
         risk = "low"
 
     if not reasons:
-        reasons.append("Sin señales obvias (análisis rápido).")
+        reasons.append({
+            "key": "no_signals",
+        })
 
-    # ✅ CLAVE: agregar danger_level para que mail_scan.py no lo ponga en low siempre
     return {
         "risk": risk,
         "danger_level": risk,
