@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
+from email.utils import parsedate_to_datetime
 
 from app.services.mail_scan import scan_mailbox
 
@@ -41,7 +42,33 @@ def _verdict_from_level(level: str) -> str:
     return "BAJO"
 
 
-def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: bool = False, **kwargs) -> int:
+def _safe_date_ts(v: str) -> int:
+    """
+    Convierte Date del mail a timestamp estable.
+    NUNCA rompe el orden.
+    """
+    try:
+        dt = parsedate_to_datetime(v)
+        if dt is None:
+            return 0
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        return 0
+
+
+def scan_all_connected_mailboxes(
+    db=None,
+    limit: int | None = None,
+    dry_run: bool = False,
+    **kwargs
+) -> int:
+    """
+    Llamado por /tasks/mail/poll
+    Escanea TODAS las casillas y guarda scan_last_<user>.json
+    """
+
     all_linked: Dict[str, Any] = _load_json(LINKED_FILE, {}) or {}
     if not isinstance(all_linked, dict):
         all_linked = {}
@@ -63,7 +90,7 @@ def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: boo
                 folder=linked.get("folder") or "INBOX",
                 use_ssl=bool(linked.get("use_ssl", True)),
                 limit=lim,
-                mark_read=bool(linked.get("mark_read", False)),
+                mark_read=bool(linked.get("mark_read", False)),  # 👈 NO marca leídos
             )
 
             items = []
@@ -72,16 +99,14 @@ def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: boo
                 danger_level = str(getattr(analysis, "danger_level", "") or "low").lower()
                 reasons = list(getattr(analysis, "reasons", []) or [])
 
+                date_str = str(it.date or "")
                 items.append(
                     {
                         "uid": str(it.uid or ""),
                         "subject": str(it.subject or ""),
                         "from": str(it.from_email or ""),
-                        "date": str(it.date or ""),
-                        "analysis": {
-                            "danger_level": danger_level,
-                            "reasons": reasons,
-                        },
+                        "date": date_str,
+                        "date_ts": _safe_date_ts(date_str),  # ✅ CLAVE
                         "verdict": _verdict_from_level(danger_level),
                         "reasons": reasons,
                     }
