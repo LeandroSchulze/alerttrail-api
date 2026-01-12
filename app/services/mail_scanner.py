@@ -1,4 +1,3 @@
-# app/services/mail_scanner.py
 from __future__ import annotations
 
 import json
@@ -43,10 +42,6 @@ def _verdict_from_level(level: str) -> str:
 
 
 def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: bool = False, **kwargs) -> int:
-    """
-    Lo llama /tasks/mail/poll.
-    Escanea TODAS las casillas guardadas en linked_accounts.json y actualiza scan_last_<user>.json
-    """
     all_linked: Dict[str, Any] = _load_json(LINKED_FILE, {}) or {}
     if not isinstance(all_linked, dict):
         all_linked = {}
@@ -76,12 +71,17 @@ def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: boo
                 analysis = getattr(it, "analysis", None)
                 danger_level = str(getattr(analysis, "danger_level", "") or "low").lower()
                 reasons = list(getattr(analysis, "reasons", []) or [])
+
                 items.append(
                     {
                         "uid": str(it.uid or ""),
                         "subject": str(it.subject or ""),
                         "from": str(it.from_email or ""),
                         "date": str(it.date or ""),
+                        "analysis": {
+                            "danger_level": danger_level,
+                            "reasons": reasons,
+                        },
                         "verdict": _verdict_from_level(danger_level),
                         "reasons": reasons,
                     }
@@ -106,7 +106,13 @@ def scan_all_connected_mailboxes(db=None, limit: int | None = None, dry_run: boo
             if not dry_run:
                 _save_json(
                     MAIL_DATA_DIR / f"scan_last_{user_id}.json",
-                    {"ok": False, "scanned_at": _now_iso(), "error": str(e), "items": [], "limit": lim},
+                    {
+                        "ok": False,
+                        "scanned_at": _now_iso(),
+                        "error": str(e),
+                        "items": [],
+                        "limit": lim,
+                    },
                 )
 
     return scanned
