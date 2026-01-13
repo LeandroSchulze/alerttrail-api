@@ -106,11 +106,14 @@ def scan_all_connected_mailboxes(
                         "subject": str(it.subject or ""),
                         "from": str(it.from_email or ""),
                         "date": date_str,
-                        "date_ts": _safe_date_ts(date_str),  # ✅ CLAVE
+                        "date_ts": _safe_date_ts(date_str),
                         "verdict": _verdict_from_level(danger_level),
                         "reasons": reasons,
                     }
                 )
+
+            # 🔽 CLAVE: ordenar SIEMPRE por fecha (más nuevo primero)
+            items.sort(key=lambda x: int(x.get("date_ts") or 0), reverse=True)
 
             payload = {
                 "ok": bool(res.ok),
