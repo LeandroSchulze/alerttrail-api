@@ -1,145 +1,138 @@
 // app/static/alert_clients.js
-// AlertTrail - Desktop popups + Toasts + PUSH
 
 (function () {
-  const POLL_MS = Number(window.ALERT_POLL_MS || 10000);
-  let lastId = null;
-  let permissionAsked = false;
-  let pushInitialized = false;
+  "use strict";
 
-  /* -------------------- TOAST -------------------- */
-  function notifyToast(a) {
-    try {
-      if (!window.toaster) return false;
-
-      const sev = String(a.severity || "info").toLowerCase();
-      const title = a.title || "Alerta";
-      const body = a.body || "";
-
-      if (sev === "high" || sev === "error") {
-        window.toaster.error(title, body);
-        return true;
-      }
-      if (sev === "medium" || sev === "warn" || sev === "warning") {
-        window.toaster.warning(title, body);
-        return true;
-      }
-      window.toaster.info(title, body);
-      return true;
-    } catch (e) {
-      return false;
-    }
+  // =========================
+  // Helpers
+  // =========================
+  function log(...args) {
+    console.log("[Push]", ...args);
   }
 
-  /* -------------------- PERMISSION -------------------- */
-  async function ensureNotificationPermission() {
-    if (!("Notification" in window)) return "unsupported";
-    if (Notification.permission === "granted") return "granted";
-    if (Notification.permission === "denied") return "denied";
-    if (permissionAsked) return Notification.permission;
-
-    permissionAsked = true;
-    try {
-      return await Notification.requestPermission();
-    } catch (e) {
-      return Notification.permission;
-    }
+  function warn(...args) {
+    console.warn("[Push]", ...args);
   }
 
-  /* -------------------- NATIVE (fallback) -------------------- */
-  async function notifyNative(a) {
-    try {
-      const perm = await ensureNotificationPermission();
-      if (perm !== "granted") return false;
-
-      const n = new Notification(a.title || "Alerta", {
-        body: a.body || "",
-        tag: a.id || undefined,
-      });
-
-      setTimeout(() => {
-        try { n.close(); } catch (e) {}
-      }, 12000);
-
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /* -------------------- PUSH SETUP -------------------- */
-  async function initPush() {
-    if (pushInitialized) return;
-    if (!("serviceWorker" in navigator)) return;
-
-    try {
-      const perm = await ensureNotificationPermission();
-      if (perm !== "granted") return;
-
-      const reg = await navigator.serviceWorker.register("/static/sw.js");
-
-      const existing = await reg.pushManager.getSubscription();
-      if (existing) {
-        pushInitialized = true;
-        return;
-      }
-
-      const vapidKey = window.VAPID_PUBLIC_KEY;
-      if (!vapidKey) {
-        console.warn("VAPID public key missing");
-        return;
-      }
-
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidKey),
-      });
-
-      await fetch("/push/subscribe", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sub),
-      });
-
-      pushInitialized = true;
-    } catch (e) {
-      console.error("Push init failed", e);
-    }
+  function error(...args) {
+    console.error("[Push]", ...args);
   }
 
   function urlBase64ToUint8Array(base64String) {
     const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-    const raw = atob(base64);
-    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+    const base64 = (base64String + padding)
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+
+    const rawData = window.atob(base64);
+    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
 
-  /* -------------------- POLLING -------------------- */
-  async function poll() {
+  // =========================
+  // Get VAPID public key from backend
+  // =========================
+  async function fetchVapidPublicKey() {
     try {
-      const r = await fetch("/alerts/pending", { credentials: "include" });
-      if (!r.ok) return;
+      const res = await fetch("/push/vapid-public", {
+        credentials: "same-origin",
+      });
 
-      const data = await r.json();
-      if (!data || !data.ok || !data.pending || !data.alert) return;
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
-      const a = data.alert;
-      if (!a || !a.id) return;
-      if (lastId && String(a.id) === String(lastId)) return;
+      const data = await res.json();
 
-      lastId = a.id;
-      notifyToast(a);
-      await notifyNative(a);
-    } catch (e) {
-      // no-op
+      if (!data || !data.vapidPublicKey) {
+        throw new Error("Missing vapidPublicKey in response");
+      }
+
+      return data.vapidPublicKey;
+    } catch (err) {
+      warn("Failed to fetch VAPID public key:", err);
+      return null;
     }
   }
 
-  /* -------------------- INIT -------------------- */
-  window.addEventListener("load", () => {
-    initPush();          // 🔔 PUSH REAL
-    setTimeout(poll, 2500);
-    setInterval(poll, POLL_MS);
+  // =========================
+  // Main
+  // =========================
+  async function initPush() {
+    if (!("serviceWorker" in navigator)) {
+      warn("Service workers not supported");
+      return;
+    }
+
+    if (!("PushManager" in window)) {
+      warn("PushManager not supported");
+      return;
+    }
+
+    const permission = Notification.permission;
+    log("Notification permission:", permission);
+
+    if (permission !== "granted") {
+      log("Push notifications not granted");
+      return;
+    }
+
+    const vapidPublicKey = await fetchVapidPublicKey();
+    if (!vapidPublicKey) {
+      warn("VAPID public key missing, push disabled");
+      return;
+    }
+
+    let registration;
+    try {
+      registration = await navigator.serviceWorker.ready;
+    } catch (err) {
+      error("ServiceWorker not ready:", err);
+      return;
+    }
+
+    let subscription = await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      try {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        });
+
+        log("Push subscription created");
+      } catch (err) {
+        error("Failed to subscribe:", err);
+        return;
+      }
+    } else {
+      log("Existing push subscription found");
+    }
+
+    // Send subscription to backend
+    try {
+      const res = await fetch("/push/subscribe", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify(subscription),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      log("Push subscription sent to server");
+    } catch (err) {
+      error("Failed to send subscription to backend:", err);
+    }
+  }
+
+  // =========================
+  // Boot
+  // =========================
+  document.addEventListener("DOMContentLoaded", () => {
+    initPush().catch((e) => error("Init push failed:", e));
   });
 })();
