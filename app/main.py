@@ -25,6 +25,8 @@ from app.security import get_current_user_cookie_optional
 # Routers
 from app.routers import auth, analysis, mail, admin, reports, profile, tools, scheduler_status, alerts, i18n, billing, payments, webhooks
 from app.routers import tasks_mail  # cron / task endpoints
+app.include_router(config.router)
+
 
 # Background scheduler (auto mail scan)
 from apscheduler.schedulers.background import BackgroundScheduler
