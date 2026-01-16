@@ -1,5 +1,4 @@
 // app/static/alert_clients.js
-
 (function () {
   "use strict";
 
@@ -42,9 +41,8 @@
       }
 
       const data = await res.json();
-
-      if (!data || !data.vapidPublicKey) {
-        throw new Error("Missing vapidPublicKey in response");
+      if (!data?.vapidPublicKey) {
+        throw new Error("Missing vapidPublicKey");
       }
 
       return data.vapidPublicKey;
@@ -59,7 +57,7 @@
   // =========================
   async function initPush() {
     if (!("serviceWorker" in navigator)) {
-      warn("Service workers not supported");
+      warn("ServiceWorker not supported");
       return;
     }
 
@@ -68,11 +66,8 @@
       return;
     }
 
-    const permission = Notification.permission;
-    log("Notification permission:", permission);
-
-    if (permission !== "granted") {
-      log("Push notifications not granted");
+    if (Notification.permission !== "granted") {
+      log("Notification permission not granted");
       return;
     }
 
@@ -98,34 +93,34 @@
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
         });
-
         log("Push subscription created");
       } catch (err) {
-        error("Failed to subscribe:", err);
+        error("Failed to create subscription:", err);
         return;
       }
     } else {
       log("Existing push subscription found");
     }
 
-    // Send subscription to backend
+    // Normalize subscription before sending
+    const payload = subscription.toJSON ? subscription.toJSON() : subscription;
+
     try {
       const res = await fetch("/push/subscribe", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify(subscription),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        warn("Backend rejected push subscription:", res.status);
+        return;
       }
 
-      log("Push subscription sent to server");
+      log("Push subscription sent to backend");
     } catch (err) {
-      error("Failed to send subscription to backend:", err);
+      error("Failed sending subscription to backend:", err);
     }
   }
 
