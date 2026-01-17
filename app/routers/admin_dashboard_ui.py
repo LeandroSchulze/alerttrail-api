@@ -44,3 +44,17 @@ def admin_dashboard_page(
             },
         },
     )
+    
+def _get_user_email(user) -> str | None:
+    if not user:
+        return None
+    if isinstance(user, dict):
+        return user.get("email")
+    return getattr(user, "email", None)
+
+
+def _require_super_admin(user):
+    email = _get_user_email(user)
+    if email != "admin@alerttrail.com":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
