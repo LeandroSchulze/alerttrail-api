@@ -1,60 +1,57 @@
 # app/routers/admin_dashboard_ui.py
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import User
-from app.security import get_current_user_cookie
 from app.ui import templates
+from app.security import get_current_user_cookie_optional
+from app.database import get_db
+from sqlalchemy.orm import Session
+from app.models import User
 
-router = APIRouter(prefix="/admin", tags=["admin-dashboard-ui"])
+router = APIRouter(prefix="/admin", tags=["admin-ui"])
 
 
-def _require_super_admin(user: User):
-    if not user or user.email != "admin@alerttrail.com":
-        raise HTTPException(status_code=403)
+# -------------------------------------------------
+# Seguridad: solo super admin
+# -------------------------------------------------
+def _require_super_admin(user_dict: dict | None):
+    if not user_dict:
+        raise HTTPException(status_code=401, detail="No autenticado")
+
+    email = user_dict.get("email")
+    if email != "admin@alerttrail.com":
+        raise HTTPException(status_code=403, detail="Acceso restringido")
 
 
+# -------------------------------------------------
+# Admin dashboard
+# -------------------------------------------------
 @router.get("/dashboard", response_class=HTMLResponse)
 def admin_dashboard_page(
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user_cookie),
+    user=Depends(get_current_user_cookie_optional),
 ):
     _require_super_admin(user)
 
-    # Lógica simple inline (no dependencia circular)
-    total = db.query(User).count()
-    free = db.query(User).filter(User.plan == "FREE").count()
-    pro = db.query(User).filter(User.plan == "PRO").count()
-    biz = db.query(User).filter(User.plan == "BIZ").count()
+    # métricas básicas (ejemplo, no rompe nada)
+    total_users = db.query(User).count()
+    free_users = db.query(User).filter(User.plan == "FREE").count()
+    pro_users = db.query(User).filter(User.plan == "PRO").count()
+    biz_users = db.query(User).filter(User.plan == "BIZ").count()
 
     return templates.TemplateResponse(
-        "admin_dashboard.html",
+        "admin/dashboard.html",
         {
             "request": request,
             "current_user": user,
-            "stats": {
-                "total": total,
-                "free": free,
-                "pro": pro,
-                "biz": biz,
+            "metrics": {
+                "total": total_users,
+                "free": free_users,
+                "pro": pro_users,
+                "biz": biz_users,
             },
         },
     )
-    
-def _get_user_email(user) -> str | None:
-    if not user:
-        return None
-    if isinstance(user, dict):
-        return user.get("email")
-    return getattr(user, "email", None)
-
-
-def _require_super_admin(user):
-    email = _get_user_email(user)
-    if email != "admin@alerttrail.com":
-        raise HTTPException(status_code=403, detail="Forbidden")
-
