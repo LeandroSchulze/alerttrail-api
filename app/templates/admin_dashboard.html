@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width:900px;margin:auto">
+  <h1>Admin Dashboard</h1>
+
+  <p><strong>Only visible to super admin</strong></p>
+
+  <hr>
+
+  <h2>Users</h2>
+
+  <ul>
+    <li><strong>Total:</strong> {{ stats.total }}</li>
+    <li><strong>FREE:</strong> {{ stats.free }}</li>
+    <li><strong>PRO:</strong> {{ stats.pro }}</li>
+    <li><strong>BIZ:</strong> {{ stats.biz }}</li>
+  </ul>
+
+  <hr>
+
+  <p style="color:#666;font-size:14px">
+    AlertTrail internal admin panel
+  </p>
+</div>
+{% endblock %}
