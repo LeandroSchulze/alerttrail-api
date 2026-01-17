@@ -107,6 +107,10 @@ _try_include_router("app.routers.audit")
 _try_include_router("app.routers.darkweb")
 _try_include_router("app.routers.legal")
 
+# ✅ Admin dashboard (super admin only)
+_try_include_router("app.routers.admin_dashboard")
+_try_include_router("app.routers.admin_dashboard_ui")
+
 
 # -------------------------
 # Basic routes
