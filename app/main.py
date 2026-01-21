@@ -33,6 +33,7 @@ from app.routers import (
     payments,
     webhooks,
     tasks_mail,
+    push,  # ✅ NECESARIO
 )
 
 # Background scheduler
@@ -50,17 +51,12 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_NAME)
 
-# Needed for UI templates
 app.state.templates = templates
-
-# Session cookies
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
-# Static files
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Reports
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
 
@@ -77,9 +73,7 @@ def _try_include_router(module_path: str) -> None:
         logger.exception("Failed including optional router: %s", module_path)
 
 
-# -------------------------
 # Routers
-# -------------------------
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
@@ -95,10 +89,9 @@ app.include_router(tools.router)
 app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
 app.include_router(i18n.router)
-
 app.include_router(tasks_mail.router)
+app.include_router(push.router)  # ✅ PUSH ACTIVO
 
-# Optional UI routers
 _try_include_router("app.routers.billing_ui")
 _try_include_router("app.routers.payments_ui")
 _try_include_router("app.routers.stats_ui")
@@ -106,15 +99,10 @@ _try_include_router("app.routers.admin_payments")
 _try_include_router("app.routers.audit")
 _try_include_router("app.routers.darkweb")
 _try_include_router("app.routers.legal")
-
-# ✅ Admin dashboard (super admin only)
 _try_include_router("app.routers.admin_dashboard")
 _try_include_router("app.routers.admin_dashboard_ui")
 
 
-# -------------------------
-# Basic routes
-# -------------------------
 @app.get("/health", include_in_schema=False)
 def health():
     return {"ok": True, "app": APP_NAME}
@@ -125,9 +113,6 @@ def root():
     return RedirectResponse(url="/dashboard", status_code=302)
 
 
-# -------------------------
-# Language alias
-# -------------------------
 @app.get("/set-lang", include_in_schema=False)
 def set_lang(lang: str = Query("es"), next: str = Query("/dashboard")):
     lang = (lang or "es").lower().strip()
@@ -140,9 +125,6 @@ def set_lang(lang: str = Query("es"), next: str = Query("/dashboard")):
     return resp
 
 
-# -------------------------
-# Dashboard
-# -------------------------
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
     if not user:
@@ -161,9 +143,6 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
     )
 
 
-# -------------------------
-# Background Scheduler
-# -------------------------
 scheduler = BackgroundScheduler()
 
 def _safe_run_mail_poll():
@@ -173,21 +152,15 @@ def _safe_run_mail_poll():
     except Exception:
         mail_logger.exception("Mail poll failed")
 
-MAIL_POLL_ENABLED = (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true"
-MAIL_POLL_INTERVAL_MIN = int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10"))
 
-if MAIL_POLL_ENABLED:
-    scheduler.add_job(_safe_run_mail_poll, "interval", minutes=MAIL_POLL_INTERVAL_MIN)
+if (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true":
+    scheduler.add_job(_safe_run_mail_poll, "interval", minutes=int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10")))
     try:
         scheduler.start()
-        mail_logger.info("Mail poll scheduler started (%s min)", MAIL_POLL_INTERVAL_MIN)
     except Exception:
         mail_logger.exception("Failed starting scheduler")
 
 
-# -------------------------
-# Global error handler
-# -------------------------
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error: %s", exc)
