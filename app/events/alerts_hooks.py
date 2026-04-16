@@ -1,9 +1,14 @@
 # app/events/alerts_hooks.py
+import logging
 from sqlalchemy import event
 from sqlalchemy.orm import Session
-from app.models import User  # ajustá el import si tu User está en otro módulo
+from app.models import User  # Ajustá el import si tu User está en otro módulo
 
-# Import robusto de MailAlert (ajusta si está en otro archivo)
+# Configuración de logs para ver qué pasa en Railway
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("AlertTrail.Hooks")
+
+# Import robusto de MailAlert
 try:
     from app.models import MailAlert
 except ImportError:
@@ -14,27 +19,45 @@ from app.services.pro_alerts import queue_or_push
 @event.listens_for(MailAlert, "after_insert")
 def on_mail_alert_insert(mapper, connection, target):
     """
-    Se ejecuta cuando se inserta una MailAlert.
-    Enviamos la notificación PRO sin romper la transacción principal.
+    Se ejecuta automáticamente cuando se inserta una MailAlert en la DB.
+    Ideal para que el Cron Job dispare la notificación al detectar un riesgo.
     """
+    # Usamos el objeto Session vinculado a la conexión actual
     db = Session(bind=connection)
+    
     try:
-        user = db.query(User).get(getattr(target, "user_id", None))
+        user_id = getattr(target, "user_id", None)
+        user = db.query(User).get(user_id)
+        
         if not user:
+            logger.warning(f"⚠️ No se encontró el usuario {user_id} para la alerta {target.id}")
             return
-        subject = getattr(target, "subject", "Alerta")
-        sender  = getattr(target, "sender", "")
+
+        # Extraemos datos básicos del mail detectado
+        subject = getattr(target, "subject", "Alerta de Seguridad")
+        sender  = getattr(target, "sender", "Desconocido")
         url_id  = getattr(target, "id", None)
+        
+        # El nivel de riesgo (para personalizar el mensaje si querés)
+        verdict = getattr(target, "verdict", "ALTO")
+        
+        # Construimos la URL a la que llevará el clic en la notificación
         url = f"/mail/alerts/{url_id}" if url_id else "/reports"
 
-        # Encola o envía según cooldown/quiet-hours (si no es PRO, no hace nada)
-        queue_or_push(db, user,
-            title="Mail sospechoso",
-            body=f"Asunto: {subject} — Remitente: {sender}",
+        logger.info(f"🚀 Disparando notificación Web Push para usuario {user_id} - Riesgo: {verdict}")
+
+        # Enviamos la notificación PRO (Web Push con VAPID)
+        # Asegurate de que 'user' tenga el campo de suscripción en la DB
+        queue_or_push(
+            db, 
+            user,
+            title=f"⚠️ Mail Sospechoso ({verdict})",
+            body=f"De: {sender}\nAsunto: {subject}",
             url=url
         )
+        
     except Exception as e:
-        # Nunca rompas la transacción de negocio por una notificación
-        print("alerts_hooks error:", e)
+        # Importante: nunca bloqueamos el escaneo si la notificación falla
+        logger.error(f"❌ Error enviando notificación en el hook: {str(e)}")
     finally:
         db.close()
