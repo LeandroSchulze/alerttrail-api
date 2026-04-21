@@ -32,13 +32,14 @@
       }
     }
 
-    /* Botón flotante de alertas (se muestra solo si existe /alerts/unread-count) */
+    /* Botón flotante de alertas */
     #alerts-fab{
       position:fixed;
       right:18px;
       bottom:18px;
       z-index:50;
       text-decoration:none;
+      display:none; /* Ocultar por defecto */
     }
     #alerts-fab span{
       display:inline-flex;
@@ -58,11 +59,6 @@
       border-radius:999px;
       padding:2px 8px;
       font-weight:600;
-    }
-
-    /* Ocultar por defecto, lo mostramos por JS sólo si responde el endpoint */
-    #alerts-fab{
-      display:none;
     }
   </style>
 </head>
@@ -101,26 +97,64 @@
     {% block body %}{% endblock %}
   </div>
 
-  {# Botón flotante de alertas (si el endpoint existe) #}
+  {# Botón flotante de alertas #}
   <a href="/alerts" id="alerts-fab">
     <span>
-      🔔 <span id="alerts-fab-count"
-        style="background:#ef4444;border-radius:999px;padding:2px 8px;min-width:18px;text-align:center">0</span>
+      🔔 <span id="alerts-fab-count">0</span>
       <span>{{ t(current_lang, "common.alerts") }}</span>
     </span>
   </a>
+
+  {# Scripts de la Aplicación #}
   <script>
-  async function refreshFab(){
-    try{
-      const r = await fetch('/alerts/unread-count', {credentials:'include'});
-      if(!r.ok) return;
-      const d = await r.json();
-      // Si el endpoint existe y responde, mostramos el FAB
-      document.getElementById('alerts-fab').style.display = 'block';
-      document.getElementById('alerts-fab-count').textContent = d.count || 0;
-    }catch(e){}
-  }
-  refreshFab(); setInterval(refreshFab,15000);
+    // 1. Lógica del Botón de Alertas (FAB)
+    async function refreshFab(){
+      try{
+        const r = await fetch('/alerts/unread-count', {credentials:'include'});
+        if(!r.ok) return;
+        const d = await r.json();
+        document.getElementById('alerts-fab').style.display = 'block';
+        document.getElementById('alerts-fab-count').textContent = d.count || 0;
+      }catch(e){}
+    }
+    refreshFab(); 
+    setInterval(refreshFab, 15000);
+
+    // 2. Lógica de Notificaciones Push & Service Worker
+    async function initPushNotifications() {
+      if ('serviceWorker' in navigator) {
+        try {
+          // Registro del SW en la raíz (mapeado en main.py)
+          const registration = await navigator.serviceWorker.register('/sw.js');
+          console.log('Service Worker activo en scope:', registration.scope);
+
+          // Obtener VAPID Public Key del servidor
+          const response = await fetch('/push/vapid-public');
+          const { vapidPublicKey } = await response.json();
+
+          if (vapidPublicKey) {
+            // Suscribir al usuario
+            const subscription = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: vapidPublicKey
+            });
+
+            // Enviar suscripción al backend
+            await fetch('/push/subscribe', {
+              method: 'POST',
+              body: JSON.stringify(subscription),
+              headers: { 'Content-Type': 'application/json' }
+            });
+            console.log('Suscripción Push exitosa');
+          }
+        } catch (error) {
+          console.warn('Registro de Push omitido o fallido:', error);
+        }
+      }
+    }
+
+    // Inicializar al cargar la página
+    window.addEventListener('load', initPushNotifications);
   </script>
 
 </body>
