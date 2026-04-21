@@ -11,14 +11,14 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy.orm import Session # <-- Agregado
+from sqlalchemy.orm import Session
 
 from app.i18n import get_lang, t
 from app.security import get_current_user_cookie_optional
 from app.ui import templates
 from app.services.mail_scan import scan_mailbox
-from app.database import get_db # <-- Agregado
-from app.models import MailAccount # <-- Agregado
+from app.database import get_db
+from app.models import MailAccount
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 log = logging.getLogger(__name__)
@@ -64,7 +64,6 @@ def _truthy(v: Any) -> bool:
     return s in ("1", "true", "yes", "y", "on", "si", "sí")
 
 def _user_id(user: Dict[str, Any]) -> str:
-    # IMPORTANTE: Usamos el ID numérico si está disponible para la DB
     return str(user.get("id") or user.get("email") or "anon")
 
 def _scan_file_for(user: Dict[str, Any]) -> Path:
@@ -88,15 +87,13 @@ def _verdict_from_level(level: str) -> str:
     if lvl == "medium": return "MEDIO"
     return "BAJO"
 
-def _load_linked_all() -> Dict[str, Any]:
-    data = _load_json(LINKED_FILE, {}) or {}
-    return data if isinstance(data, dict) else {}
-
 def _load_linked_one(user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    return _load_linked_all().get(_user_id(user))
+    data = _load_json(LINKED_FILE, {})
+    return data.get(_user_id(user)) if isinstance(data, dict) else None
 
 def _save_linked_one(user: Dict[str, Any], payload: Dict[str, Any]) -> None:
-    all_linked = _load_linked_all()
+    all_linked = _load_json(LINKED_FILE, {})
+    if not isinstance(all_linked, dict): all_linked = {}
     all_linked[_user_id(user)] = payload
     _save_json(LINKED_FILE, all_linked)
 
@@ -109,98 +106,89 @@ def get_user(request: Request):
 def mail_settings(request: Request, user=Depends(get_user)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang = get_lang(request)
-    plan = _compute_plan(user)
-    linked = _load_linked_one(user)
     return templates.TemplateResponse("mail.html", {
-        "request": request, "lang": lang, "t": t, "current_user": user,
-        "user": user, "plan": plan, "defaults": _defaults_from_env(), "linked": linked,
+        "request": request, "lang": lang, "t": t, "user": user,
+        "plan": _compute_plan(user), "defaults": _defaults_from_env(),
+        "linked": _load_linked_one(user),
     })
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang = get_lang(request)
-    plan = _compute_plan(user)
     linked = _load_linked_one(user)
-    last_scan_raw = _load_json(_scan_file_for(user), {}) or {}
+    last_scan_raw = _load_json(_scan_file_for(user), {})
     scan_items = last_scan_raw.get("items", [])
     if not isinstance(scan_items, list): scan_items = []
-    try:
-        scan_items.sort(key=lambda x: int(x.get("date_ts") or 0), reverse=True)
-    except: pass
+    
     last_scan = {
-        "ts": last_scan_raw.get("scanned_at") or last_scan_raw.get("ts") or "",
-        "folder": last_scan_raw.get("folder") or "",
-        "found": last_scan_raw.get("total") if isinstance(last_scan_raw.get("total"), int) else last_scan_raw.get("found", 0),
-        "limit": last_scan_raw.get("limit", 0),
+        "ts": last_scan_raw.get("scanned_at") or "",
+        "folder": last_scan_raw.get("folder") or "INBOX",
+        "total": last_scan_raw.get("total", 0),
         "error": last_scan_raw.get("error"),
     }
     return templates.TemplateResponse("mail_scanner.html", {
-        "request": request, "lang": lang, "t": t, "current_user": user,
-        "user": user, "plan": plan, "defaults": _defaults_from_env(), "linked": linked,
-        "last_scan": last_scan, "scan_items": scan_items,
+        "request": request, "lang": lang, "t": t, "user": user,
+        "linked": linked, "last_scan": last_scan, "scan_items": scan_items,
     })
 
 @router.post("/settings")
 def mail_settings_save(
-    request: Request,
-    user=Depends(get_user),
-    db: Session = Depends(get_db), # Inyectamos la DB
-    address: str = Form(""),
-    host: str = Form("imap.gmail.com"),
-    port: str = Form("993"),
-    username: str = Form(""),
-    password: str = Form(""),
-    folder: str = Form("INBOX"),
-    use_ssl: Optional[str] = Form(None),
-    mark_read: Optional[str] = Form(None),
+    request: Request, user=Depends(get_user), db: Session = Depends(get_db),
+    address: str = Form(""), host: str = Form("imap.gmail.com"),
+    port: str = Form("993"), username: str = Form(""),
+    password: str = Form(""), folder: str = Form("INBOX"),
+    use_ssl: Optional[str] = Form(None), mark_read: Optional[str] = Form(None),
 ):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-
-    try: port_i = int(port or 993)
-    except: port_i = 993
-
-    # Preparar datos
+    
     payload = {
-        "address": (address or username or "").strip(),
-        "host": (host or "imap.gmail.com").strip(),
-        "port": int(port_i),
-        "username": (username or "").strip(),
-        "password": (password or "").strip(),
-        "folder": (folder or "INBOX").strip() or "INBOX",
-        "use_ssl": bool(_truthy(use_ssl) if use_ssl is not None else True),
-        "mark_read": bool(_truthy(mark_read) if mark_read is not None else False),
-        "updated_at": _now_iso(),
+        "address": address.strip(), "host": host.strip(), "port": int(port or 993),
+        "username": username.strip(), "password": password.strip(),
+        "folder": folder.strip() or "INBOX",
+        "use_ssl": _truthy(use_ssl) if use_ssl is not None else True,
+        "mark_read": _truthy(mark_read), "updated_at": _now_iso(),
     }
-
-    # 1. GUARDAR EN JSON (Para la UI actual)
     _save_linked_one(user, payload)
 
-    # 2. GUARDAR EN DB (Para el Background Scanner persistente)
-    try:
-        uid = user.get("id")
-        if uid:
-            acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
-            if not acc:
-                acc = MailAccount(user_id=uid)
-                db.add(acc)
-            
-            acc.email_address = payload["address"]
-            acc.imap_host = payload["host"]
-            acc.imap_port = payload["port"]
-            acc.imap_username = payload["username"]
-            acc.imap_password = payload["password"] # Aquí queda fija la App Password
-            acc.imap_folder = payload["folder"]
-            acc.imap_ssl = payload["use_ssl"]
-            acc.mark_read = payload["mark_read"]
-            acc.is_active = True
-            
-            db.commit()
-            log.info(f"Cuenta persistida en DB para usuario {uid}")
-    except Exception as e:
-        db.rollback()
-        log.error(f"Error al persistir en DB: {e}")
+    uid = user.get("id")
+    if uid:
+        acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
+        if not acc:
+            acc = MailAccount(user_id=uid)
+            db.add(acc)
+        acc.email_address = payload["address"]
+        acc.imap_host = payload["host"]
+        acc.imap_password = payload["password"]
+        acc.is_active = True
+        db.commit()
 
     return RedirectResponse(url="/mail/scanner?saved=1", status_code=303)
 
-# ... [El resto de las funciones scan_get y scan_post quedan igual] ...
+@router.get("/scan")
+def scan_get(request: Request, user=Depends(get_user), limit: int = Query(20)):
+    if not user: return RedirectResponse(url="/auth/login", status_code=302)
+    linked = _load_linked_one(user)
+    if not linked: return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
+
+    res = scan_mailbox(
+        host=linked["host"], port=linked["port"], username=linked["username"],
+        password=linked["password"], folder=linked["folder"],
+        use_ssl=linked["use_ssl"], limit=limit
+    )
+
+    items = []
+    for it in (res.items or []):
+        lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
+        items.append({
+            "uid": str(it.uid), "subject": str(it.subject), "from": str(it.from_email),
+            "date": str(it.date), "date_ts": _parse_date_ts(str(it.date)),
+            "verdict": _verdict_from_level(lvl), "reasons": getattr(it.analysis, "reasons", [])
+        })
+    items.sort(key=lambda x: x["date_ts"], reverse=True)
+
+    _save_json(_scan_file_for(user), {
+        "ok": res.ok, "scanned_at": _now_iso(), "folder": linked["folder"],
+        "total": res.total_found, "items": items, "error": res.message if not res.ok else None
+    })
+    return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
