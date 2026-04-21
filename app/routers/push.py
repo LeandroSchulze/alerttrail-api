@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pywebpush import webpush, WebPushException
 
 from app.security import get_current_user_cookie_optional
 
@@ -37,6 +38,39 @@ def _user_id(user: Dict[str, Any]) -> str:
     return str(user.get("id") or user.get("email") or "unknown")
 
 
+def trigger_push_notification(user_id: str, title: str, body: str):
+    """Envía una notificación push a todos los dispositivos registrados de un usuario."""
+    data = _load()
+    subscriptions = data.get(user_id, [])
+    
+    private_key = os.getenv("VAPID_PRIVATE_KEY")
+    # El claim 'sub' es obligatorio (debe ser un mail o URL de contacto)
+    claims = {"sub": "mailto:admin@alerttrail.com"}
+
+    valid_subscriptions = []
+    changed = False
+
+    for sub in subscriptions:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=json.dumps({"title": title, "body": body}),
+                vapid_private_key=private_key,
+                vapid_claims=claims
+            )
+            valid_subscriptions.append(sub)
+        except WebPushException as ex:
+            print(f"Error enviando push a {user_id}: {ex}")
+            # Si el error es 410 (Gone) o 404 (Not Found), la suscripción ya no existe
+            # No la agregamos a valid_subscriptions para que sea eliminada
+            changed = True
+            continue
+
+    if changed:
+        data[user_id] = valid_subscriptions
+        _save(data)
+
+
 @router.get("/config")
 def push_config():
     return {"public_key": os.getenv("VAPID_PUBLIC_KEY", "")}
@@ -61,6 +95,7 @@ async def push_subscribe(request: Request):
     uid = _user_id(user)
 
     data.setdefault(uid, [])
+    # Evitar duplicados del mismo endpoint
     data[uid] = [p for p in data[uid] if p.get("endpoint") != payload.get("endpoint")]
     data[uid].append(payload)
 
