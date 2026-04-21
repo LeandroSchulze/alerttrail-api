@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 import logging
+# Se agrega FileResponse para el Service Worker
 from pathlib import Path
 from importlib import import_module
 
 from fastapi import FastAPI, Request, Depends, Query
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -33,7 +34,7 @@ from app.routers import (
     payments,
     webhooks,
     tasks_mail,
-    push,  # ✅ NECESARIO
+    push,
 )
 
 # Background scheduler
@@ -53,6 +54,16 @@ app = FastAPI(title=APP_NAME)
 
 app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
+
+# --- CONFIGURACIÓN DE ARCHIVOS ESTÁTICOS Y SW ---
+
+# ✅ CRÍTICO: Servir el Service Worker desde la raíz para evitar problemas de Scope en Android/Chrome
+@app.get("/sw.js", include_in_schema=False)
+async def serve_sw():
+    sw_path = STATIC_DIR / "sw.js"
+    if sw_path.exists():
+        return FileResponse(sw_path)
+    return HTMLResponse("Service Worker not found", status_code=404)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -90,7 +101,7 @@ app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
 app.include_router(i18n.router)
 app.include_router(tasks_mail.router)
-app.include_router(push.router)  # ✅ PUSH ACTIVO
+app.include_router(push.router)
 
 _try_include_router("app.routers.billing_ui")
 _try_include_router("app.routers.payments_ui")
