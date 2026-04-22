@@ -25,7 +25,16 @@
       <p style="color:#64748b;">{{ t(lang, "mail.no_items") }}</p>
     {% endif %}
 
-    <p><a href="/mail/scanner">{{ t(lang, "common.back") }}</a> · <a href="/dashboard">{{ t(lang, "common.back_dashboard") }}</a></p>
+    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+    
+    <div style="display: flex; gap: 10px; justify-content: center;">
+      <a href="/mail/scanner" class="btn-secondary" style="text-decoration: none; padding: 8px 16px; border: 1px solid #cbd5e1; border-radius: 6px; color: #475569;">
+        {{ t(lang, "common.back") }}
+      </a>
+      <a href="/dashboard" class="btn-primary" style="text-decoration: none; padding: 8px 16px; background-color: #2563eb; color: white; border-radius: 6px;">
+        {{ t(lang, "common.back_dashboard") }}
+      </a>
+    </div>
   </div>
 </body>
 </html>
