@@ -26,13 +26,14 @@
     {% endif %}
 
     <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;">
-    
-    <div style="display: flex; gap: 10px; justify-content: center;">
-      <a href="/mail/scanner" class="btn-secondary" style="text-decoration: none; padding: 8px 16px; border: 1px solid #cbd5e1; border-radius: 6px; color: #475569;">
+
+    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+      <a href="/mail/scanner" class="btn-secondary" style="text-decoration: none; padding: 10px 20px; border: 1px solid #cbd5e1; border-radius: 8px; color: #475569; font-weight: 500;">
         {{ t(lang, "common.back") }}
       </a>
-      <a href="/" class="btn-primary" style="text-decoration: none; padding: 8px 16px; background-color: #2563eb; color: white; border-radius: 6px;">
-    {{ t(lang, "common.back_dashboard") }}
+      
+      <a href="/dashboard" class="btn-primary" style="text-decoration: none; padding: 10px 20px; background-color: #2563eb; color: white; border-radius: 8px; font-weight: 500;">
+        {{ t(lang, "common.back_dashboard") }}
       </a>
     </div>
   </div>
