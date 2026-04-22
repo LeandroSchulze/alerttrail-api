@@ -5,34 +5,91 @@
   <title>{{ t(lang, "mail.scan_result_title") }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(56,189,248,0.18) 0, transparent 45%),
+        linear-gradient(to bottom, #f0f9ff, #dbeafe);
+      color: #0f172a;
+      display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.98);
+      padding: 32px; border-radius: 24px;
+      border: 1px solid #dbeafe;
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.1);
+      max-width: 600px; width: 90%;
+      backdrop-filter: blur(8px);
+    }
+    h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+    .summary-text { color: #64748b; margin-bottom: 24px; font-size: 1rem; }
+    
+    ul { padding: 0; list-style: none; margin: 0; }
+    li { 
+      padding: 16px; border-bottom: 1px solid #f1f5f9; 
+      transition: background 0.2s;
+    }
+    li:hover { background: rgba(240, 249, 255, 0.5); }
+    li:last-child { border: none; }
+    
+    .sender { font-weight: 600; display: block; color: #1e293b; }
+    .subject { font-size: 0.9rem; color: #64748b; }
+    .verdict-row { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+    .verdict-badge { 
+      font-size: 0.75rem; font-weight: 700; padding: 2px 8px; 
+      border-radius: 999px; background: #e0f2fe; color: #0369a1;
+      text-transform: uppercase;
+    }
+
+    .btn-group { display: flex; gap: 12px; margin-top: 32px; }
+    .btn {
+      flex: 1; padding: 12px; border-radius: 12px; text-decoration: none;
+      font-weight: 600; font-size: 0.9rem; text-align: center; transition: all 0.2s;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .btn-back { border: 1px solid #cbd5e1; color: #475569; background: #fff; }
+    /* Mismo degradado Pro del Dashboard */
+    .btn-dash { 
+      background: linear-gradient(135deg, #22c55e, #0ea5e9); 
+      color: white; border: none; 
+      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+    }
+    .btn:hover { transform: translateY(-2px); filter: brightness(1.05); }
+  </style>
 </head>
 <body>
   <div class="card">
     <h1>{{ t(lang, "mail.scan_result_title") }}</h1>
-    <p>{{ summary }}</p>
+    <p class="summary-text">{{ summary }}</p>
 
     {% if items and items|length > 0 %}
       <ul>
         {% for item in items %}
           <li>
-            <b>{{ item.sender }}</b> — {{ item.subject }}
-            → <b>{{ item.verdict }}</b>
-            {% if item.score is defined %} ({{ item.score }}/100){% endif %}
+            <span class="sender">{{ item.sender }}</span>
+            <span class="subject">{{ item.subject }}</span>
+            <div class="verdict-row">
+                <span class="verdict-badge">{{ item.verdict }}</span>
+                {% if item.score is defined %} 
+                  <small style="color: #94a3b8;">Score: {{ item.score }}/100</small>
+                {% endif %}
+            </div>
           </li>
         {% endfor %}
       </ul>
     {% else %}
-      <p style="color:#64748b;">{{ t(lang, "mail.no_items") }}</p>
+      <div style="text-align: center; padding: 40px 20px;">
+        <p style="color:#94a3b8; margin: 0;">{{ t(lang, "mail.no_items") }}</p>
+      </div>
     {% endif %}
 
-    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;">
-
-    <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-      <a href="/mail/scanner" class="btn-secondary" style="text-decoration: none; padding: 10px 20px; border: 1px solid #cbd5e1; border-radius: 8px; color: #475569; font-weight: 500;">
+    <div class="btn-group">
+      <a href="/mail/scanner" class="btn btn-back">
         {{ t(lang, "common.back") }}
       </a>
-      
-      <a href="/dashboard" class="btn-primary" style="text-decoration: none; padding: 10px 20px; background-color: #2563eb; color: white; border-radius: 8px; font-weight: 500;">
+      <a href="/dashboard?ref=scanner" class="btn btn-dash">
         {{ t(lang, "common.back_dashboard") }}
       </a>
     </div>
