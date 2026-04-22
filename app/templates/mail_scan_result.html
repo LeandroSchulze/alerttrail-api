@@ -10,127 +10,132 @@
       --accent: #0ea5e9;
       --text-main: #0f172a;
       --text-muted: #64748b;
-      --card-border: #dbeafe;
     }
 
     body {
-      margin: 0; padding: 15px;
+      margin: 0; padding: 10px;
       font-family: -apple-system, system-ui, sans-serif;
       background: var(--bg-main);
       color: var(--text-main);
-      display: flex; justify-content: center;
     }
 
-    .container { width: 100%; max-width: 800px; }
+    .container { width: 100%; max-width: 800px; margin: 0 auto; }
 
-    .header-section { margin-bottom: 20px; }
-    h1 { font-size: 1.5rem; margin: 0 0 5px; letter-spacing: -0.02em; }
-    .summary { color: var(--text-muted); font-size: 0.95rem; margin: 0; }
-
-    /* --- ESTILO DE CARDS (Adiós Tablas) --- */
-    .scan-list { display: flex; flex-direction: column; gap: 16px; margin-bottom: 30px; }
-    
-    .scan-card {
-      background: white;
-      border: 1px solid var(--card-border);
-      border-radius: 18px;
-      padding: 18px;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
-      position: relative;
+    .card-result {
+      background: white; border-radius: 20px; padding: 20px;
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+      border: 1px solid #dbeafe;
     }
 
-    .card-top {
-      display: flex; justify-content: space-between; align-items: flex-start;
-      margin-bottom: 12px; gap: 10px;
+    h1 { font-size: 1.3rem; margin-bottom: 5px; }
+    .summary { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px; }
+
+    /* --- EL TRUCO PARA EL CELULAR (FUERZA BRUTA) --- */
+    @media (max-width: 768px) {
+      table, thead, tbody, th, td, tr { 
+        display: block !important; 
+        width: 100% !important; 
+      }
+      thead { display: none !important; } 
+      
+      tr {
+        margin-bottom: 15px !important;
+        padding: 15px !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 14px !important;
+        background: #ffffff !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.03) !important;
+      }
+
+      td {
+        border: none !important;
+        padding: 6px 0 !important;
+        font-size: 0.95rem !important;
+        word-break: break-all !important; /* Evita el texto vertical */
+      }
+
+      td::before {
+        content: attr(data-label);
+        display: block;
+        font-weight: 800;
+        font-size: 0.65rem;
+        color: var(--accent);
+        text-transform: uppercase;
+        margin-bottom: 2px;
+      }
     }
 
-    .label-tiny {
-      display: block; font-size: 0.65rem; font-weight: 800;
-      color: var(--accent); text-transform: uppercase; margin-bottom: 2px;
+    /* --- ESTILO ESCRITORIO --- */
+    @media (min-width: 769px) {
+      table { width: 100%; border-collapse: collapse; }
+      th { text-align: left; padding: 12px; border-bottom: 2px solid #f1f5f9; color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; }
+      td { padding: 15px 12px; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; }
     }
 
-    .scan-sender {
-      font-weight: 700; color: #1e293b; font-size: 1rem;
-      word-break: break-all; display: block; line-height: 1.2;
-    }
-
-    .scan-date { font-size: 0.8rem; color: var(--text-muted); }
-
-    .scan-subject {
-      font-size: 0.9rem; color: #475569; margin: 10px 0;
-      padding: 8px 0; border-top: 1px solid #f1f5f9;
-    }
-
-    .scan-reasons {
-      background: #f8fafc; padding: 12px; border-radius: 10px;
-      font-size: 0.88rem; color: #1e293b; line-height: 1.5;
-      border-left: 3px solid var(--accent);
-    }
-
-    /* Veredictos */
     .verdict-badge {
-      padding: 4px 10px; border-radius: 999px;
-      font-weight: 700; font-size: 0.7rem; text-transform: uppercase;
-      white-space: nowrap;
+      display: inline-block; padding: 4px 10px; border-radius: 999px;
+      font-weight: 700; font-size: 0.75rem; text-transform: uppercase;
     }
     .ALTO { background: #fee2e2; color: #b91c1c; }
     .MEDIO { background: #fef3c7; color: #92400e; }
     .BAJO { background: #dcfce7; color: #166534; }
 
-    /* Botones */
-    .btn-group { display: flex; gap: 12px; margin-top: 20px; }
+    .btn-group { display: flex; gap: 10px; margin-top: 25px; }
     .btn {
-      flex: 1; padding: 14px; border-radius: 12px; text-decoration: none;
-      font-weight: 600; font-size: 0.95rem; text-align: center; transition: all 0.2s;
+      flex: 1; padding: 12px; border-radius: 12px; text-decoration: none;
+      font-weight: 600; font-size: 0.9rem; text-align: center;
     }
     .btn-back { border: 1px solid #cbd5e1; color: #475569; background: #fff; }
-    .btn-dash { background: linear-gradient(135deg, #22c55e, #0ea5e9); color: white; border: none; box-shadow: 0 4px 10px rgba(14, 165, 233, 0.2); }
-    .btn:active { transform: scale(0.98); }
+    .btn-dash { background: linear-gradient(135deg, #22c55e, #0ea5e9); color: white; border: none; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="header-section">
+    <div class="card-result">
       <h1>{{ t(lang, "mail.scan_result_title") }}</h1>
       <p class="summary">{{ summary }}</p>
-    </div>
 
-    <div class="scan-list">
       {% if items %}
-        {% for item in items %}
-          <div class="scan-card">
-            <div class="card-top">
-              <div style="max-width: 70%;">
-                <span class="label-tiny">Remitente</span>
-                <span class="scan-sender">{{ item.sender }}</span>
-                <span class="scan-date">{{ item.date }}</span>
-              </div>
-              <span class="verdict-badge {{ item.verdict|upper }}">{{ item.verdict }}</span>
-            </div>
-
-            <span class="label-tiny">Asunto</span>
-            <div class="scan-subject">{{ item.subject }}</div>
-
-            <span class="label-tiny">Análisis de Motivos</span>
-            <div class="scan-reasons">
-              {% if item.reasons %}
-                {{ item.reasons | join(', ') }}
-              {% else %}
-                No se detectaron anomalías en este correo.
-              {% endif %}
-            </div>
-          </div>
-        {% endfor %}
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>De</th>
+              <th>Asunto</th>
+              <th>Veredicto</th>
+              <th>Motivos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+              <tr>
+                <td data-label="Fecha">{{ item.date }}</td>
+                <td data-label="De"><strong>{{ item.sender }}</strong></td>
+                <td data-label="Asunto">{{ item.subject }}</td>
+                <td data-label="Veredicto">
+                  <span class="verdict-badge {{ item.verdict|upper }}">{{ item.verdict }}</span>
+                </td>
+                <td data-label="Motivos">
+                  <div style="color: #475569; font-size: 0.85rem; line-height: 1.4;">
+                    {% if item.reasons %}
+                      {{ item.reasons | join(', ') }}
+                    {% else %}
+                      Sin amenazas detectadas.
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       {% else %}
-        <div style="text-align:center; padding: 40px; color:var(--text-muted);">
-          {{ t(lang, "mail.no_items") }}
-        </div>
+        <p style="text-align:center; color:var(--text-muted);">{{ t(lang, "mail.no_items") }}</p>
       {% endif %}
-    </div>
 
-    <div class="btn-group">
-      <a href="/mail/scanner" class="btn btn-back">{{ t(lang, "common.back") }}</a>
-      <a href="/dashboard?ref=scanner" class="btn btn-dash">{{ t(lang, "common.back_dashboard") }}</a>
+      <div class="btn-group">
+        <a href="/mail/scanner" class="btn btn-back">{{ t(lang, "common.back") }}</a>
+        <a href="/dashboard?ref=scanner" class="btn btn-dash">{{ t(lang, "common.back_dashboard") }}</a>
+      </div>
     </div>
   </div>
 </body>
