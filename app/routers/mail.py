@@ -113,20 +113,34 @@ def mail_settings(request: Request, user=Depends(get_user)):
     })
 
 @router.get("/scanner", response_class=HTMLResponse)
-def mail_scanner(request: Request, user=Depends(get_user)):
+def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang = get_lang(request)
+    
+    # Intentar cargar del JSON
     linked = _load_linked_one(user)
+    
+    # SI EL JSON NO EXISTE (porque Railway reinició), BUSCAMOS EN LA DB
+    if not linked and user.get("id"):
+        acc = db.query(MailAccount).filter(MailAccount.user_id == user.get("id")).first()
+        if acc:
+            linked = {
+                "address": acc.email_address,
+                "host": acc.imap_host,
+                "password": acc.imap_password,
+                "port": 993,
+                "folder": "INBOX",
+                "use_ssl": True
+            }
+    
     last_scan_raw = _load_json(_scan_file_for(user), {})
     scan_items = last_scan_raw.get("items", [])
-    if not isinstance(scan_items, list): scan_items = []
     
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or "",
-        "folder": last_scan_raw.get("folder") or "INBOX",
         "total": last_scan_raw.get("total", 0),
-        "error": last_scan_raw.get("error"),
     }
+    
     return templates.TemplateResponse("mail_scanner.html", {
         "request": request, "lang": lang, "t": t, "user": user,
         "linked": linked, "last_scan": last_scan, "scan_items": scan_items,
