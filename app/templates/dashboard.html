@@ -33,324 +33,94 @@
     * { box-sizing: border-box; }
 
     body {
-      margin: 0;
-      padding: 0;
+      margin: 0; padding: 0;
       font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
       background:
         radial-gradient(circle at top, var(--bg-gradient-top) 0, transparent 45%),
         radial-gradient(circle at bottom, var(--bg-gradient-bottom) 0, transparent 55%),
         linear-gradient(to bottom, #f0f9ff, #dbeafe);
       color: var(--text-main);
+      min-height: 100vh;
     }
 
-    .page {
-      max-width: 1120px;
-      margin: 20px auto 32px;
-      padding: 0 16px 32px;
-    }
+    .page { max-width: 1120px; margin: 0 auto; padding: 40px 16px 60px; }
 
     .page-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-      margin-bottom: 10px;
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 20px; margin-bottom: 30px;
     }
 
     .page-title {
-      font-size: 1.7rem;
-      font-weight: 650;
-      letter-spacing: -0.03em;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      font-size: 1.85rem; font-weight: 700; letter-spacing: -0.03em;
+      display: flex; align-items: center; gap: 10px; margin: 0;
     }
 
-    .page-title span.wave {
-      font-size: 1.4rem;
-    }
+    .page-subtitle { margin: 6px 0 0; font-size: 1rem; color: var(--text-muted); }
 
-    .page-subtitle {
-      margin-top: 4px;
-      font-size: 0.95rem;
-      color: var(--text-muted);
-    }
-
-    .user-email {
-      margin-top: 4px;
-      font-size: 0.86rem;
-      color: var(--text-soft);
-      text-align: right;
-    }
+    .user-info-block { text-align: right; }
+    .user-email { font-size: 0.85rem; color: var(--text-soft); margin-bottom: 8px; }
 
     .pill-plan {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      border-radius: 999px;
-      padding: 5px 12px;
-      border: 1px solid var(--pill-border);
-      background: var(--pill-bg);
-      font-size: 0.8rem;
-      color: var(--text-main);
-      box-shadow: 0 8px 16px rgba(15,23,42,0.06);
-    }
-
-    .pill-plan-label {
-      font-weight: 500;
-      color: var(--text-main);
+      display: inline-flex; align-items: center; gap: 8px;
+      border-radius: 999px; padding: 6px 14px;
+      border: 1px solid var(--pill-border); background: var(--pill-bg);
+      font-size: 0.85rem; box-shadow: 0 4px 12px rgba(15,23,42,0.05);
     }
 
     .pill-plan-badge {
-      border-radius: 999px;
-      padding: 2px 8px;
+      border-radius: 999px; padding: 2px 10px;
       background: linear-gradient(135deg, var(--accent-grad-from), var(--accent-grad-to));
-      color: #0b1120;
-      font-weight: 600;
+      color: #fff; font-weight: 700; font-size: 0.75rem;
     }
 
-    .pill-plan-free {
-      background: transparent;
-      color: var(--text-main);
-      border: 1px solid var(--chip-border);
-    }
-
-    .trial-banner {
-      margin: 4px 0 14px;
-      border-radius: 16px;
-      padding: 10px 12px;
-      background: linear-gradient(120deg, rgba(56,189,248,0.16), rgba(59,130,246,0.08));
-      border: 1px solid rgba(59,130,246,0.35);
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      font-size: 0.9rem;
-      color: #0f172a;
-      box-shadow: 0 10px 22px rgba(15,23,42,0.12);
-    }
-
-    .trial-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-      background: #fbbf24;
-      margin-top: 4px;
-      flex-shrink: 0;
-    }
-
-    .trial-title {
-      font-weight: 600;
-      margin-bottom: 2px;
-    }
-
-    .trial-actions {
-      margin-top: 4px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    .trial-link {
-      font-size: 0.84rem;
-      text-decoration: none;
-      color: #0369a1;
-      font-weight: 500;
-    }
-
-    .trial-link:hover {
-      text-decoration: underline;
-    }
-
-    .grid-main {
-      display: grid;
-      grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.5fr);
-      gap: 16px;
-      margin-top: 8px;
-    }
-
-    .grid-secondary {
-      display: grid;
-      grid-template-columns: minmax(0, 1.45fr) minmax(0, 1.55fr);
-      gap: 16px;
-      margin-top: 16px;
-    }
-
-    @media (max-width: 880px) {
-      .grid-main,
-      .grid-secondary {
-        grid-template-columns: minmax(0, 1fr);
-      }
-      .page-header {
-        flex-direction: column;
-      }
-      .user-email { text-align: left; }
+    .grid-layout {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 20px; margin-top: 24px;
     }
 
     .card {
-      background: var(--card-bg);
-      border-radius: 18px;
-      border: 1px solid var(--card-border);
-      padding: 18px 18px 16px;
-      box-shadow: 0 18px 40px rgba(15,23,42,0.10);
-      backdrop-filter: blur(8px);
+      background: var(--card-bg); border-radius: 20px;
+      border: 1px solid var(--card-border); padding: 24px;
+      box-shadow: 0 10px 25px rgba(15,23,42,0.06);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      display: flex; flex-direction: column;
     }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(15,23,42,0.1); }
+    .card-soft { background: var(--card-soft-bg); }
 
-    .card-soft {
-      background: var(--card-soft-bg);
-    }
+    .heading { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; }
+    .muted { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 16px; }
 
-    .section-title {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 8px;
-    }
-
-    .heading {
-      font-size: 1.05rem;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-    }
-
-    .muted {
-      font-size: 0.88rem;
-      color: var(--text-muted);
-    }
-
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 8px;
-    }
-
-    .chip {
-      border-radius: 999px;
-      border: 1px solid var(--chip-border);
-      padding: 4px 10px;
-      font-size: 0.78rem;
-      color: var(--chip-text);
-      background: var(--chip-bg);
-      font-weight: 500;
-    }
-
-    .btn-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-      align-items: center;
-    }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; padding-top: 20px; }
 
     .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 999px;
-      padding: 7px 13px;
-      font-size: 0.85rem;
-      border: 1px solid rgba(148,163,184,0.7);
-      background: #f8fafc;
-      color: #0f172a;
-      text-decoration: none;
-      cursor: pointer;
-      transition: background .15s ease, transform .05s ease, border-color .15s ease, box-shadow .15s ease;
-    }
-
-    .btn:hover {
-      background: #eff6ff;
-      border-color: var(--accent);
-      box-shadow: 0 6px 16px rgba(37,99,235,0.20);
-      transform: translateY(-1px);
+      padding: 10px 18px; border-radius: 12px; font-size: 0.9rem; font-weight: 600;
+      text-decoration: none; display: inline-flex; align-items: center; justify-content: center;
+      transition: all 0.2s; border: 1px solid #cbd5e1; background: #fff; color: var(--text-main);
     }
 
     .btn-primary {
       background: linear-gradient(135deg, var(--accent-grad-from), var(--accent-grad-to));
-      border: none;
-      color: #f9fafb;
-      font-weight: 600;
+      color: white; border: none; box-shadow: 0 4px 12px rgba(34,197,94,0.3);
+    }
+    .btn-primary:hover { filter: brightness(1.1); box-shadow: 0 6px 18px rgba(34,197,94,0.4); }
+
+    .lang-switcher { display: flex; gap: 5px; margin-top: 12px; justify-content: flex-end; }
+    .lang-btn {
+      border: 1px solid #cbd5e1; background: white; padding: 4px 10px;
+      border-radius: 8px; font-size: 0.75rem; cursor: pointer; font-weight: 600;
+    }
+    .lang-btn.active { background: #0f172a; color: white; border-color: #0f172a; }
+
+    .trial-banner {
+        background: white; border: 1px solid #bae6fd; border-left: 5px solid #0ea5e9;
+        padding: 16px; border-radius: 12px; margin-bottom: 24px; display: flex; gap: 15px; align-items: center;
     }
 
-    .btn-primary:hover {
-      filter: brightness(1.05);
-      transform: translateY(-1px);
-      box-shadow: 0 10px 22px rgba(56,189,248,0.4);
-    }
-
-    .btn-ghost {
-      background: transparent;
-      border-style: dashed;
-      border-color: rgba(148,163,184,0.8);
-    }
-
-    .btn-outline {
-      background: transparent;
-      border-color: rgba(59,130,246,0.6);
-      color: #1d4ed8;
-    }
-
-    .list-compact {
-      margin: 4px 0 0;
-      padding-left: 18px;
-      color: var(--text-muted);
-      font-size: 0.84rem;
-    }
-
-    .list-compact li + li {
-      margin-top: 2px;
-    }
-
-    .payments-empty {
-      font-size: 0.85rem;
-      color: var(--text-muted);
-      margin-top: 6px;
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 0.75rem;
-      border: 1px solid rgba(148,163,184,0.7);
-      background: rgba(248,250,252,0.9);
-      color: var(--text-muted);
-    }
-
-    .badge-pill {
-      background: rgba(224,242,254,0.9);
-      border-color: #bfdbfe;
-      color: #075985;
-    }
-
-    .footer {
-      margin-top: 18px;
-      font-size: 0.78rem;
-      color: var(--text-soft);
-      text-align: center;
-    }
-
-    /* Selector idioma */
-    .lang-switcher form{
-      display:flex;
-      gap:6px;
-      justify-content:flex-end;
-      margin-top:8px;
-    }
-    .lang-pill{
-      border:1px solid rgba(148,163,184,0.7);
-      background:rgba(255,255,255,0.75);
-      padding:6px 10px;
-      border-radius:999px;
-      cursor:pointer;
-      font-size:12px;
-    }
-    .lang-pill.active{
-      background:#0f172a;
-      color:#f9fafb;
-      border-color:#0f172a;
-      font-weight:600;
+    @media (max-width: 640px) {
+      .page-header { flex-direction: column; align-items: flex-start; }
+      .user-info-block { text-align: left; }
+      .grid-layout { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -358,224 +128,84 @@
   <div class="page">
     <header class="page-header">
       <div>
-        <div class="page-title">
+        <h1 class="page-title">
           <span class="wave">👋</span>
-          <span>{{ t(lang, "dashboard.hello") }}, {{ user.name or current_user.name or current_user.email or t(lang, "dashboard.user_fallback") }}</span>
-        </div>
-        <p class="page-subtitle">
-          {{ t(lang, "dashboard.subtitle") }}
-        </p>
+          {{ t(lang, "dashboard.hello") }}, {{ user.name or current_user.name or current_user.email or t(lang, "dashboard.user_fallback") }}
+        </h1>
+        <p class="page-subtitle">{{ t(lang, "dashboard.subtitle") }}</p>
       </div>
 
-      <div>
-        {% set plan = (user.plan or current_user.plan or "FREE")|upper %}
+      <div class="user-info-block">
+        <div class="user-email">{{ current_user.email or user.email }}</div>
         <div class="pill-plan">
           <span class="pill-plan-label">{{ t(lang, "dashboard.plan") }}</span>
-          {% if (current_user.is_pro or user.is_pro) or plan in ["PRO", "BIZ", "EMPRESA", "EMPRESAS"] %}
-            <span class="pill-plan-badge">{{ plan }}</span>
-          {% else %}
-            <span class="pill-plan-badge pill-plan-free">{{ plan }}</span>
-          {% endif %}
+          {% set plan = (user.plan or current_user.plan or "FREE")|upper %}
+          <span class="pill-plan-badge">{{ plan }}</span>
         </div>
-
-        <div class="user-email">
-          {{ current_user.email or user.email }}
-        </div>
-
-        <div class="btn-row" style="justify-content:flex-end;margin-top:10px;">
-          <a class="btn btn-ghost" href="/auth/logout">
-            {{ "Salir" if (lang or "es") == "es" else "Logout" }}
-          </a>
-        </div>
-
-        <!-- Selector de idioma ES / EN (FIX: ruta real /i18n/set POST) -->
+        
         <div class="lang-switcher">
-          <form method="post" action="/i18n/set">
+          <form method="post" action="/i18n/set" style="display: flex; gap: 5px;">
             <input type="hidden" name="next" value="{{ request.url.path }}">
-            <button type="submit" name="lang" value="es"
-                    class="lang-pill {% if (lang or 'es') == 'es' %}active{% endif %}">
-              ES
-            </button>
-            <button type="submit" name="lang" value="en"
-                    class="lang-pill {% if (lang or 'es') == 'en' %}active{% endif %}">
-              EN
-            </button>
+            <button type="submit" name="lang" value="es" class="lang-btn {% if (lang or 'es') == 'es' %}active{% endif %}">ES</button>
+            <button type="submit" name="lang" value="en" class="lang-btn {% if (lang or 'es') == 'en' %}active{% endif %}">EN</button>
           </form>
         </div>
       </div>
     </header>
 
-    {# Banner trial #}
-    {% set pro_source = (current_user.pro_source or '')|lower if current_user is defined else '' %}
-    {% set had_trial = current_user.had_trial if current_user is defined and current_user.had_trial is not none else false %}
-
-    {% if current_user.is_pro and pro_source == 'trial' %}
-      <section class="trial-banner">
-        <div class="trial-dot"></div>
+    {# Banners de suscripción simplificados #}
+    {% if not current_user.is_pro %}
+    <div class="trial-banner">
+        <div style="font-size: 1.5rem;">🚀</div>
         <div>
-          <div class="trial-title">{{ t(lang, "dashboard.trial_active_title") }}</div>
-          <div>{{ t(lang, "dashboard.trial_active_body") }}</div>
-          <div class="trial-actions">
-            <a class="trial-link" href="/billing/subscriptions">{{ t(lang, "dashboard.trial_manage") }}</a>
-          </div>
+            <strong style="display:block;">{{ t(lang, "dashboard.trial_available_title") }}</strong>
+            <span style="font-size: 0.9rem; color: var(--text-muted);">{{ t(lang, "dashboard.trial_available_body") }}</span>
+            <a href="/billing/subscriptions" style="margin-left:10px; font-size:0.85rem; font-weight:700; color:var(--accent);">{{ t(lang, "dashboard.trial_activate") }}</a>
         </div>
-      </section>
-    {% elif not current_user.is_pro and had_trial %}
-      <section class="trial-banner" style="border-color:#fecaca;background:linear-gradient(120deg,#fee2e2,#fee2e2);">
-        <div class="trial-dot" style="background:#ef4444;"></div>
-        <div>
-          <div class="trial-title">{{ t(lang, "dashboard.trial_ended_title") }}</div>
-          <div>{{ t(lang, "dashboard.trial_ended_body") }}</div>
-          <div class="trial-actions">
-            <a class="trial-link" href="/billing/subscriptions">{{ t(lang, "dashboard.trial_see_pro") }}</a>
-          </div>
-        </div>
-      </section>
-    {% elif not current_user.is_pro and not had_trial %}
-      <section class="trial-banner">
-        <div class="trial-dot"></div>
-        <div>
-          <div class="trial-title">{{ t(lang, "dashboard.trial_available_title") }}</div>
-          <div>{{ t(lang, "dashboard.trial_available_body") }}</div>
-          <div class="trial-actions">
-            <a class="trial-link" href="/billing/subscriptions">{{ t(lang, "dashboard.trial_activate") }}</a>
-          </div>
-        </div>
-      </section>
+    </div>
     {% endif %}
 
-    <!-- Bloque principal -->
-    <section class="grid-main">
+    <div class="grid-layout">
       <article class="card">
-        <div class="section-title">
-          <div>
-            <div class="heading">{{ t(lang, "dashboard.account_status_title") }}</div>
-            <p class="muted">{{ t(lang, "dashboard.account_status_subtitle") }}</p>
-          </div>
-          <span class="badge badge-pill">{{ t(lang, "dashboard.quick_start") }}</span>
-        </div>
-
-        <div class="chips">
-          <span class="chip">{{ t(lang, "dashboard.chip_log_scanner") }}</span>
-          <span class="chip">{{ t(lang, "dashboard.chip_mail_scanner") }}</span>
-          <span class="chip">{{ t(lang, "dashboard.chip_pdf_reports") }}</span>
-          <span class="chip">{{ t(lang, "dashboard.chip_auto_alerts") }}</span>
-        </div>
-
-        <div class="btn-row" style="margin-top:12px;">
+        <div class="heading">{{ t(lang, "dashboard.account_status_title") }}</div>
+        <p class="muted">{{ t(lang, "dashboard.account_status_subtitle") }}</p>
+        <div class="btn-row">
           <a class="btn btn-primary" href="/analysis">{{ t(lang, "dashboard.go_log_scanner") }}</a>
-          <a class="btn" href="/mail/">{{ t(lang, "dashboard.go_mail_scanner") }}</a>
-          <a class="btn" href="/reports_browser">{{ t(lang, "dashboard.go_reports") }}</a>
+          <a class="btn" href="/mail/scanner">{{ t(lang, "dashboard.go_mail_scanner") }}</a>
         </div>
-
-        <ul class="list-compact">
-          <li>{{ t(lang, "dashboard.tip_logs") }}</li>
-          <li>{{ t(lang, "dashboard.tip_imap") }}</li>
-        </ul>
       </article>
 
       <article class="card card-soft">
-        <div class="section-title">
-          <div>
-            <div class="heading">{{ t(lang, "dashboard.pro_title") }}</div>
-            <p class="muted">{{ t(lang, "dashboard.pro_subtitle") }}</p>
-          </div>
-          <a href="/billing/subscriptions" class="badge">{{ t(lang, "dashboard.see_plans") }}</a>
-        </div>
-
+        <div class="heading">{{ t(lang, "dashboard.pro_title") }}</div>
+        <p class="muted">{{ t(lang, "dashboard.pro_subtitle") }}</p>
         <div class="btn-row">
-          <a class="btn" href="/alerts">{{ t(lang, "dashboard.go_alerts") }}</a>
           <a class="btn" href="/reports_browser">{{ t(lang, "dashboard.go_reports_short") }}</a>
-          <a class="btn btn-outline" href="/audit">{{ t(lang, "dashboard.go_audit") }}</a>
+          <a class="btn" href="/audit">{{ t(lang, "dashboard.go_audit") }}</a>
         </div>
-
-        <ul class="list-compact">
-          <li>{{ t(lang, "dashboard.pro_tip_audit") }}</li>
-          <li>{{ t(lang, "dashboard.pro_tip_checklist") }}</li>
-        </ul>
       </article>
-    </section>
 
-    <section class="grid-secondary">
       <article class="card card-soft">
-        <div class="section-title">
-          <div>
-            <div class="heading">{{ t(lang, "dashboard.tools_title") }}</div>
-            <p class="muted">{{ t(lang, "dashboard.tools_subtitle") }}</p>
-          </div>
-          <span class="badge">{{ t(lang, "dashboard.beta") }}</span>
-        </div>
-
+        <div class="heading">{{ t(lang, "dashboard.tools_title") }}</div>
+        <p class="muted">{{ t(lang, "dashboard.tools_subtitle") }}</p>
         <div class="btn-row">
-          <a class="btn" href="/tools/qr-scan">{{ t(lang, "dashboard.tools_qr") }}</a>
-          <a class="btn" href="/tools/receipt-analyzer">{{ t(lang, "dashboard.tools_receipt") }}</a>
+          <a class="btn" href="/tools/qr-scan">QR Scanner</a>
+          <a class="btn" href="/tools/receipt-analyzer">Receipts</a>
         </div>
-
-        <ul class="list-compact">
-          <li>{{ t(lang, "dashboard.tools_tip_qr") }}</li>
-          <li>{{ t(lang, "dashboard.tools_tip_receipt") }}</li>
-        </ul>
       </article>
 
       <article class="card">
-        <div class="section-title">
-          <div>
-            <div class="heading">{{ t(lang, "dashboard.billing_title") }}</div>
-            <p class="muted">{{ t(lang, "dashboard.billing_subtitle") }}</p>
-          </div>
-        </div>
-
+        <div class="heading">{{ t(lang, "dashboard.billing_title") }}</div>
+        <p class="muted">{{ t(lang, "dashboard.billing_subtitle") }}</p>
         <div class="btn-row">
-          <a class="btn btn-primary" href="/billing/subscriptions">{{ t(lang, "dashboard.billing_view_sub") }}</a>
-          {% if user.is_org_admin or is_admin %}
-            <a class="btn" href="/orgs/admin">{{ t(lang, "dashboard.billing_org_panel") }}</a>
-          {% endif %}
+          <a class="btn" href="/billing/subscriptions">{{ t(lang, "dashboard.billing_view_sub") }}</a>
+          <a class="btn" href="/auth/logout" style="color: var(--danger-text); border-color: #fecaca;">{{ "Salir" if (lang or "es") == "es" else "Logout" }}</a>
         </div>
-
-        <ul class="list-compact">
-          <li>{{ t(lang, "dashboard.billing_tip_1") }}</li>
-          <li>{{ t(lang, "dashboard.billing_tip_2") }}</li>
-        </ul>
       </article>
-    </section>
+    </div>
 
-    <section class="grid-secondary">
-      <article class="card card-soft">
-        <div class="section-title">
-          <div>
-            <div class="heading">{{ t(lang, "dashboard.payments_title") }}</div>
-            <p class="muted">{{ t(lang, "dashboard.payments_subtitle") }}</p>
-          </div>
-        </div>
-
-        <a class="btn" href="/billing/payments">{{ t(lang, "dashboard.payments_view") }}</a>
-        <p class="payments-empty">{{ t(lang, "dashboard.payments_empty") }}</p>
-      </article>
-
-      <article class="card card-soft">
-        <div class="section-title">
-          <div>
-            <div class="heading">{{ t(lang, "dashboard.security_health_title") }}</div>
-            <p class="muted">{{ t(lang, "dashboard.security_health_subtitle") }}</p>
-          </div>
-          <span class="badge">{{ t(lang, "dashboard.coming_soon") }}</span>
-        </div>
-
-        <ul class="list-compact">
-          <li>{{ t(lang, "dashboard.security_tip_1") }}</li>
-          <li>{{ t(lang, "dashboard.security_tip_2") }}</li>
-          <li>{{ t(lang, "dashboard.security_tip_3") }}</li>
-        </ul>
-      </article>
-    </section>
-
-    <footer class="footer">
+    <footer style="margin-top: 40px; text-align: center; font-size: 0.85rem; color: var(--text-soft);">
       {{ t(lang, "dashboard.footer") }}
     </footer>
   </div>
-
-  <!-- ✅ Pop-ups / alerts -->
-  <script src="/static/toast.js"></script>
-  <script src="/static/alert_clients.js"></script>
 </body>
 </html>
