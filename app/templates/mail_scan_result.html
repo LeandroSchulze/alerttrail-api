@@ -6,136 +6,150 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <style>
     :root {
-      --bg-main: #f0f9ff;
+      --bg-main: #f8fafc;
       --accent: #0ea5e9;
       --text-main: #0f172a;
       --text-muted: #64748b;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --success: #10b981;
     }
 
     body {
-      margin: 0; padding: 10px;
+      margin: 0; padding: 16px;
       font-family: -apple-system, system-ui, sans-serif;
       background: var(--bg-main);
       color: var(--text-main);
+      line-height: 1.5;
     }
 
-    .container { width: 100%; max-width: 800px; margin: 0 auto; }
+    .container { width: 100%; max-width: 600px; margin: 0 auto; }
 
-    .card-result {
-      background: white; border-radius: 20px; padding: 20px;
-      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
-      border: 1px solid #dbeafe;
+    .header-section { margin-bottom: 24px; }
+    h1 { font-size: 1.5rem; margin: 0 0 8px 0; font-weight: 800; color: var(--text-main); }
+    .summary { color: var(--text-muted); font-size: 0.95rem; margin: 0; }
+
+    /* --- ESTILO DE CARDS (Adiós Tablas) --- */
+    .scan-list { display: flex; flex-direction: column; gap: 16px; }
+
+    .item-card {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      position: relative;
     }
 
-    h1 { font-size: 1.3rem; margin-bottom: 5px; }
-    .summary { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px; }
-
-    /* --- EL TRUCO PARA EL CELULAR (FUERZA BRUTA) --- */
-    @media (max-width: 768px) {
-      table, thead, tbody, th, td, tr { 
-        display: block !important; 
-        width: 100% !important; 
-      }
-      thead { display: none !important; } 
-      
-      tr {
-        margin-bottom: 15px !important;
-        padding: 15px !important;
-        border: 1px solid #e2e8f0 !important;
-        border-radius: 14px !important;
-        background: #ffffff !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.03) !important;
-      }
-
-      td {
-        border: none !important;
-        padding: 6px 0 !important;
-        font-size: 0.95rem !important;
-        word-break: break-all !important; /* Evita el texto vertical */
-      }
-
-      td::before {
-        content: attr(data-label);
-        display: block;
-        font-weight: 800;
-        font-size: 0.65rem;
-        color: var(--accent);
-        text-transform: uppercase;
-        margin-bottom: 2px;
-      }
+    .item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
     }
 
-    /* --- ESTILO ESCRITORIO --- */
-    @media (min-width: 769px) {
-      table { width: 100%; border-collapse: collapse; }
-      th { text-align: left; padding: 12px; border-bottom: 2px solid #f1f5f9; color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; }
-      td { padding: 15px 12px; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; }
+    .sender-info { flex: 1; padding-right: 10px; }
+    .sender-name { display: block; font-weight: 700; font-size: 1rem; color: var(--text-main); }
+    .scan-date { display: block; font-size: 0.75rem; color: var(--text-muted); }
+
+    .subject-line {
+      font-size: 0.9rem;
+      color: #334155;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #f1f5f9;
     }
 
+    .reasons-box {
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.85rem;
+      color: #475569;
+    }
+
+    .reason-label {
+      font-weight: 800;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    /* --- BADGES --- */
     .verdict-badge {
-      display: inline-block; padding: 4px 10px; border-radius: 999px;
-      font-weight: 700; font-size: 0.75rem; text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      white-space: nowrap;
     }
-    .ALTO { background: #fee2e2; color: #b91c1c; }
-    .MEDIO { background: #fef3c7; color: #92400e; }
-    .BAJO { background: #dcfce7; color: #166534; }
+    .ALTO { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+    .MEDIO { background: #fef3c7; color: var(--warning); border: 1px solid #fde68a; }
+    .BAJO { background: #dcfce7; color: var(--success); border: 1px solid #bbf7d0; }
 
-    .btn-group { display: flex; gap: 10px; margin-top: 25px; }
+    /* --- BOTONES --- */
+    .btn-group { display: flex; flex-direction: column; gap: 12px; margin-top: 30px; }
     .btn {
-      flex: 1; padding: 12px; border-radius: 12px; text-decoration: none;
-      font-weight: 600; font-size: 0.9rem; text-align: center;
+      padding: 14px; border-radius: 12px; text-decoration: none;
+      font-weight: 600; font-size: 0.95rem; text-align: center;
+      transition: transform 0.1s;
     }
+    .btn:active { transform: scale(0.98); }
     .btn-back { border: 1px solid #cbd5e1; color: #475569; background: #fff; }
-    .btn-dash { background: linear-gradient(135deg, #22c55e, #0ea5e9); color: white; border: none; }
+    .btn-dash { background: #0ea5e9; color: white; border: none; box-shadow: 0 4px 10px rgba(14, 165, 233, 0.3); }
+
+    /* Desktop tweaks */
+    @media (min-width: 768px) {
+      .btn-group { flex-direction: row; }
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card-result">
+    <div class="header-section">
       <h1>{{ t(lang, "mail.scan_result_title") }}</h1>
       <p class="summary">{{ summary }}</p>
+    </div>
 
+    <div class="scan-list">
       {% if items %}
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha</th>
-              <th>De</th>
-              <th>Asunto</th>
-              <th>Veredicto</th>
-              <th>Motivos</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for item in items %}
-              <tr>
-                <td data-label="Fecha">{{ item.date }}</td>
-                <td data-label="De"><strong>{{ item.sender }}</strong></td>
-                <td data-label="Asunto">{{ item.subject }}</td>
-                <td data-label="Veredicto">
-                  <span class="verdict-badge {{ item.verdict|upper }}">{{ item.verdict }}</span>
-                </td>
-                <td data-label="Motivos">
-                  <div style="color: #475569; font-size: 0.85rem; line-height: 1.4;">
-                    {% if item.reasons %}
-                      {{ item.reasons | join(', ') }}
-                    {% else %}
-                      Sin amenazas detectadas.
-                    {% endif %}
-                  </div>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      {% else %}
-        <p style="text-align:center; color:var(--text-muted);">{{ t(lang, "mail.no_items") }}</p>
-      {% endif %}
+        {% for item in items %}
+          <div class="item-card">
+            <div class="item-header">
+              <div class="sender-info">
+                <span class="sender-name">{{ item.sender }}</span>
+                <span class="scan-date">{{ item.date }}</span>
+              </div>
+              <span class="verdict-badge {{ item.verdict|upper }}">{{ item.verdict }}</span>
+            </div>
 
-      <div class="btn-group">
-        <a href="/mail/scanner" class="btn btn-back">{{ t(lang, "common.back") }}</a>
-        <a href="/dashboard?ref=scanner" class="btn btn-dash">{{ t(lang, "common.back_dashboard") }}</a>
-      </div>
+            <div class="subject-line">
+              <strong>Asunto:</strong> {{ item.subject }}
+            </div>
+
+            <div class="reasons-box">
+              <span class="reason-label">Análisis de Amenazas</span>
+              {% if item.reasons %}
+                {{ item.reasons | join(', ') }}
+              {% else %}
+                No se detectaron patrones maliciosos en este correo.
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="item-card" style="text-align: center; color: var(--text-muted);">
+          {{ t(lang, "mail.no_items") }}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="btn-group">
+      <a href="/dashboard?ref=scanner" class="btn btn-dash">{{ t(lang, "common.back_dashboard") }}</a>
+      <a href="/mail/scanner" class="btn btn-back">{{ t(lang, "common.back") }}</a>
     </div>
   </div>
 </body>
