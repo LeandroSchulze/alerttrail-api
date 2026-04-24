@@ -260,5 +260,9 @@
     "...": "...",
   "common.logout": "Cerrar sesión",
   "dashboard.tools_qr": "QR Scanner Seguro",
-  "dashboard.tools_receipt": "Analizador de Tickets"
+  "dashboard.tools_receipt": "Analizador de Tickets",
+  "common.pdf_ready": "PDF listo",
+  "analysis.pdf_generated": "PDF generado con éxito",
+  "analysis.pdf_ready_desc": "Tu reporte de seguridad ha sido procesado y está listo para descargar.",
+  "common.download": "Descargar"
   }
