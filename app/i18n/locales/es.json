@@ -256,5 +256,9 @@
 
   "reason.links_count": "Contiene {count} link(s)",
   "reason.url_shortener": "Usa acortadores de URL (posible phishing)",
-  "reason.phishing_words": "Palabras típicas de phishing: {words}"
+  "reason.phishing_words": "Palabras típicas de phishing: {words}",
+    "...": "...",
+  "common.logout": "Cerrar sesión",
+  "dashboard.tools_qr": "QR Scanner Seguro",
+  "dashboard.tools_receipt": "Analizador de Tickets"
   }
