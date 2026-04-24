@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.ui import templates
-# Cambiamos la importación para usar la lógica de utils que creamos
+# Importación de la lógica de i18n
 from app.i18n.utils import get_lang_and_translator
 
 # Security
@@ -61,7 +61,7 @@ def _try_include_router(module_path: str) -> None:
     except Exception:
         logger.exception("Failed including optional router: %s", module_path)
 
-# Routers principales e incluidos
+# Routers principales
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
@@ -83,9 +83,11 @@ _try_include_router("app.routers.payments_ui")
 _try_include_router("app.routers.audit")
 _try_include_router("app.routers.admin_dashboard_ui")
 
+# Healthcheck mejorado para Railway
 @app.get("/health", include_in_schema=False)
+@app.get("/healthz", include_in_schema=False) # Agregamos variante común
 def health():
-    return {"ok": True, "app": APP_NAME}
+    return {"status": "ok", "app": APP_NAME}
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -96,7 +98,6 @@ def set_lang(lang: str = Query("es"), next: str = Query("/dashboard")):
     lang = (lang or "es").lower().strip()
     if lang not in ("es", "en"): lang = "es"
     resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    # Sincronizamos ambos nombres de cookies por seguridad
     resp.set_cookie("alerttrail_lang", lang, max_age=60*60*24*365, path="/", samesite="lax")
     resp.set_cookie("lang", lang, max_age=60*60*24*365, path="/", samesite="lax")
     return resp
@@ -106,7 +107,7 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    # Detectamos idioma y obtenemos la función traductora t
+    # Detectamos idioma y obtenemos t
     lang, t = get_lang_and_translator(request, user=user)
 
     return templates.TemplateResponse(
@@ -114,7 +115,7 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
         {
             "request": request,
             "lang": lang,
-            "t": t,  # <--- Fundamental para que el HTML funcione
+            "t": t,
             "current_user": user,
             "user": user,
         },
