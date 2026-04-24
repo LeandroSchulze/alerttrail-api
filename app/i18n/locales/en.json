@@ -255,6 +255,11 @@
 
     "reason.links_count": "Contains {count} link(s)",
   "reason.url_shortener": "Uses URL shorteners (possible phishing)",
-  "reason.phishing_words": "Common phishing words: {words}"
+  "reason.phishing_words": "Common phishing words: {words}",
+   "...": "...",
+  "common.logout": "Logout",
+  "dashboard.tools_qr": "Safe QR Scanner",
+  "dashboard.tools_receipt": "Receipt Analyzer"
+
 }
 
