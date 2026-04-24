@@ -11,7 +11,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.ui import templates
-# Importación de la lógica de i18n
 from app.i18n.utils import get_lang_and_translator
 
 # Security
@@ -61,7 +60,7 @@ def _try_include_router(module_path: str) -> None:
     except Exception:
         logger.exception("Failed including optional router: %s", module_path)
 
-# Routers principales
+# Registro de Routers
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
@@ -83,9 +82,8 @@ _try_include_router("app.routers.payments_ui")
 _try_include_router("app.routers.audit")
 _try_include_router("app.routers.admin_dashboard_ui")
 
-# Healthcheck mejorado para Railway
 @app.get("/health", include_in_schema=False)
-@app.get("/healthz", include_in_schema=False) # Agregamos variante común
+@app.get("/healthz", include_in_schema=False)
 def health():
     return {"status": "ok", "app": APP_NAME}
 
@@ -107,15 +105,14 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    # Detectamos idioma y obtenemos t
-    lang, t = get_lang_and_translator(request, user=user)
+    lang, t_func = get_lang_and_translator(request, user=user)
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "lang": lang,
-            "t": t,
+            "t": t_func,
             "current_user": user,
             "user": user,
         },
