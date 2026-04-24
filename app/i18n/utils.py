@@ -1,11 +1,11 @@
 from fastapi import Request
-from typing import Optional
+from typing import Optional, Any, Callable
 from app.i18n import get_lang, t as translator_func
 
 def get_lang_and_translator(
     request: Request,
     user: Optional[Any] = None,
-) -> tuple[str, callable]:
+) -> tuple[str, Callable]:
     """
     Detecta el idioma y devuelve la función de traducción t(key).
     Prioridad: ?lang= > cookie > user_pref > header/default.
@@ -13,16 +13,15 @@ def get_lang_and_translator(
     # Usamos la lógica centralizada que ya escribimos en i18n/__init__.py
     lang = get_lang(request)
     
-    # Si en el futuro agregas user.language, el get_lang ya debería manejarlo
-    # o puedes sobreescribirlo aquí:
+    # Si el usuario tiene una preferencia guardada, la respetamos
     if user and getattr(user, "language", None):
         lang = user.language
 
-    # Creamos una función parcial para no tener que pasar 'lang' cada vez en el HTML
+    # Creamos una función parcial para el contexto del template
     def t(key: str, **kwargs):
         return translator_func(lang, key, **kwargs)
 
-    # Guardamos en request.state para middlewares
+    # Guardamos en request.state para posible acceso en middlewares
     request.state.lang = lang
     request.state.t = t
 
