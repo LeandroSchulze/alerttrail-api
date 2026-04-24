@@ -1,22 +1,81 @@
 <!doctype html>
-<html lang="{{ (lang or 'es') if lang is defined else 'es' }}">
+<html lang="{{ lang or 'es' }}">
 <head>
   <meta charset="utf-8">
-  <title>{{ "PDF ready" if (lang or "es") == "en" else "PDF listo" }}</title>
+  <title>{{ t("common.pdf_ready") }} — AlertTrail</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* Reutilizamos los estilos del dashboard para coherencia total */
+    :root {
+      --bg-gradient-top: rgba(56,189,248,0.18);
+      --bg-gradient-bottom: rgba(59,130,246,0.18);
+      --card-bg: rgba(255,255,255,0.98);
+      --card-border: #dbeafe;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --accent-grad-from: #22c55e;
+      --accent-grad-to: #0ea5e9;
+    }
+
+    body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, system-ui, sans-serif;
+      background: 
+        radial-gradient(circle at top, var(--bg-gradient-top) 0, transparent 45%),
+        linear-gradient(to bottom, #f0f9ff, #dbeafe);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .page-container { max-width: 500px; width: 90%; text-align: center; }
+
+    .card {
+      background: var(--card-bg); border-radius: 24px;
+      border: 1px solid var(--card-border); padding: 40px 24px;
+      box-shadow: 0 20px 40px rgba(15,23,42,0.1);
+    }
+
+    .icon-check {
+      width: 64px; height: 64px; background: #dcfce7; color: #16a34a;
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 32px; margin: 0 auto 20px;
+    }
+
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 12px; color: var(--text-main); }
+    p { color: var(--text-muted); margin-bottom: 30px; line-height: 1.5; }
+
+    .btn-download {
+      display: block; width: 100%; padding: 14px; border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent-grad-from), var(--accent-grad-to));
+      color: white; text-decoration: none; font-weight: 700;
+      box-shadow: 0 10px 20px rgba(34,197,94,0.2);
+      transition: transform 0.2s; margin-bottom: 15px;
+    }
+    .btn-download:hover { transform: translateY(-2px); }
+
+    .back-link {
+      display: inline-block; color: var(--text-muted); text-decoration: none;
+      font-size: 0.9rem; font-weight: 600; transition: color 0.2s;
+    }
+    .back-link:hover { color: var(--text-main); }
+  </style>
 </head>
 <body>
-  <div class="card">
-    <h1>{{ "PDF generated ✅" if (lang or "es") == "en" else "PDF generado ✅" }}</h1>
+  <div class="page-container">
+    <div class="card">
+      <div class="icon-check">✓</div>
+      <h1>{{ t("analysis.pdf_generated") }}</h1>
+      <p>{{ t("analysis.pdf_ready_desc") }}</p>
 
-    <p>
-      {{ "Your report is ready to download." if (lang or "es") == "en"
-         else "Tu reporte está listo para descargar." }}
-    </p>
+      <a class="btn-download" href="{{ url }}">
+        {{ t("common.download") }} PDF
+      </a>
 
-    <p><a class="btn" href="{{ url }}">{{ "Download PDF" if (lang or "es") == "en" else "Descargar PDF" }}</a></p>
-    <p><a href="/dashboard">{{ "Back to dashboard" if (lang or "es") == "en" else "Volver al dashboard" }}</a></p>
+      <a href="/dashboard" class="back-link">
+        ← {{ t("common.back_dashboard") }}
+      </a>
+    </div>
   </div>
 </body>
 </html>
