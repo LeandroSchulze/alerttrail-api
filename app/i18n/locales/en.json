@@ -255,9 +255,6 @@
 
     "reason.links_count": "Contains {count} link(s)",
   "reason.url_shortener": "Uses URL shorteners (possible phishing)",
-  "reason.phishing_words": "Common phishing words: {words}",
-  "alerts.severity_high": "High", 
-  "alerts.severity_medium": "Medium",
-  "alerts.severity_low": "Low"
+  "reason.phishing_words": "Common phishing words: {words}"
 }
 
