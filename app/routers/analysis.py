@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 from app.security import get_current_user_cookie_optional
-from app.i18n import get_lang_from_request
+from app.i18n import get_lang
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
@@ -193,7 +193,7 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
     if not _is_authed(current):
         return RedirectResponse("/auth/login", status_code=302)
 
-    lang = get_lang_from_request(request)
+    lang = get_lang(request)
 
     title = _tr(lang, "Analizar logs", "Analyze logs")
     h1 = _tr(lang, "Analizar logs y generar reporte", "Analyze logs and generate report")
@@ -245,7 +245,7 @@ async def analyze(
     if not _is_authed(current):
         return RedirectResponse("/auth/login", status_code=302)
 
-    lang = get_lang_from_request(request)
+    lang = get_lang(request)
 
     content = await file.read()
     text = content.decode("utf-8", errors="ignore")
