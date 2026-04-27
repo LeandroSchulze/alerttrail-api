@@ -9,7 +9,6 @@ from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-# Importación corregida para evitar loops
 from app.i18n.utils import get_lang_and_translator
 from app.ui import templates
 from app.security import get_current_user_cookie_optional
@@ -29,16 +28,15 @@ mail_logger = logging.getLogger("alerttrail.mail")
 APP_NAME = os.getenv("APP_NAME", "AlertTrail")
 SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
 
-# Configuración de rutas de archivos
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-# Cambiado a una ruta relativa por defecto para evitar errores de permisos en Railway
-REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "reports"))
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Restauramos la ruta original para no romper volúmenes de Railway
+REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
 
+# Intento de creación de carpeta con manejo de errores de permisos
 try:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 except Exception as e:
-    logger.warning(f"No se pudo crear REPORTS_DIR: {e}")
+    logger.warning(f"No se pudo asegurar la existencia de REPORTS_DIR: {e}")
 
 app = FastAPI(title=APP_NAME)
 app.state.templates = templates
@@ -51,10 +49,10 @@ async def serve_sw():
         return FileResponse(sw_path)
     return HTMLResponse("Service Worker not found", status_code=404)
 
-# Montaje de estáticos seguro
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Montaje de reportes (solo si existe o se pudo crear)
 if REPORTS_DIR.exists():
     app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
@@ -84,7 +82,6 @@ app.include_router(i18n.router)
 app.include_router(tasks_mail.router)
 app.include_router(push.router)
 
-# Routers opcionales
 _try_include_router("app.routers.billing_ui")
 _try_include_router("app.routers.payments_ui")
 _try_include_router("app.routers.audit")
@@ -126,7 +123,6 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
         },
     )
 
-# Scheduler con inicio seguro
 scheduler = BackgroundScheduler()
 def _safe_run_mail_poll():
     try:
@@ -138,6 +134,7 @@ def _safe_run_mail_poll():
 if (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true":
     scheduler.add_job(_safe_run_mail_poll, "interval", minutes=int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10")))
     try:
+        # Verificación de estado antes de iniciar
         if not scheduler.running:
             scheduler.start()
     except Exception:
