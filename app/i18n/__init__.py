@@ -6,7 +6,7 @@ from fastapi import Request
 
 _LOCALES_DIR = Path(__file__).parent / "locales"
 
-# Definimos las constantes que app/ui.py necesita importar
+# Definimos las constantes
 SUPPORTED_LANGS = {"es", "en"}
 DEFAULT_LANG = "es"
 
@@ -50,3 +50,13 @@ def get_lang(request: Request) -> str:
     al = request.headers.get("accept-language", "")
     if al.startswith("en"): return "en"
     return DEFAULT_LANG
+
+# --- ALIAS PARA COMPATIBILIDAD CON REPORTS.PY ---
+
+# Esto resuelve el ImportError: cannot import name 'get_lang_from_request'
+get_lang_from_request = get_lang
+
+# Esto resuelve el ImportError: cannot import name 'jinja_t'
+def jinja_t(lang: str, key: str, **kwargs: Any) -> str:
+    """Alias de la función de traducción para coherencia en imports"""
+    return t(lang, key, **kwargs)
