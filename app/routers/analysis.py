@@ -1,7 +1,6 @@
-# app/routers/analysis.py
 from fastapi import APIRouter, Request, UploadFile, File, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 import io, re
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -10,8 +9,6 @@ from app.security import get_current_user_cookie_optional
 from app.i18n import get_lang
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
-
-# --- LÓGICA DE ANALISIS (Mantenida) ---
 
 COMBINED_RE = re.compile(
     r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<time>[^\]]+)\]\s+'
@@ -27,7 +24,8 @@ SQLI_PATTERNS = [
 ]
 SENSITIVE_FILES = ["/.env", "/wp-login.php", "/phpmyadmin", "/config.php", ".bak", ".zip", ".tar"]
 
-def _parse_time(s: str) -> datetime | None:
+# CORRECCIÓN: Uso de Union para compatibilidad con versiones de Python < 3.10
+def _parse_time(s: str) -> Union[datetime, None]:
     try:
         return datetime.strptime(s, "%d/%b/%Y:%H:%M:%S %z")
     except Exception:
@@ -101,8 +99,6 @@ def analyze_log(text: str) -> Dict[str, Any]:
 
 def _tr(lang: str, es: str, en: str) -> str:
     return en if (lang or "").lower().startswith("en") else es
-
-# --- NUEVOS TEMPLATES MODERNOS ---
 
 def _render_html(summary: Dict[str, Any], lang: str = "es") -> str:
     def row(k, v): 
@@ -262,6 +258,4 @@ async def analyze(
     text = content.decode("utf-8", errors="ignore")
     summary = analyze_log(text)
 
-    # Nota: Si want_pdf es True, aquí podrías integrar una librería de PDF real en el futuro.
-    # Por ahora, ambos retornan el HTML mejorado.
     return HTMLResponse(_render_html(summary, lang=lang))
