@@ -9,7 +9,8 @@ from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.i18n.utils import get_lang_and_translator
+# CORRECCIÓN: Importamos desde el archivo utils que acabamos de sanear
+from app.utils import get_lang_and_translator
 from app.ui import templates
 from app.security import get_current_user_cookie_optional
 
@@ -29,14 +30,13 @@ APP_NAME = os.getenv("APP_NAME", "AlertTrail")
 SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-# Restauramos la ruta original para no romper volúmenes de Railway
-REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "/var/data/reports"))
+# Directorio de reportes con fallback a carpeta local si /var/data falla en Railway
+REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "./reports_data"))
 
-# Intento de creación de carpeta con manejo de errores de permisos
 try:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 except Exception as e:
-    logger.warning(f"No se pudo asegurar la existencia de REPORTS_DIR: {e}")
+    logger.warning(f"No se pudo crear REPORTS_DIR, usando temporal: {e}")
 
 app = FastAPI(title=APP_NAME)
 app.state.templates = templates
@@ -52,7 +52,6 @@ async def serve_sw():
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Montaje de reportes (solo si existe o se pudo crear)
 if REPORTS_DIR.exists():
     app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
@@ -101,8 +100,8 @@ def set_lang(lang: str = Query("es"), next: str = Query("/dashboard")):
     lang = (lang or "es").lower().strip()
     if lang not in ("es", "en"): lang = "es"
     resp = RedirectResponse(url=next or "/dashboard", status_code=302)
-    resp.set_cookie("alerttrail_lang", lang, max_age=60*60*24*365, path="/", samesite="lax")
-    resp.set_cookie("lang", lang, max_age=60*60*24*365, path="/", samesite="lax")
+    resp.set_cookie("alerttrail_lang", lang, max_age=31536000, path="/", samesite="lax")
+    resp.set_cookie("lang", lang, max_age=31536000, path="/", samesite="lax")
     return resp
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
@@ -132,9 +131,9 @@ def _safe_run_mail_poll():
         mail_logger.exception("Mail poll failed")
 
 if (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true":
-    scheduler.add_job(_safe_run_mail_poll, "interval", minutes=int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10")))
+    interval = int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10"))
+    scheduler.add_job(_safe_run_mail_poll, "interval", minutes=interval)
     try:
-        # Verificación de estado antes de iniciar
         if not scheduler.running:
             scheduler.start()
     except Exception:
