@@ -1,1 +1,10 @@
+# app/services/__init__.py
 
+"""
+Services Package Initialization
+Este archivo convierte el directorio 'services' en un paquete de Python, 
+permitiendo que el backend importe el Mail Scanner y otros servicios críticos.
+"""
+
+# Se mantiene vacío o con este comentario para asegurar la máxima compatibilidad 
+# y permitir la carga de módulos según sea necesario por los routers.
