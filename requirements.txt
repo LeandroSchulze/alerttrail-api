@@ -9,6 +9,7 @@ SQLAlchemy>=2.0.35
 alembic==1.13.2
 pydantic>=2.9.0
 pydantic-settings>=2.4.0
+email-validator>=2.0.0
 reportlab==4.2.2
 cryptography>=43.0.1
 mercadopago==2.2.1
