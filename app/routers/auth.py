@@ -22,11 +22,10 @@ from app.security import (
     get_current_user_cookie,
 )
 
-# Si billing_guard existe como archivo, se usa desde ahí (NO desde app.security como "package")
+# Manejo de billing_guard con fallback para asegurar el arranque
 try:
     from app.security.billing_guard import normalize_user_plan  # type: ignore
 except Exception:
-    # fallback: si tu normalize_user_plan quedó en app.security (viejo), intentamos
     try:
         from app.security import normalize_user_plan  # type: ignore
     except Exception:
@@ -39,10 +38,7 @@ DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in ("1", "true", "yes", "on")
 
 
 def _templates(request: Request):
-    """
-    Usa SIEMPRE los templates del main.py (app.state.templates),
-    que ya tienen templates.env.globals["t"] = t
-    """
+    """Usa los templates del main.py (app.state.templates)"""
     tpl = getattr(request.app.state, "templates", None)
     if tpl is None:
         raise RuntimeError("templates no inicializado en app.state (main.py)")
@@ -64,7 +60,6 @@ def login_web(
     db: Session = Depends(get_db),
 ):
     email = (email or "").strip().lower()
-
     user = db.query(User).filter(func.lower(User.email) == email).first()
 
     if not user or not verify_password(password, user.hashed_password):
@@ -76,7 +71,6 @@ def login_web(
             status_code=400,
         )
 
-    # Normalizar plan si existe
     if normalize_user_plan:
         try:
             normalize_user_plan(db, user)
@@ -93,16 +87,11 @@ def login_web(
     )
 
     r = RedirectResponse("/dashboard", status_code=303)
-
-    # ✅ CLAVE: borrar cookies previas (host-only vs domain) para evitar loop
     clear_access_cookie(r, request=request)
     issue_access_cookie(r, token, request=request)
 
     if DEBUG_AUTH:
-        try:
-            print(f"[auth][login_web] ok email={user.email} id={user.id}")
-        except Exception:
-            pass
+        print(f"[auth][login_web] ok email={user.email} id={user.id}")
 
     return r
 
@@ -115,11 +104,12 @@ def login_api(
     db: Session = Depends(get_db),
 ):
     """
-    Login API (si lo usás desde JS o integraciones).
-    Devuelve JSON, y también setea la cookie.
+    Login unificado para API/Mobile. 
+    Setea la cookie para web y devuelve el token en JSON para la App.
     """
     email = (email or "").strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
+    
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Credenciales inválidas")
 
@@ -138,9 +128,18 @@ def login_api(
         }
     )
 
-    resp = JSONResponse({"ok": True})
+    # Respuesta JSON incluyendo el token para almacenamiento local en móviles
+    resp = JSONResponse({
+        "ok": True, 
+        "access_token": token, 
+        "token_type": "bearer",
+        "user": {
+            "email": user.email,
+            "plan": getattr(user, "plan", "FREE")
+        }
+    })
 
-    # ✅ idem: limpiar primero
+    # También seteamos la cookie por si se usa desde un navegador[cite: 2]
     clear_access_cookie(resp, request=request)
     issue_access_cookie(resp, token, request=request)
     return resp
@@ -148,18 +147,12 @@ def login_api(
 
 @router.get("/logout", include_in_schema=False)
 def logout(request: Request):
-    """
-    Logout + redirect a /auth/login (como pediste).
-    """
     r = RedirectResponse("/auth/login", status_code=303)
     clear_access_cookie(r, request=request)
-
-    # Si estás usando SessionMiddleware, limpiamos también.
     try:
         request.session.clear()
     except Exception:
         pass
-
     return r
 
 
@@ -188,24 +181,6 @@ def me(request: Request, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/debug", include_in_schema=False)
-def auth_debug(request: Request):
-    # Evitamos referenciar COOKIE_NAME si no existe.
-    cookie_name = "access_token"
-    try:
-        cookie_name = os.getenv("COOKIE_NAME") or cookie_name
-    except Exception:
-        pass
-
-    return {
-        "host": request.headers.get("host"),
-        "x_forwarded_host": request.headers.get("x-forwarded-host"),
-        "x_forwarded_proto": request.headers.get("x-forwarded-proto"),
-        "cookies": dict(request.cookies),
-        "cookie_name": cookie_name,
-    }
-
-
 @router.post("/register", response_class=JSONResponse)
 def register(
     email: str = Form(...),
@@ -213,10 +188,6 @@ def register(
     name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """
-    Registro simple (por si lo tenés habilitado).
-    Si no lo usás, igual no molesta.
-    """
     email = (email or "").strip().lower()
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email y password requeridos")
@@ -234,11 +205,26 @@ def register(
 
     if hasattr(u, "plan"):
         u.plan = "FREE"
-    if hasattr(u, "is_pro"):
-        u.is_pro = False
-
+    
     db.add(u)
     db.commit()
     db.refresh(u)
 
     return {"ok": True, "id": u.id}
+
+
+@router.get("/debug", include_in_schema=False)
+def auth_debug(request: Request):
+    cookie_name = "access_token"
+    try:
+        cookie_name = os.getenv("COOKIE_NAME") or cookie_name
+    except Exception:
+        pass
+
+    return {
+        "host": request.headers.get("host"),
+        "x_forwarded_host": request.headers.get("x-forwarded-host"),
+        "x_forwarded_proto": request.headers.get("x-forwarded-proto"),
+        "cookies": dict(request.cookies),
+        "cookie_name": cookie_name,
+    }
