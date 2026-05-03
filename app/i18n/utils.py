@@ -9,29 +9,23 @@ def get_lang_and_translator(
     Detecta el idioma y devuelve la función de traducción t(key).
     Prioridad: ?lang= > cookie > user_pref > header/default.
     """
-    # Import local dinámico para romper la importación circular con app.i18n
     try:
         from app.i18n import get_lang, t as translator_func
     except ImportError:
-        # Fallback de seguridad por si el módulo i18n falla al cargar
-        def translator_func(l, k, **kwargs): 
-            return k
-        def get_lang(r): 
-            return "es"
+        # Fallback si el módulo i18n falla
+        def translator_func(l, k, **kwargs): return k
+        def get_lang(r): return "es"
     
     lang = get_lang(request)
     
-    # Si el usuario tiene una preferencia guardada en DB, la respetamos
     if user and hasattr(user, "language") and user.language:
         lang = user.language
 
-    # Creamos la función de traducción para el contexto del template
-    # Agregamos **kwargs explícitamente para que Jinja2 pueda pasar 'count', 'name', etc.
+    # Esta es la que usa Jinja2 en el HTML
     def t(key: str, **kwargs):
-        # Llamamos a la función base de i18n pasando el idioma detectado y los argumentos
+        # IMPORTANTE: Aquí se pasan las variables como 'count'
         return translator_func(lang, key, **kwargs)
 
-    # Guardamos en request.state para acceso rápido
     request.state.lang = lang
     request.state.t = t
 
