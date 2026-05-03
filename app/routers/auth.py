@@ -49,7 +49,8 @@ def _templates(request: Request):
 def login_get(request: Request):
     tpl = _templates(request)
     lang = get_lang(request)
-    return tpl.TemplateResponse("login.html", {"request": request, "lang": lang})
+    # Actualizado para evitar el TypeError: unhashable type: 'dict'
+    return tpl.TemplateResponse(request=request, name="login.html", context={"lang": lang})
 
 
 @router.post("/login/web", include_in_schema=False)
@@ -65,9 +66,11 @@ def login_web(
     if not user or not verify_password(password, user.hashed_password):
         tpl = _templates(request)
         lang = get_lang(request)
+        # Actualizado para evitar el TypeError: unhashable type: 'dict'
         return tpl.TemplateResponse(
-            "login.html",
-            {"request": request, "lang": lang, "error": "Credenciales inválidas"},
+            request=request,
+            name="login.html",
+            context={"lang": lang, "error": "Credenciales inválidas"},
             status_code=400,
         )
 
@@ -139,7 +142,7 @@ def login_api(
         }
     })
 
-    # También seteamos la cookie por si se usa desde un navegador[cite: 2]
+    # También seteamos la cookie por si se usa desde un navegador
     clear_access_cookie(resp, request=request)
     issue_access_cookie(resp, token, request=request)
     return resp
