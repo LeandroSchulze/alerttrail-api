@@ -12,7 +12,7 @@ def get_lang_and_translator(
     try:
         from app.i18n import get_lang, t as translator_func
     except ImportError:
-        # Fallback si el módulo i18n falla
+        # Fallback total si falla la importación
         def translator_func(l, k, **kwargs): return k
         def get_lang(r): return "es"
     
@@ -21,12 +21,15 @@ def get_lang_and_translator(
     if user and hasattr(user, "language") and user.language:
         lang = user.language
 
-    # Esta es la que usa Jinja2 en el HTML
-    def t(key: str, **kwargs):
-        # IMPORTANTE: Aquí se pasan las variables como 'count'
-        return translator_func(lang, key, **kwargs)
+    # Definimos la función con un nombre único y atrapando TODO (*args y **kwargs)
+    def t_final(key: str, *args, **kwargs):
+        try:
+            # Le pasamos el idioma, la clave y cualquier variable como 'count'
+            return translator_func(lang, key, **kwargs)
+        except Exception:
+            return key # Si algo falla, devolvemos la clave original para no romper la app
 
     request.state.lang = lang
-    request.state.t = t
+    request.state.t = t_final
 
-    return lang, t
+    return lang, t_final
