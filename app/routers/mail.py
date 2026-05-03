@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.i18n import get_lang, t
+# Cambiamos esto para usar el mismo sistema que en main.py
+from app.utils import get_lang_and_translator 
 from app.security import get_current_user_cookie_optional
 from app.ui import templates
 from app.services.mail_scan import scan_mailbox
@@ -105,16 +106,18 @@ def get_user(request: Request):
 @router.get("", response_class=HTMLResponse)
 def mail_settings(request: Request, user=Depends(get_user)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-    lang = get_lang(request)
-    # Actualizado para evitar el TypeError: unhashable type: 'dict'
+    
+    # Obtenemos el idioma y el traductor configurado
+    lang, t_func = get_lang_and_translator(request, user=user)
+    
     return templates.TemplateResponse(
         request=request,
         name="mail.html",
         context={
-            "lang": lang,
-            "t": t,
+            "lang": lang, 
+            "t": t_func, # Usamos la función ya vinculada al idioma
             "user": user,
-            "plan": _compute_plan(user),
+            "plan": _compute_plan(user), 
             "defaults": _defaults_from_env(),
             "linked": _load_linked_one(user),
         }
@@ -123,12 +126,11 @@ def mail_settings(request: Request, user=Depends(get_user)):
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-    lang = get_lang(request)
     
-    # Intentar cargar del JSON
+    # Obtenemos el idioma y el traductor configurado
+    lang, t_func = get_lang_and_translator(request, user=user)
+    
     linked = _load_linked_one(user)
-    
-    # SI EL JSON NO EXISTE (porque Railway reinició), BUSCAMOS EN LA DB
     if not linked and user.get("id"):
         acc = db.query(MailAccount).filter(MailAccount.user_id == user.get("id")).first()
         if acc:
@@ -149,16 +151,15 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
         "total": last_scan_raw.get("total", 0),
     }
     
-    # Actualizado para evitar el TypeError: unhashable type: 'dict'
     return templates.TemplateResponse(
         request=request,
         name="mail_scanner.html",
         context={
-            "lang": lang,
-            "t": t,
+            "lang": lang, 
+            "t": t_func, # Usamos la función ya vinculada al idioma
             "user": user,
-            "linked": linked,
-            "last_scan": last_scan,
+            "linked": linked, 
+            "last_scan": last_scan, 
             "scan_items": scan_items,
         }
     )
