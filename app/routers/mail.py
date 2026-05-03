@@ -29,7 +29,7 @@ LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
 def _now_iso() -> str: return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def _parse_date_ts(v: str) -> int:
-    s = (v or "").strip()
+    s = (v or "").strip(); 
     if not s: return 0
     try:
         dt = parsedate_to_datetime(s)
@@ -47,29 +47,16 @@ def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def _user_id(user: Dict[str, Any]) -> str:
-    return str(user.get("id") or user.get("email") or "anon")
+def _user_id(user: Dict[str, Any]) -> str: return str(user.get("id") or user.get("email") or "anon")
 
-def _scan_file_for(user: Dict[str, Any]) -> Path:
-    return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
+def _scan_file_for(user: Dict[str, Any]) -> Path: return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
 
 def _defaults_from_env() -> Dict[str, Any]:
-    return {
-        "host": os.getenv("MAIL_DEFAULT_HOST", "imap.gmail.com"),
-        "port": int(os.getenv("MAIL_DEFAULT_PORT", "993")),
-        "folder": os.getenv("MAIL_DEFAULT_FOLDER", "INBOX"),
-        "use_ssl": os.getenv("MAIL_DEFAULT_SSL", "1"),
-    }
+    return {"host": os.getenv("MAIL_HOST", "imap.gmail.com"), "port": int(os.getenv("MAIL_PORT", "993")), "folder": os.getenv("MAIL_FOLDER", "INBOX"), "use_ssl": True} #
 
 def _load_linked_one(user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     data = _load_json(LINKED_FILE, {})
     return data.get(_user_id(user)) if isinstance(data, dict) else None
-
-def _save_linked_one(user: Dict[str, Any], payload: Dict[str, Any]) -> None:
-    all_linked = _load_json(LINKED_FILE, {})
-    if not isinstance(all_linked, dict): all_linked = {}
-    all_linked[_user_id(user)] = payload
-    _save_json(LINKED_FILE, all_linked)
 
 def get_user(request: Request): return get_current_user_cookie_optional(request)
 
@@ -86,17 +73,7 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
         if acc:
             linked = {"address": acc.email_address, "host": acc.imap_host, "username": acc.email_address, "port": 993, "folder": "INBOX", "use_ssl": True}
 
-    return templates.TemplateResponse(
-        request=request, 
-        name="mail.html", 
-        context={
-            "lang": lang, 
-            "t": t_func, 
-            "user": user, 
-            "linked": linked,
-            "defaults": _defaults_from_env()  # <--- RE-AGREGADO: Esto evita el error 500
-        }
-    )
+    return templates.TemplateResponse(request=request, name="mail.html", context={"lang": lang, "t": t_func, "user": user, "linked": linked, "defaults": _defaults_from_env()})
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
@@ -116,11 +93,14 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
     return templates.TemplateResponse(request=request, name="mail_scanner.html", context={"lang": lang, "t": t_func, "user": user, "linked": linked, "last_scan": last_scan, "scan_items": scan_items})
 
 @router.post("/settings")
-def mail_settings_save(request: Request, user=Depends(get_user), db: Session = Depends(get_db), address: str = Form(""), host: str = Form("imap.gmail.com"), port: str = Form("993"), username: str = Form(""), password: str = Form(""), folder: str = Form("INBOX"), use_ssl: Optional[str] = Form(None), mark_read: Optional[str] = Form(None)):
+def mail_settings_save(request: Request, user=Depends(get_user), db: Session = Depends(get_db), address: str = Form(""), host: str = Form("imap.gmail.com"), port: str = Form("993"), username: str = Form(""), password: str = Form(""), folder: str = Form("INBOX"), use_ssl: Optional[str] = Form(None)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    payload = {"address": address.strip(), "host": host.strip(), "port": int(port or 993), "username": username.strip() or address.strip(), "password": password.strip(), "folder": folder.strip() or "INBOX", "use_ssl": (use_ssl is not None), "mark_read": (mark_read is not None), "updated_at": _now_iso()}
-    _save_linked_one(user, payload)
+    payload = {"address": address.strip(), "host": host.strip(), "port": int(port or 993), "username": username.strip() or address.strip(), "password": password.strip(), "folder": folder.strip() or "INBOX", "use_ssl": True, "updated_at": _now_iso()}
+    
+    all_linked = _load_json(LINKED_FILE, {})
+    all_linked[_user_id(user)] = payload
+    _save_json(LINKED_FILE, all_linked)
 
     uid = user.get("id")
     if uid:
