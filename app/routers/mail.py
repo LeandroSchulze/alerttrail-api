@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-# Cambiamos esto para usar el mismo sistema que en main.py
 from app.utils import get_lang_and_translator 
 from app.security import get_current_user_cookie_optional
 from app.ui import templates
@@ -24,9 +23,9 @@ from app.models import MailAccount
 router = APIRouter(prefix="/mail", tags=["mail"])
 log = logging.getLogger(__name__)
 
+# Configuración de persistencia efímera (JSON para caché rápido)
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 LINKED_FILE = MAIL_DATA_DIR / "linked_accounts.json"
 
 # --- HELPERS ---
@@ -104,33 +103,46 @@ def get_user(request: Request):
 # --- RUTAS ---
 
 @router.get("", response_class=HTMLResponse)
-def mail_settings(request: Request, user=Depends(get_user)):
+def mail_settings(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-    
-    # Obtenemos el idioma y el traductor configurado
     lang, t_func = get_lang_and_translator(request, user=user)
+    
+    linked = _load_linked_one(user)
+    
+    # Fallback a Postgres si el JSON no está (reinicio de contenedor)
+    if not linked and user.get("id"):
+        acc = db.query(MailAccount).filter(MailAccount.user_id == user.get("id")).first()
+        if acc:
+            linked = {
+                "address": acc.email_address,
+                "host": acc.imap_host,
+                "username": acc.email_address, # Fallback común
+                "port": 993,
+                "folder": "INBOX",
+                "use_ssl": True
+            }
     
     return templates.TemplateResponse(
         request=request,
         name="mail.html",
         context={
             "lang": lang, 
-            "t": t_func, # Usamos la función ya vinculada al idioma
+            "t": t_func, 
             "user": user,
             "plan": _compute_plan(user), 
             "defaults": _defaults_from_env(),
-            "linked": _load_linked_one(user),
+            "linked": linked,
         }
     )
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-    
-    # Obtenemos el idioma y el traductor configurado
     lang, t_func = get_lang_and_translator(request, user=user)
     
     linked = _load_linked_one(user)
+    
+    # IMPORTANTE: Reconstrucción desde Postgres para el Scanner
     if not linked and user.get("id"):
         acc = db.query(MailAccount).filter(MailAccount.user_id == user.get("id")).first()
         if acc:
@@ -138,6 +150,7 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
                 "address": acc.email_address,
                 "host": acc.imap_host,
                 "password": acc.imap_password,
+                "username": acc.email_address, # Se añade el campo faltante
                 "port": 993,
                 "folder": "INBOX",
                 "use_ssl": True
@@ -156,7 +169,7 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
         name="mail_scanner.html",
         context={
             "lang": lang, 
-            "t": t_func, # Usamos la función ya vinculada al idioma
+            "t": t_func, 
             "user": user,
             "linked": linked, 
             "last_scan": last_scan, 
@@ -174,15 +187,25 @@ def mail_settings_save(
 ):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
+    # Si el usuario no puso username, usamos el email por defecto
+    sanitized_username = username.strip() if username.strip() else address.strip()
+    
     payload = {
-        "address": address.strip(), "host": host.strip(), "port": int(port or 993),
-        "username": username.strip(), "password": password.strip(),
+        "address": address.strip(), 
+        "host": host.strip(), 
+        "port": int(port or 993),
+        "username": sanitized_username, 
+        "password": password.strip(),
         "folder": folder.strip() or "INBOX",
         "use_ssl": _truthy(use_ssl) if use_ssl is not None else True,
-        "mark_read": _truthy(mark_read), "updated_at": _now_iso(),
+        "mark_read": _truthy(mark_read), 
+        "updated_at": _now_iso(),
     }
+    
+    # Guardar en JSON (acceso rápido/caché)
     _save_linked_one(user, payload)
 
+    # Guardar en Postgres (Persistencia real en Railway)
     uid = user.get("id")
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
@@ -198,11 +221,25 @@ def mail_settings_save(
     return RedirectResponse(url="/mail/scanner?saved=1", status_code=303)
 
 @router.get("/scan")
-def scan_get(request: Request, user=Depends(get_user), limit: int = Query(20)):
+def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get_db), limit: int = Query(20)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
+    
     linked = _load_linked_one(user)
-    if not linked: return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
+    
+    # Si el JSON se borró, intentamos levantarlo de Postgres antes de fallar
+    if not linked and user.get("id"):
+        acc = db.query(MailAccount).filter(MailAccount.user_id == user.get("id")).first()
+        if acc:
+            linked = {
+                "address": acc.email_address, "host": acc.imap_host,
+                "password": acc.imap_password, "username": acc.email_address,
+                "port": 993, "folder": "INBOX", "use_ssl": True
+            }
 
+    if not linked: 
+        return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
+
+    # Ejecución del Scanner
     res = scan_mailbox(
         host=linked["host"], port=linked["port"], username=linked["username"],
         password=linked["password"], folder=linked["folder"],
@@ -223,4 +260,5 @@ def scan_get(request: Request, user=Depends(get_user), limit: int = Query(20)):
         "ok": res.ok, "scanned_at": _now_iso(), "folder": linked["folder"],
         "total": res.total_found, "items": items, "error": res.message if not res.ok else None
     })
+    
     return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
