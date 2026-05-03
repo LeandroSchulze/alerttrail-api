@@ -106,11 +106,19 @@ def get_user(request: Request):
 def mail_settings(request: Request, user=Depends(get_user)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang = get_lang(request)
-    return templates.TemplateResponse("mail.html", {
-        "request": request, "lang": lang, "t": t, "user": user,
-        "plan": _compute_plan(user), "defaults": _defaults_from_env(),
-        "linked": _load_linked_one(user),
-    })
+    # Actualizado para evitar el TypeError: unhashable type: 'dict'
+    return templates.TemplateResponse(
+        request=request,
+        name="mail.html",
+        context={
+            "lang": lang,
+            "t": t,
+            "user": user,
+            "plan": _compute_plan(user),
+            "defaults": _defaults_from_env(),
+            "linked": _load_linked_one(user),
+        }
+    )
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
@@ -141,10 +149,19 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
         "total": last_scan_raw.get("total", 0),
     }
     
-    return templates.TemplateResponse("mail_scanner.html", {
-        "request": request, "lang": lang, "t": t, "user": user,
-        "linked": linked, "last_scan": last_scan, "scan_items": scan_items,
-    })
+    # Actualizado para evitar el TypeError: unhashable type: 'dict'
+    return templates.TemplateResponse(
+        request=request,
+        name="mail_scanner.html",
+        context={
+            "lang": lang,
+            "t": t,
+            "user": user,
+            "linked": linked,
+            "last_scan": last_scan,
+            "scan_items": scan_items,
+        }
+    )
 
 @router.post("/settings")
 def mail_settings_save(
