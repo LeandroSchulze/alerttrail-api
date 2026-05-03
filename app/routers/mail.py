@@ -53,6 +53,14 @@ def _user_id(user: Dict[str, Any]) -> str:
 def _scan_file_for(user: Dict[str, Any]) -> Path:
     return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
 
+def _defaults_from_env() -> Dict[str, Any]:
+    return {
+        "host": os.getenv("MAIL_DEFAULT_HOST", "imap.gmail.com"),
+        "port": int(os.getenv("MAIL_DEFAULT_PORT", "993")),
+        "folder": os.getenv("MAIL_DEFAULT_FOLDER", "INBOX"),
+        "use_ssl": os.getenv("MAIL_DEFAULT_SSL", "1"),
+    }
+
 def _load_linked_one(user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     data = _load_json(LINKED_FILE, {})
     return data.get(_user_id(user)) if isinstance(data, dict) else None
@@ -78,7 +86,17 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
         if acc:
             linked = {"address": acc.email_address, "host": acc.imap_host, "username": acc.email_address, "port": 993, "folder": "INBOX", "use_ssl": True}
 
-    return templates.TemplateResponse(request=request, name="mail.html", context={"lang": lang, "t": t_func, "user": user, "linked": linked})
+    return templates.TemplateResponse(
+        request=request, 
+        name="mail.html", 
+        context={
+            "lang": lang, 
+            "t": t_func, 
+            "user": user, 
+            "linked": linked,
+            "defaults": _defaults_from_env()  # <--- RE-AGREGADO: Esto evita el error 500
+        }
+    )
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
@@ -116,7 +134,6 @@ def mail_settings_save(request: Request, user=Depends(get_user), db: Session = D
 def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get_db), limit: int = Query(20)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # IMPORTANTE: Fallback a Postgres si el JSON se borró
     linked = _load_linked_one(user)
     if not linked and user.get("id"):
         acc = db.query(MailAccount).filter(MailAccount.user_id == user.get("id")).first()
