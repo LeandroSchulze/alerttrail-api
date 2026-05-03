@@ -31,7 +31,7 @@ mail_logger = logging.getLogger("alerttrail.mail")
 APP_NAME = os.getenv("APP_NAME", "AlertTrail")
 SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
 
-# Configuración de Directorios[cite: 2]
+# Configuración de Directorios
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "./reports_data"))
 
@@ -55,7 +55,7 @@ app.add_middleware(
 app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
-# Ruta para el Service Worker (Crítico para PWA móvil)[cite: 1, 2]
+# Ruta para el Service Worker (Crítico para PWA móvil)
 @app.get("/sw.js", include_in_schema=False)
 async def serve_sw():
     sw_path = STATIC_DIR / "sw.js"
@@ -63,7 +63,7 @@ async def serve_sw():
         return FileResponse(sw_path, media_type="application/javascript")
     return HTMLResponse("Service Worker not found", status_code=404)
 
-# Montaje de archivos estáticos[cite: 2]
+# Montaje de archivos estáticos
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -79,7 +79,7 @@ def _try_include_router(module_path: str) -> None:
     except Exception:
         logger.exception("Failed including optional router: %s", module_path)
 
-# Registro de Routers Principales[cite: 2]
+# Registro de Routers Principales
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
@@ -128,10 +128,11 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
 
     lang, t_func = get_lang_and_translator(request, user=user)
 
+    # Actualizado para evitar el TypeError: unhashable type: 'dict'
     return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
+        request=request,
+        name="dashboard.html",
+        context={
             "lang": lang,
             "t": t_func,
             "current_user": user,
@@ -139,7 +140,7 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
         },
     )
 
-# --- Programador de Tareas (Mail Poll) ---[cite: 2]
+# --- Programador de Tareas (Mail Poll) ---
 scheduler = BackgroundScheduler()
 def _safe_run_mail_poll():
     try:
