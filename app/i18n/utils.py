@@ -14,8 +14,10 @@ def get_lang_and_translator(
         from app.i18n import get_lang, t as translator_func
     except ImportError:
         # Fallback de seguridad por si el módulo i18n falla al cargar
-        def translator_func(l, k, **kwargs): return k
-        def get_lang(r): return "es"
+        def translator_func(l, k, **kwargs): 
+            return k
+        def get_lang(r): 
+            return "es"
     
     lang = get_lang(request)
     
@@ -23,8 +25,10 @@ def get_lang_and_translator(
     if user and hasattr(user, "language") and user.language:
         lang = user.language
 
-    # Creamos una función parcial para el contexto del template
+    # Creamos la función de traducción para el contexto del template
+    # Agregamos **kwargs explícitamente para que Jinja2 pueda pasar 'count', 'name', etc.
     def t(key: str, **kwargs):
+        # Llamamos a la función base de i18n pasando el idioma detectado y los argumentos
         return translator_func(lang, key, **kwargs)
 
     # Guardamos en request.state para acceso rápido
