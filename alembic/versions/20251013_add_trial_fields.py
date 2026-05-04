@@ -1,54 +1,26 @@
 # alembic/versions/20251013_add_trial_fields.py
-"""add trial fields to users
-
-Revision ID: 20251013_add_trial_fields
-Revises: add_email_verification_20250930
-Create Date: 2025-10-13
-
-"""
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.engine.reflection import Inspector
 
-# Identificadores de migración
 revision = "20251013_add_trial_fields"
 down_revision = "add_email_verification_20250930"
 branch_labels = None
 depends_on = None
 
 def upgrade():
-    """Agrega los campos de trial al modelo User verificando si existen previamente"""
-    conn = op.get_bind()
-    inspector = Inspector.from_engine(conn)
+    # Usamos SQL directo para aprovechar el "IF NOT EXISTS" de Postgres
+    # Esto es mucho más robusto que el Inspector en entornos de producción
+    op.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMP WITHOUT TIME ZONE')
+    op.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMP WITHOUT TIME ZONE')
+    op.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS had_trial BOOLEAN DEFAULT FALSE')
+    op.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_source VARCHAR(32)')
     
-    # Obtenemos las columnas actuales de la tabla 'users'
-    columns = [c["name"] for c in inspector.get_columns("users")]
-
-    with op.batch_alter_table("users") as batch_op:
-        # Agregamos cada columna solo si NO existe en la tabla
-        if "trial_started_at" not in columns:
-            batch_op.add_column(sa.Column("trial_started_at", sa.DateTime(), nullable=True))
-        
-        if "trial_expires_at" not in columns:
-            batch_op.add_column(sa.Column("trial_expires_at", sa.DateTime(), nullable=True))
-            
-        if "had_trial" not in columns:
-            # PostgreSQL prefiere sa.false() o sa.text('false') para booleanos
-            batch_op.add_column(sa.Column("had_trial", sa.Boolean(), nullable=False, server_default=sa.text("false")))
-            
-        if "pro_source" not in columns:
-            batch_op.add_column(sa.Column("pro_source", sa.String(length=32), nullable=True))
-
-    # Quitamos el server_default de had_trial si la columna fue creada
-    # Esto asegura que el valor por defecto se gestione desde el modelo de Python
-    if "had_trial" in [c["name"] for c in inspector.get_columns("users")]:
-        with op.batch_alter_table("users") as batch_op:
-            batch_op.alter_column("had_trial", server_default=None)
+    # Aseguramos que had_trial no sea null si la columna ya existía o se acaba de crear
+    op.execute('UPDATE users SET had_trial = FALSE WHERE had_trial IS NULL')
+    op.execute('ALTER TABLE users ALTER COLUMN had_trial SET NOT NULL')
 
 def downgrade():
-    """Revierte los cambios: elimina los campos de trial"""
-    with op.batch_alter_table("users") as batch_op:
-        batch_op.drop_column("pro_source")
-        batch_op.drop_column("had_trial")
-        batch_op.drop_column("trial_expires_at")
-        batch_op.drop_column("trial_started_at")
+    op.drop_column("users", "pro_source")
+    op.drop_column("users", "had_trial")
+    op.drop_column("users", "trial_expires_at")
+    op.drop_column("users", "trial_started_at")
