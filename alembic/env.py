@@ -1,27 +1,31 @@
 # alembic/env.py
 import os
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
+
+# --- PARCHE DE RUTAS PARA RAILWAY ---
+# Agregamos el directorio raíz al path de Python para que Alembic encuentre 'app'
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # --- Alembic Config ---
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# === Database URL desde ENV (Render) con fallback a SQLite ===
+# === Database URL desde ENV con fallback a SQLite ===
+# Mantenemos tu lógica de normalización para PostgreSQL
 db_url = os.getenv("DATABASE_URL", "sqlite:////var/data/alerttrail.sqlite3").strip()
 
-# Normaliza postgres:// -> postgresql:// (SQLAlchemy)
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-# Expone a Alembic como sqlalchemy.url (lo estándar)
 config.set_main_option("sqlalchemy.url", db_url)
 
 # --- Metadata objetivo ---
-# Importá tu Base aquí para que Alembic “vea” los modelos
+# Ahora que el path está corregido, esta importación ya no fallará
 from app.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
@@ -41,14 +45,18 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Modo online: se conecta y ejecuta migraciones."""
+    # Usamos la configuración cargada dinámicamente arriba
     connectable = engine_from_config(
         config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",              # 👈 clave: usa *sqlalchemy.* y no ""
+        prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection, 
+            target_metadata=target_metadata
+        )
         with context.begin_transaction():
             context.run_migrations()
 
