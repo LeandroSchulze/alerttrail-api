@@ -1,23 +1,28 @@
+# app/database.py
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
-# Leemos la variable de Railway
-DATABASE_URL = os.getenv("database_url") or os.getenv("DATABASE_URL") or ""
+# 1. Obtenemos la variable de Railway
+db_url = os.getenv("DATABASE_URL")
 
-if not DATABASE_URL:
-    DATABASE_URL = "sqlite:///./alerttrail.sqlite3"
-
-# CORRECCIÓN CRÍTICA: SQLAlchemy requiere 'postgresql://' (con 'ql')
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Crear engine
-if "sqlite" in DATABASE_URL:
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+if db_url:
+    # 2. Corregimos el prefijo (Railway usa postgres:// y SQLAlchemy requiere postgresql://)
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    
+    # Limpieza de espacios por seguridad
+    db_url = db_url.strip()
+    
+    # Configuramos el motor para PostgreSQL
+    engine = create_engine(db_url)
+    print("✅ Conectado a PostgreSQL en Railway")
 else:
-    # Para Postgres en Railway
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    # 3. Fallback solo si no hay variable (Desarrollo local)
+    print("⚠️ DATABASE_URL no encontrada. Usando SQLite local.")
+    db_url = "sqlite:///./alerttrail.db"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
