@@ -1,43 +1,60 @@
 # app/i18n/utils.py
+import json
+import os
+from functools import lru_cache
 from fastapi import Request
 from typing import Optional, Any, Callable
+
+@lru_cache()
+def load_translations(lang: str):
+    """Carga los archivos JSON de la carpeta locales"""
+    base_path = os.path.dirname(__file__)
+    file_path = os.path.join(base_path, "locales", f"{lang}.json")
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 def get_lang_and_translator(
     request: Request,
     user: Optional[Any] = None,
 ) -> tuple[str, Callable]:
     """
-    Detecta el idioma y devuelve la función de traducción t(key).
-    Versión unificada: soporta variables en templates y preferencia de usuario.
+    Detecta el idioma y devuelve la función de traducción t(key, **kwargs).
+    Versión blindada: maneja internamente el formateo de variables.
     """
-    try:
-        # Intentamos importar el motor de traducción base
-        from app.i18n import get_lang, t as translator_func
-    except ImportError:
-        # Fallback de seguridad si no encuentra los módulos
-        def translator_func(l, k): return k
-        def get_lang(r): return "es"
-    
-    # 1. Prioridad de idioma: Usuario > Sesión/Request[cite: 2]
-    lang = get_lang(request)
+    # 1. Determinar el idioma (Prioridad: Usuario > Sesión > Default)
+    lang = "es"
     if user and hasattr(user, "language") and user.language:
         lang = user.language
-
-    # 2. Función 't' que el HTML llama (blindada contra errores)
-    def t(key: str, **kwargs):
+    else:
+        # Intentamos obtener de la sesión si existe el middleware
         try:
-            # Obtenemos la cadena de texto desde el JSON[cite: 2]
-            text = translator_func(lang, key)
+            lang = request.session.get("lang", "es")
+        except Exception:
+            lang = "es"
+
+    translations = load_translations(lang)
+
+    # 2. Definición de la función de traducción t que recibe count, name, etc.
+    def t(key: str, **kwargs):
+        text = translations.get(key, key)
+        
+        # Si no hay variables extra, devolvemos el texto directamente
+        if not kwargs:
+            return text
             
-            # Si pasamos variables (como count=5), las inyectamos en el texto[cite: 1]
-            if kwargs and isinstance(text, str):
+        try:
+            # Si hay variables como {count}, las inyectamos aquí
+            if isinstance(text, str):
                 return text.format(**kwargs)
             return text
-        except Exception:
-            # Si algo falla (ej. el JSON no tiene el formato {count}), devolvemos la key[cite: 1]
-            return key
+        except (KeyError, ValueError, IndexError):
+            # Si el JSON no tiene el formato correcto, devolvemos el texto base para no romper la app
+            return text
 
-    # 3. Guardamos en el estado para que otros middlewares lo usen[cite: 2]
+    # Guardamos en el estado del request por si otros componentes lo necesitan[cite: 2]
     request.state.lang = lang
     request.state.t = t
 
