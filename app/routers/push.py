@@ -1,15 +1,25 @@
 # app/routers/push.py
 from __future__ import annotations
 import os
+import logging
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models import PushSubscription
 from app.security import get_current_user_cookie_optional
+from app.services.webpush import send_push # Importamos el nuevo motor de envío
 
 router = APIRouter(prefix="/push", tags=["push"])
+log = logging.getLogger(__name__)
+
+# --- HELPERS PARA COMPATIBILIDAD ---
+
+def _load():
+    """Dummy para evitar el ImportError en mail_poll.py."""
+    return {}
 
 def _extract_uid(user: Any) -> Optional[int]:
     if not user or not isinstance(user, dict): return None
@@ -17,16 +27,24 @@ def _extract_uid(user: Any) -> Optional[int]:
     try: return int(raw_id)
     except: return None
 
+def trigger_push_notification(user_id: str | int, title: str, body: str):
+    """
+    Este es el puente que necesita mail_poll.py.
+    Ahora usa el nuevo servicio send_push que creamos.
+    """
+    return send_push(user_id=user_id, title=title, body=body)
+
+# --- RUTAS ---
+
 @router.get("/vapid-public")
 def vapid_public():
-    # Coincide con el nombre en tu captura de pantalla 2026-05-05 043455.jpg
     return {"vapidPublicKey": os.getenv("VAPID_PUBLIC_KEY", "")}
 
 @router.post("/subscribe")
 async def push_subscribe(request: Request, db: Session = Depends(get_db)):
     user = get_current_user_cookie_optional(request)
     if not user:
-        return JSONResponse({"ok": False, "msg": "No session"}, status_code=401)
+        return JSONResponse({"ok": False}, status_code=401)
 
     payload = await request.json()
     uid = _extract_uid(user)
@@ -34,7 +52,7 @@ async def push_subscribe(request: Request, db: Session = Depends(get_db)):
     if not uid or "endpoint" not in payload:
         return JSONResponse({"ok": False}, status_code=400)
 
-    # Evitamos duplicados: si el endpoint ya existe para este usuario, no lo duplicamos
+    # Buscamos si ya existe este dispositivo para el usuario
     existing = db.query(PushSubscription).filter(
         PushSubscription.user_id == uid,
         PushSubscription.endpoint == payload["endpoint"]
