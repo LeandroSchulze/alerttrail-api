@@ -75,9 +75,13 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang, t_func = get_lang_and_translator(request, user=user)
     
-    # Obtenemos la cuenta directamente de PostgreSQL
     linked = None
-    uid = user.get("id")
+    # CRÍTICO: Aseguramos que el ID sea un entero para la consulta en DB
+    try:
+        uid = int(user.get("id")) if user.get("id") else None
+    except (ValueError, TypeError):
+        uid = None
+
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
@@ -102,9 +106,12 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang, t_func = get_lang_and_translator(request, user=user)
     
-    # Verificamos si hay una cuenta vinculada en la DB
     linked = None
-    uid = user.get("id")
+    try:
+        uid = int(user.get("id")) if user.get("id") else None
+    except (ValueError, TypeError):
+        uid = None
+
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
@@ -117,7 +124,6 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
                 "use_ssl": True
             }
     
-    # Cargamos el último escaneo desde el archivo temporal
     last_scan_raw = _load_json(_scan_file_for(user), {})
     scan_items = last_scan_raw.get("items", [])
     last_scan = {
@@ -139,33 +145,37 @@ def mail_settings_save(
     address: str = Form(""), 
     host: str = Form("imap.gmail.com"), 
     port: str = Form("993"), 
+    username: str = Form(""), # Recibimos el username del formulario
     password: str = Form(""), 
     folder: str = Form("INBOX")
 ):
     """Guarda la configuración de IMAP en la base de datos persistente."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    uid = user.get("id")
+    try:
+        uid = int(user.get("id")) if user.get("id") else None
+    except (ValueError, TypeError):
+        uid = None
+
     if uid:
-        # Buscamos si ya existe o creamos una nueva entrada
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if not acc:
             acc = MailAccount(user_id=uid)
             db.add(acc)
         
-        # Asignamos los valores del formulario
-        acc.email_address = address.strip()
+        # Priorizamos address, si está vacío usamos username
+        final_email = address.strip() or username.strip()
+        acc.email_address = final_email
         acc.imap_host = host.strip()
         
-        # Solo actualizamos el password si se envió uno nuevo
         if password.strip():
             acc.imap_password = password.strip()
         
         acc.is_active = True
         
-        # Guardar en PostgreSQL
         db.commit()
         db.refresh(acc)
+        log.info(f"Configuración guardada para usuario {uid}: {final_email}")
 
     return RedirectResponse(url="/mail/scanner?saved=1", status_code=303)
 
@@ -174,14 +184,16 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     """Ejecuta el escaneo de correos usando los datos de la DB."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # Recuperamos la cuenta de la DB
-    uid = user.get("id")
+    try:
+        uid = int(user.get("id")) if user.get("id") else None
+    except (ValueError, TypeError):
+        uid = None
+
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
 
     if not acc or not acc.imap_password:
         return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
 
-    # Ejecutamos el servicio de escaneo
     res = scan_mailbox(
         host=acc.imap_host, 
         port=993, 
@@ -192,7 +204,6 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
         limit=limit
     )
 
-    # Procesamos los resultados para el dashboard
     items = []
     for it in (res.items or []):
         lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
@@ -206,10 +217,8 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
             "reasons": getattr(it.analysis, "reasons", [])
         })
     
-    # Ordenamos por fecha descendente
     items.sort(key=lambda x: x["date_ts"], reverse=True)
 
-    # Guardamos los resultados en el JSON temporal
     _save_json(_scan_file_for(user), {
         "ok": res.ok, 
         "scanned_at": _now_iso(), 
