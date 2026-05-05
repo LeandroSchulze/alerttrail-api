@@ -48,10 +48,8 @@ def _save_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _extract_uid(user: Any) -> Optional[int]:
-    """Extrae el ID de usuario buscando en múltiples claves posibles."""
     if not user or not isinstance(user, dict):
         return None
-    # Buscamos en orden de probabilidad
     raw_id = user.get("id") or user.get("user_id") or user.get("sub")
     try:
         return int(raw_id) if raw_id is not None else None
@@ -88,13 +86,14 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
+            # Mapeamos los nombres de la DB a los nombres que usa el HTML
             linked = {
-                "address": acc.email_address, 
-                "host": acc.imap_host, 
-                "username": acc.email_address, 
-                "port": 993, 
-                "folder": "INBOX", 
-                "use_ssl": True
+                "address": acc.email, 
+                "host": acc.host, 
+                "username": acc.username, 
+                "port": acc.port, 
+                "folder": "INBOX", # Si no hay columna folder, dejamos default
+                "use_ssl": acc.use_ssl
             }
 
     return templates.TemplateResponse(
@@ -113,7 +112,7 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
-            linked = {"address": acc.email_address}
+            linked = {"address": acc.email}
     
     last_scan_raw = _load_json(_scan_file_for(user), {})
     last_scan = {"ts": last_scan_raw.get("scanned_at") or "", "total": last_scan_raw.get("total", 0)}
@@ -134,41 +133,39 @@ def mail_settings_save(
     port: str = Form("993"), 
     username: str = Form(""),
     password: str = Form(""), 
-    folder: str = Form("INBOX")
+    folder: str = Form("INBOX"),
+    use_ssl: bool = Form(True)
 ):
-    if not user: 
-        print("DEBUG SAVE: No hay usuario en la sesión")
-        return RedirectResponse(url="/auth/login", status_code=302)
+    if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
     uid = _extract_uid(user)
-    print(f"DEBUG SAVE: Intentando guardar para UID: {uid} (User Object: {user})")
-
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if not acc:
-            print(f"DEBUG SAVE: Creando nueva entrada MailAccount para UID {uid}")
             acc = MailAccount(user_id=uid)
             db.add(acc)
         
+        # CORRECCIÓN CRÍTICA: Usar los nombres de columna que pide la DB según el log
         final_email = address.strip() or username.strip()
-        acc.email_address = final_email
-        acc.imap_host = host.strip()
-        
+        acc.email = final_email  # Antes era email_address
+        acc.host = host.strip()   # Antes era imap_host
+        acc.port = int(port) if port.isdigit() else 993
+        acc.username = username.strip() or final_email
+        acc.use_ssl = use_ssl
+        acc.provider = "imap"
+
         if password.strip():
-            acc.imap_password = password.strip()
-        
-        acc.is_active = True
+            # El log dice que la columna es 'password_encrypted'
+            acc.password_encrypted = password.strip()
         
         try:
             db.commit()
             db.refresh(acc)
-            print(f"DEBUG SAVE: ÉXITO. Guardado {final_email} en DB.")
+            log.info(f"Éxito: Guardado {final_email} en la tabla mail_accounts.")
         except Exception as e:
             db.rollback()
-            print(f"DEBUG SAVE: ERROR AL HACER COMMIT: {e}")
-    else:
-        print("DEBUG SAVE: No se pudo extraer un ID válido del usuario.")
-
+            log.error(f"Error en commit: {e}")
+    
     return RedirectResponse(url="/mail/scanner?saved=1", status_code=303)
 
 @router.get("/scan")
@@ -177,10 +174,19 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     uid = _extract_uid(user)
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
 
-    if not acc or not acc.imap_password:
+    # Ajustado a los nombres reales de columna
+    if not acc or not acc.password_encrypted:
         return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
 
-    res = scan_mailbox(host=acc.imap_host, port=993, username=acc.email_address, password=acc.imap_password, folder="INBOX", use_ssl=True, limit=limit)
+    res = scan_mailbox(
+        host=acc.host, 
+        port=acc.port or 993, 
+        username=acc.username or acc.email, 
+        password=acc.password_encrypted, 
+        folder="INBOX", 
+        use_ssl=acc.use_ssl, 
+        limit=limit
+    )
 
     items = []
     for it in (res.items or []):
