@@ -21,7 +21,6 @@ from app.models import MailAccount
 router = APIRouter(prefix="/mail", tags=["mail"])
 log = logging.getLogger(__name__)
 
-# Directorio para resultados temporales de escaneo (caché)
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -36,25 +35,35 @@ def _parse_date_ts(v: str) -> int:
         dt = parsedate_to_datetime(s)
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return int(dt.timestamp())
-    except: 
-        return 0
+    except: return 0
 
 def _load_json(path: Path, default):
     try:
         if not path.exists(): return default
         return json.loads(path.read_text(encoding="utf-8"))
-    except: 
-        return default
+    except: return default
 
 def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def _user_id(user: Dict[str, Any]) -> str: 
-    return str(user.get("id") or user.get("email") or "anon")
+def _extract_uid(user: Any) -> Optional[int]:
+    """Extrae el ID de usuario buscando en múltiples claves posibles."""
+    if not user or not isinstance(user, dict):
+        return None
+    # Buscamos en orden de probabilidad
+    raw_id = user.get("id") or user.get("user_id") or user.get("sub")
+    try:
+        return int(raw_id) if raw_id is not None else None
+    except (ValueError, TypeError):
+        return None
+
+def _user_id_str(user: Dict[str, Any]) -> str: 
+    uid = _extract_uid(user)
+    return str(uid) if uid else str(user.get("email") or "anon")
 
 def _scan_file_for(user: Dict[str, Any]) -> Path: 
-    return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
+    return MAIL_DATA_DIR / f"scan_last_{_user_id_str(user)}.json"
 
 def _defaults_from_env() -> Dict[str, Any]:
     return {
@@ -71,17 +80,11 @@ def get_user(request: Request):
 
 @router.get("", response_class=HTMLResponse)
 def mail_settings(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
-    """Muestra la configuración de la cuenta de correo."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang, t_func = get_lang_and_translator(request, user=user)
     
+    uid = _extract_uid(user)
     linked = None
-    # CRÍTICO: Aseguramos que el ID sea un entero para la consulta en DB
-    try:
-        uid = int(user.get("id")) if user.get("id") else None
-    except (ValueError, TypeError):
-        uid = None
-
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
@@ -102,39 +105,23 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
-    """Muestra el dashboard de resultados del escaneo."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang, t_func = get_lang_and_translator(request, user=user)
     
+    uid = _extract_uid(user)
     linked = None
-    try:
-        uid = int(user.get("id")) if user.get("id") else None
-    except (ValueError, TypeError):
-        uid = None
-
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
-            linked = {
-                "address": acc.email_address, 
-                "host": acc.imap_host, 
-                "username": acc.email_address, 
-                "port": 993, 
-                "folder": "INBOX", 
-                "use_ssl": True
-            }
+            linked = {"address": acc.email_address}
     
     last_scan_raw = _load_json(_scan_file_for(user), {})
-    scan_items = last_scan_raw.get("items", [])
-    last_scan = {
-        "ts": last_scan_raw.get("scanned_at") or "", 
-        "total": last_scan_raw.get("total", 0)
-    }
+    last_scan = {"ts": last_scan_raw.get("scanned_at") or "", "total": last_scan_raw.get("total", 0)}
     
     return templates.TemplateResponse(
         request=request, 
         name="mail_scanner.html", 
-        context={"lang": lang, "t": t_func, "user": user, "linked": linked, "last_scan": last_scan, "scan_items": scan_items}
+        context={"lang": lang, "t": t_func, "user": user, "linked": linked, "last_scan": last_scan, "scan_items": last_scan_raw.get("items", [])}
     )
 
 @router.post("/settings")
@@ -145,25 +132,24 @@ def mail_settings_save(
     address: str = Form(""), 
     host: str = Form("imap.gmail.com"), 
     port: str = Form("993"), 
-    username: str = Form(""), # Recibimos el username del formulario
+    username: str = Form(""),
     password: str = Form(""), 
     folder: str = Form("INBOX")
 ):
-    """Guarda la configuración de IMAP en la base de datos persistente."""
-    if not user: return RedirectResponse(url="/auth/login", status_code=302)
+    if not user: 
+        print("DEBUG SAVE: No hay usuario en la sesión")
+        return RedirectResponse(url="/auth/login", status_code=302)
     
-    try:
-        uid = int(user.get("id")) if user.get("id") else None
-    except (ValueError, TypeError):
-        uid = None
+    uid = _extract_uid(user)
+    print(f"DEBUG SAVE: Intentando guardar para UID: {uid} (User Object: {user})")
 
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if not acc:
+            print(f"DEBUG SAVE: Creando nueva entrada MailAccount para UID {uid}")
             acc = MailAccount(user_id=uid)
             db.add(acc)
         
-        # Priorizamos address, si está vacío usamos username
         final_email = address.strip() or username.strip()
         acc.email_address = final_email
         acc.imap_host = host.strip()
@@ -173,57 +159,38 @@ def mail_settings_save(
         
         acc.is_active = True
         
-        db.commit()
-        db.refresh(acc)
-        log.info(f"Configuración guardada para usuario {uid}: {final_email}")
+        try:
+            db.commit()
+            db.refresh(acc)
+            print(f"DEBUG SAVE: ÉXITO. Guardado {final_email} en DB.")
+        except Exception as e:
+            db.rollback()
+            print(f"DEBUG SAVE: ERROR AL HACER COMMIT: {e}")
+    else:
+        print("DEBUG SAVE: No se pudo extraer un ID válido del usuario.")
 
     return RedirectResponse(url="/mail/scanner?saved=1", status_code=303)
 
 @router.get("/scan")
 def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get_db), limit: int = Query(20)):
-    """Ejecuta el escaneo de correos usando los datos de la DB."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-    
-    try:
-        uid = int(user.get("id")) if user.get("id") else None
-    except (ValueError, TypeError):
-        uid = None
-
+    uid = _extract_uid(user)
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
 
     if not acc or not acc.imap_password:
         return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
 
-    res = scan_mailbox(
-        host=acc.imap_host, 
-        port=993, 
-        username=acc.email_address, 
-        password=acc.imap_password, 
-        folder="INBOX", 
-        use_ssl=True, 
-        limit=limit
-    )
+    res = scan_mailbox(host=acc.imap_host, port=993, username=acc.email_address, password=acc.imap_password, folder="INBOX", use_ssl=True, limit=limit)
 
     items = []
     for it in (res.items or []):
         lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
         items.append({
-            "uid": str(it.uid), 
-            "subject": str(it.subject), 
-            "from": str(it.from_email), 
-            "date": str(it.date), 
-            "date_ts": _parse_date_ts(str(it.date)), 
-            "verdict": lvl.upper(), 
-            "reasons": getattr(it.analysis, "reasons", [])
+            "uid": str(it.uid), "subject": str(it.subject), "from": str(it.from_email), 
+            "date": str(it.date), "date_ts": _parse_date_ts(str(it.date)), 
+            "verdict": lvl.upper(), "reasons": getattr(it.analysis, "reasons", [])
         })
     
     items.sort(key=lambda x: x["date_ts"], reverse=True)
-
-    _save_json(_scan_file_for(user), {
-        "ok": res.ok, 
-        "scanned_at": _now_iso(), 
-        "items": items, 
-        "total": res.total_found
-    })
-    
+    _save_json(_scan_file_for(user), {"ok": res.ok, "scanned_at": _now_iso(), "items": items, "total": res.total_found})
     return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
