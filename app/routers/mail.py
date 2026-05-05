@@ -27,7 +27,7 @@ MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- HELPERS ---
 def _now_iso() -> str: 
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")[cite: 2]
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def _parse_date_ts(v: str) -> int:
     s = (v or "").strip()
@@ -36,23 +36,25 @@ def _parse_date_ts(v: str) -> int:
         dt = parsedate_to_datetime(s)
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return int(dt.timestamp())
-    except: return 0[cite: 2]
+    except: 
+        return 0
 
 def _load_json(path: Path, default):
     try:
         if not path.exists(): return default
         return json.loads(path.read_text(encoding="utf-8"))
-    except: return default[cite: 2]
+    except: 
+        return default
 
 def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")[cite: 2]
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def _user_id(user: Dict[str, Any]) -> str: 
-    return str(user.get("id") or user.get("email") or "anon")[cite: 2]
+    return str(user.get("id") or user.get("email") or "anon")
 
 def _scan_file_for(user: Dict[str, Any]) -> Path: 
-    return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"[cite: 2]
+    return MAIL_DATA_DIR / f"scan_last_{_user_id(user)}.json"
 
 def _defaults_from_env() -> Dict[str, Any]:
     return {
@@ -60,16 +62,16 @@ def _defaults_from_env() -> Dict[str, Any]:
         "port": int(os.getenv("MAIL_PORT", "993")), 
         "folder": os.getenv("MAIL_FOLDER", "INBOX"), 
         "use_ssl": True
-    }[cite: 2]
+    }
 
 def get_user(request: Request): 
-    return get_current_user_cookie_optional(request)[cite: 2]
+    return get_current_user_cookie_optional(request)
 
 # --- RUTAS ---
 
 @router.get("", response_class=HTMLResponse)
 def mail_settings(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
-    """Muestra la configuración de la cuenta de correo[cite: 2]."""
+    """Muestra la configuración de la cuenta de correo."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang, t_func = get_lang_and_translator(request, user=user)
     
@@ -96,11 +98,11 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
 
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends(get_db)):
-    """Muestra el dashboard de resultados del escaneo[cite: 2]."""
+    """Muestra el dashboard de resultados del escaneo."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     lang, t_func = get_lang_and_translator(request, user=user)
     
-    # Verificamos si hay una cuenta vinculada en la DB[cite: 1, 2]
+    # Verificamos si hay una cuenta vinculada en la DB
     linked = None
     uid = user.get("id")
     if uid:
@@ -115,7 +117,7 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
                 "use_ssl": True
             }
     
-    # Cargamos el último escaneo desde el archivo temporal[cite: 2]
+    # Cargamos el último escaneo desde el archivo temporal
     last_scan_raw = _load_json(_scan_file_for(user), {})
     scan_items = last_scan_raw.get("items", [])
     last_scan = {
@@ -140,28 +142,28 @@ def mail_settings_save(
     password: str = Form(""), 
     folder: str = Form("INBOX")
 ):
-    """Guarda la configuración de IMAP en la base de datos persistente[cite: 1, 2]."""
+    """Guarda la configuración de IMAP en la base de datos persistente."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
     uid = user.get("id")
     if uid:
-        # Buscamos si ya existe o creamos una nueva entrada[cite: 2]
+        # Buscamos si ya existe o creamos una nueva entrada
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if not acc:
             acc = MailAccount(user_id=uid)
             db.add(acc)
         
-        # Asignamos los valores del formulario[cite: 2]
+        # Asignamos los valores del formulario
         acc.email_address = address.strip()
         acc.imap_host = host.strip()
         
-        # Solo actualizamos el password si se envió uno nuevo[cite: 2]
+        # Solo actualizamos el password si se envió uno nuevo
         if password.strip():
             acc.imap_password = password.strip()
         
         acc.is_active = True
         
-        # CRÍTICO: Commit para guardar en PostgreSQL (Railway)
+        # Guardar en PostgreSQL
         db.commit()
         db.refresh(acc)
 
@@ -169,17 +171,17 @@ def mail_settings_save(
 
 @router.get("/scan")
 def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get_db), limit: int = Query(20)):
-    """Ejecuta el escaneo de correos usando los datos de la DB[cite: 2]."""
+    """Ejecuta el escaneo de correos usando los datos de la DB."""
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # Recuperamos la cuenta de la DB[cite: 1, 2]
+    # Recuperamos la cuenta de la DB
     uid = user.get("id")
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
 
     if not acc or not acc.imap_password:
         return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
 
-    # Ejecutamos el servicio de escaneo[cite: 2]
+    # Ejecutamos el servicio de escaneo
     res = scan_mailbox(
         host=acc.imap_host, 
         port=993, 
@@ -190,7 +192,7 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
         limit=limit
     )
 
-    # Procesamos los resultados para el dashboard[cite: 2]
+    # Procesamos los resultados para el dashboard
     items = []
     for it in (res.items or []):
         lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
@@ -204,10 +206,10 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
             "reasons": getattr(it.analysis, "reasons", [])
         })
     
-    # Ordenamos por fecha descendente[cite: 2]
+    # Ordenamos por fecha descendente
     items.sort(key=lambda x: x["date_ts"], reverse=True)
 
-    # Guardamos los resultados en el JSON temporal de sesión[cite: 2]
+    # Guardamos los resultados en el JSON temporal
     _save_json(_scan_file_for(user), {
         "ok": res.ok, 
         "scanned_at": _now_iso(), 
