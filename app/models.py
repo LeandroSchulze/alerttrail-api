@@ -356,3 +356,21 @@ class PaymentHistory(Base):
 
     def __repr__(self):
         return f"<PaymentHistory id={self.id} user_id={self.user_id} plan={self.plan} status={self.status}>"
+
+# =========================
+# Push Subscriptions
+# =========================
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    
+    # Datos técnicos que genera el navegador
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(Text, nullable=False)
+    auth = Column(Text, nullable=False)
+    
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", lazy="selectin")
