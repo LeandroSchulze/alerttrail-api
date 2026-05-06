@@ -25,8 +25,10 @@ log = logging.getLogger(__name__)
 MAIL_DATA_DIR = Path(os.getenv("MAIL_DATA_DIR", "/var/data/mail"))
 MAIL_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- HELPERS (Se mantienen igual) ---
-def _now_iso() -> str: return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+# --- HELPERS ---
+def _now_iso() -> str: 
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 def _parse_date_ts(v: str) -> int:
     s = (v or "").strip()
     if not s: return 0
@@ -35,25 +37,33 @@ def _parse_date_ts(v: str) -> int:
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return int(dt.timestamp())
     except: return 0
+
 def _load_json(path: Path, default):
     try:
         if not path.exists(): return default
         return json.loads(path.read_text(encoding="utf-8"))
     except: return default
+
 def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
 def _extract_uid(user: Any) -> Optional[int]:
     if not user or not isinstance(user, dict): return None
     raw_id = user.get("id") or user.get("user_id") or user.get("sub")
     try: return int(raw_id)
     except: return None
+
 def _user_id_str(user: Dict[str, Any]) -> str: 
     uid = _extract_uid(user)
     return str(uid) if uid else str(user.get("email") or "anon")
-def _scan_file_for(user: Dict[str, Any]) -> Path: return MAIL_DATA_DIR / f"scan_last_{_user_id_str(user)}.json"
+
+def _scan_file_for(user: Dict[str, Any]) -> Path: 
+    return MAIL_DATA_DIR / f"scan_last_{_user_id_str(user)}.json"
+
 def _defaults_from_env() -> Dict[str, Any]:
     return {"host": os.getenv("MAIL_HOST", "imap.gmail.com"), "port": int(os.getenv("MAIL_PORT", "993")), "folder": "INBOX", "use_ssl": True}
+
 def get_user(request: Request): return get_current_user_cookie_optional(request)
 
 # --- RUTAS ---
@@ -119,49 +129,42 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     for it in (res.items or []):
         raw_reasons = getattr(it.analysis, "reasons", [])
         subject = str(it.subject).lower()
-        sender = str(it.from_email).lower()
         
-        # --- MOTOR DE PUNTUACIÓN DE AMENAZAS (COMPLEJO) ---
+        # --- MOTOR DE PUNTUACIÓN REFORZADO ---
         score = 0
         
-        # 1. Análisis de estructura de motivos
+        # 1. Analizar estructura de diccionarios (según tu captura)
         for r in raw_reasons:
+            # Si el motivo es un diccionario (lo que vemos en tu captura)
             if isinstance(r, dict):
                 key = r.get("key")
                 if key == "links_count":
                     count = r.get("count", 0)
-                    if count > 10: score += 12 # Crítico
-                    elif count > 3: score += 5
+                    if count >= 10: score += 15 # 20 links es MUY sospechoso
                 elif key == "phishing_words":
-                    words = r.get("words", [])
-                    score += (len(words) * 3) # Cada palabra suma 3 puntos
+                    score += len(r.get("words", [])) * 4
+            # Si el motivo es un string
             elif isinstance(r, str):
-                if "link" in r.lower(): score += 4
+                r_low = r.lower()
+                if "link" in r_low: score += 5
+                if "phishing" in r_low: score += 10
 
-        # 2. Análisis Semántico y de Urgencia
-        urgency_list = ["alerta", "urgente", "bloqueo", "suspension", "seguridad", "acceso", "verify", "atencion", "identidad"]
-        if any(w in subject for w in urgency_list):
-            score += 8
+        # 2. Análisis de Urgencia en el Asunto
+        if any(w in subject for w in ["alerta", "urgente", "bloqueo", "acceso", "verify", "identidad"]):
+            score += 10 # Si dice ALERTA, ya suma mucho
         
-        # 3. Detección de Suplantación de Marca (Spoofing)
-        # Si el correo dice ser de "AlertTrail" pero no viene de alerttrail.com
-        if "alerttrail" in subject and "alerttrail.com" not in sender:
-            score += 15 # Penalización masiva
-            
-        # 4. Veredicto del motor base
-        base_lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
-        if base_lvl == "high": score += 10
-        elif base_lvl == "medium": score += 5
+        # Log para debug (lo verás en Railway)
+        log.info(f"Mail ID {it.uid} - Subject: {subject[:30]} - Score: {score}")
 
-        # Asignación final basada en peso acumulado
-        if score >= 18:
+        # Veredicto final: Umbral de 15 para ALTA
+        if score >= 15:
             final_lvl = "ALTA"
             total_high_threats += 1
         elif score >= 8:
             final_lvl = "MEDIA"
         else:
             final_lvl = "BAJA"
-        # --------------------------------------------------
+        # -------------------------------------
 
         items.append({
             "uid": str(it.uid), "subject": str(it.subject), "from": str(it.from_email), 
@@ -172,14 +175,13 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     items.sort(key=lambda x: x["date_ts"], reverse=True)
     _save_json(_scan_file_for(user), {"ok": res.ok, "scanned_at": _now_iso(), "items": items, "total": res.total_found})
 
+    # SI HAY AMENAZAS, NOTIFICAR
     if total_high_threats > 0 and uid:
-        try:
-            trigger_push_notification(
-                user_id=uid,
-                title="🚨 Amenaza Crítica",
-                body=f"AlertTrail detectó {total_high_threats} correos altamente peligrosos."
-            )
-        except Exception as e:
-            log.error(f"Error en push: {e}")
+        log.info(f"Disparando pop-up para usuario {uid}. Amenazas: {total_high_threats}")
+        trigger_push_notification(
+            user_id=uid,
+            title="🚨 Amenaza Detectada",
+            body=f"Se encontraron {total_high_threats} correos altamente peligrosos."
+        )
 
     return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
