@@ -88,6 +88,7 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
+            # Mapeamos los nombres de la DB a los nombres que usa el HTML
             linked = {
                 "address": acc.email, 
                 "host": acc.host, 
@@ -187,21 +188,23 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     )
 
     items = []
-    # Contador para saber si enviar notificación
     high_threat_found = False
 
     for it in (res.items or []):
-        reasons = getattr(it.analysis, "reasons", [])
+        # FIX CRÍTICO: Convertimos reasons a lista de strings para evitar AttributeError con .lower()
+        raw_reasons = getattr(it.analysis, "reasons", [])
+        reasons = [str(r) for r in raw_reasons]
+        
         subject = str(it.subject).lower()
         
         # --- REFUERZO DE SEGURIDAD ---
         danger_score = 0
-        # 1. Analizar palabras clave de urgencia en el asunto
         urgency_keywords = ["alerta", "urgente", "bloqueo", "suspension", "seguridad", "acceso", "verify"]
+        
         if any(word in subject for word in urgency_keywords):
             danger_score += 5
             
-        # 2. Analizar volumen de links (según tu captura, 20 links es sospechoso)
+        # Analizar volumen de links
         link_reason = [r for r in reasons if "link(s)" in r.lower()]
         if link_reason:
             try:
@@ -209,12 +212,12 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
                 if num_links > 3: danger_score += 5
             except: pass
 
-        # 3. Analizar veredicto del servicio base
+        # Analizar veredicto del servicio base
         base_lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
         if base_lvl == "high": danger_score += 10
         elif base_lvl == "medium": danger_score += 5
 
-        # Determinar veredicto final
+        # Determinar veredicto final para la UI
         if danger_score >= 10:
             final_lvl = "ALTA"
             high_threat_found = True
@@ -237,12 +240,15 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     items.sort(key=lambda x: x["date_ts"], reverse=True)
     _save_json(_scan_file_for(user), {"ok": res.ok, "scanned_at": _now_iso(), "items": items, "total": res.total_found})
 
-    # SI SE ENCONTRÓ UNA AMENAZA ALTA, DISPARAMOS EL POP-UP
+    # DISPARAR NOTIFICACIÓN POP-UP SI HAY AMENAZA ALTA
     if high_threat_found and uid:
-        trigger_push_notification(
-            user_id=uid,
-            title="⚠️ Amenaza Detectada",
-            body="Se han encontrado correos con alto riesgo de seguridad en tu bandeja."
-        )
+        try:
+            trigger_push_notification(
+                user_id=uid,
+                title="⚠️ Amenaza Detectada",
+                body="Se han encontrado correos con alto riesgo de seguridad en tu bandeja."
+            )
+        except Exception as e:
+            log.error(f"Error enviando push notification: {e}")
 
     return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
