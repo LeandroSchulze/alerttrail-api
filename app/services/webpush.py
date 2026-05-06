@@ -1,7 +1,10 @@
 # app/services/webpush.py
+from __future__ import annotations
 import json
 import os
 import logging
+from typing import Any # <--- ESTA ES LA LÍNEA QUE FALTABA
+
 from pywebpush import webpush, WebPushException
 from app.database import SessionLocal
 from app.models import PushSubscription
