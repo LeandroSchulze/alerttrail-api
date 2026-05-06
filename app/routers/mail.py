@@ -17,6 +17,8 @@ from app.ui import templates
 from app.services.mail_scan import scan_mailbox
 from app.database import get_db
 from app.models import MailAccount
+# IMPORTANTE: Importamos el disparador de notificaciones
+from app.routers.push import trigger_push_notification
 
 router = APIRouter(prefix="/mail", tags=["mail"])
 log = logging.getLogger(__name__)
@@ -86,13 +88,12 @@ def mail_settings(request: Request, user=Depends(get_user), db: Session = Depend
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc:
-            # Mapeamos los nombres de la DB a los nombres que usa el HTML
             linked = {
                 "address": acc.email, 
                 "host": acc.host, 
                 "username": acc.username, 
                 "port": acc.port, 
-                "folder": "INBOX", # Si no hay columna folder, dejamos default
+                "folder": "INBOX",
                 "use_ssl": acc.use_ssl
             }
 
@@ -145,17 +146,15 @@ def mail_settings_save(
             acc = MailAccount(user_id=uid)
             db.add(acc)
         
-        # CORRECCIÓN CRÍTICA: Usar los nombres de columna que pide la DB según el log
         final_email = address.strip() or username.strip()
-        acc.email = final_email  # Antes era email_address
-        acc.host = host.strip()   # Antes era imap_host
+        acc.email = final_email 
+        acc.host = host.strip() 
         acc.port = int(port) if port.isdigit() else 993
         acc.username = username.strip() or final_email
         acc.use_ssl = use_ssl
         acc.provider = "imap"
 
         if password.strip():
-            # El log dice que la columna es 'password_encrypted'
             acc.password_encrypted = password.strip()
         
         try:
@@ -174,7 +173,6 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     uid = _extract_uid(user)
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
 
-    # Ajustado a los nombres reales de columna
     if not acc or not acc.password_encrypted:
         return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
 
@@ -189,14 +187,62 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     )
 
     items = []
+    # Contador para saber si enviar notificación
+    high_threat_found = False
+
     for it in (res.items or []):
-        lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
+        reasons = getattr(it.analysis, "reasons", [])
+        subject = str(it.subject).lower()
+        
+        # --- REFUERZO DE SEGURIDAD ---
+        danger_score = 0
+        # 1. Analizar palabras clave de urgencia en el asunto
+        urgency_keywords = ["alerta", "urgente", "bloqueo", "suspension", "seguridad", "acceso", "verify"]
+        if any(word in subject for word in urgency_keywords):
+            danger_score += 5
+            
+        # 2. Analizar volumen de links (según tu captura, 20 links es sospechoso)
+        link_reason = [r for r in reasons if "link(s)" in r.lower()]
+        if link_reason:
+            try:
+                num_links = int(''.join(filter(str.isdigit, link_reason[0])))
+                if num_links > 3: danger_score += 5
+            except: pass
+
+        # 3. Analizar veredicto del servicio base
+        base_lvl = str(getattr(it.analysis, "danger_level", "low")).lower()
+        if base_lvl == "high": danger_score += 10
+        elif base_lvl == "medium": danger_score += 5
+
+        # Determinar veredicto final
+        if danger_score >= 10:
+            final_lvl = "ALTA"
+            high_threat_found = True
+        elif danger_score >= 5:
+            final_lvl = "MEDIA"
+        else:
+            final_lvl = "BAJA"
+        # -----------------------------
+
         items.append({
-            "uid": str(it.uid), "subject": str(it.subject), "from": str(it.from_email), 
-            "date": str(it.date), "date_ts": _parse_date_ts(str(it.date)), 
-            "verdict": lvl.upper(), "reasons": getattr(it.analysis, "reasons", [])
+            "uid": str(it.uid), 
+            "subject": str(it.subject), 
+            "from": str(it.from_email), 
+            "date": str(it.date), 
+            "date_ts": _parse_date_ts(str(it.date)), 
+            "verdict": final_lvl, 
+            "reasons": reasons
         })
     
     items.sort(key=lambda x: x["date_ts"], reverse=True)
     _save_json(_scan_file_for(user), {"ok": res.ok, "scanned_at": _now_iso(), "items": items, "total": res.total_found})
+
+    # SI SE ENCONTRÓ UNA AMENAZA ALTA, DISPARAMOS EL POP-UP
+    if high_threat_found and uid:
+        trigger_push_notification(
+            user_id=uid,
+            title="⚠️ Amenaza Detectada",
+            body="Se han encontrado correos con alto riesgo de seguridad en tu bandeja."
+        )
+
     return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
