@@ -89,9 +89,17 @@ def mail_scanner(request: Request, user=Depends(get_user), db: Session = Depends
     if uid:
         acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first()
         if acc: linked = {"address": acc.email}
+    
     last_scan_raw = _load_json(_scan_file_for(user), {})
-    last_scan = {"ts": last_scan_raw.get("scanned_at") or "", "total": last_scan_raw.get("total", 0)}
-    return templates.TemplateResponse(request=request, name="mail_scanner.html", context={"lang": lang, "t": t_func, "user": user, "linked": linked, "last_scan": last_scan, "scan_items": last_scan_raw.get("items", [])})
+    return templates.TemplateResponse(
+        request=request, 
+        name="mail_scanner.html", 
+        context={
+            "lang": lang, "t": t_func, "user": user, "linked": linked, 
+            "last_scan": {"ts": last_scan_raw.get("scanned_at") or "", "total": last_scan_raw.get("total", 0)}, 
+            "scan_items": last_scan_raw.get("items", [])
+        }
+    )
 
 @router.post("/settings")
 def mail_settings_save(request: Request, user=Depends(get_user), db: Session = Depends(get_db), address: str = Form(""), host: str = Form("imap.gmail.com"), port: str = Form("993"), username: str = Form(""), password: str = Form(""), folder: str = Form("INBOX"), use_ssl: bool = Form(True)):
@@ -107,64 +115,54 @@ def mail_settings_save(request: Request, user=Depends(get_user), db: Session = D
         if password.strip(): acc.password_encrypted = password.strip()
         try:
             db.commit()
-            db.refresh(acc)
-            log.info(f"Éxito: Guardado {final_email}.")
+            print(f"✅ Configuración de mail guardada para usuario {uid}")
         except Exception as e:
             db.rollback()
-            log.error(f"Error: {e}")
+            print(f"❌ Error al guardar settings: {e}")
     return RedirectResponse(url="/mail/scanner?saved=1", status_code=303)
 
 @router.get("/scan")
 def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get_db), limit: int = Query(20)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     uid = _extract_uid(user)
+    print(f"🔍 Iniciando escaneo manual para usuario ID: {uid}")
+    
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
-    if not acc or not acc.password_encrypted: return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
+    if not acc or not acc.password_encrypted: 
+        print("❌ Escaneo abortado: No hay cuenta vinculada o falta password.")
+        return RedirectResponse(url="/mail/scanner?error=no_linked", status_code=303)
 
     res = scan_mailbox(host=acc.host, port=acc.port or 993, username=acc.username or acc.email, password=acc.password_encrypted, folder="INBOX", use_ssl=acc.use_ssl, limit=limit)
+    print(f"📦 Escaneo completado. Mails encontrados: {len(res.items or [])}")
 
     items = []
-    total_high_threats = 0
+    high_threat_found = False
 
     for it in (res.items or []):
         raw_reasons = getattr(it.analysis, "reasons", [])
         subject = str(it.subject).lower()
         
-        # --- MOTOR DE PUNTUACIÓN REFORZADO ---
+        # --- MOTOR DE PUNTUACIÓN (USANDO PRINT PARA DEBUG) ---
         score = 0
         
-        # 1. Analizar estructura de diccionarios (según tu captura)
-        for r in raw_reasons:
-            # Si el motivo es un diccionario (lo que vemos en tu captura)
-            if isinstance(r, dict):
-                key = r.get("key")
-                if key == "links_count":
-                    count = r.get("count", 0)
-                    if count >= 10: score += 15 # 20 links es MUY sospechoso
-                elif key == "phishing_words":
-                    score += len(r.get("words", [])) * 4
-            # Si el motivo es un string
-            elif isinstance(r, str):
-                r_low = r.lower()
-                if "link" in r_low: score += 5
-                if "phishing" in r_low: score += 10
-
-        # 2. Análisis de Urgencia en el Asunto
-        if any(w in subject for w in ["alerta", "urgente", "bloqueo", "acceso", "verify", "identidad"]):
-            score += 10 # Si dice ALERTA, ya suma mucho
+        # 1. Analizar motivos (independiente de si es dict o string)
+        reasons_str = str(raw_reasons).lower()
+        if "links_count" in reasons_str and "20" in reasons_str: score += 15
+        if "phishing" in reasons_str: score += 10
         
-        # Log para debug (lo verás en Railway)
-        log.info(f"Mail ID {it.uid} - Subject: {subject[:30]} - Score: {score}")
+        # 2. Analizar asunto (Fuerza bruta para 'alerta')
+        if "alerta" in subject or "urgente" in subject:
+            score += 10
+            
+        print(f"   -> Mail: {subject[:30]} | Score: {score}")
 
-        # Veredicto final: Umbral de 15 para ALTA
         if score >= 15:
             final_lvl = "ALTA"
-            total_high_threats += 1
+            high_threat_found = True
         elif score >= 8:
             final_lvl = "MEDIA"
         else:
             final_lvl = "BAJA"
-        # -------------------------------------
 
         items.append({
             "uid": str(it.uid), "subject": str(it.subject), "from": str(it.from_email), 
@@ -174,14 +172,10 @@ def scan_get(request: Request, user=Depends(get_user), db: Session = Depends(get
     
     items.sort(key=lambda x: x["date_ts"], reverse=True)
     _save_json(_scan_file_for(user), {"ok": res.ok, "scanned_at": _now_iso(), "items": items, "total": res.total_found})
+    print(f"💾 Resultados guardados en JSON para usuario {uid}")
 
-    # SI HAY AMENAZAS, NOTIFICAR
-    if total_high_threats > 0 and uid:
-        log.info(f"Disparando pop-up para usuario {uid}. Amenazas: {total_high_threats}")
-        trigger_push_notification(
-            user_id=uid,
-            title="🚨 Amenaza Detectada",
-            body=f"Se encontraron {total_high_threats} correos altamente peligrosos."
-        )
+    if high_threat_found and uid:
+        print(f"🔔 Disparando notificación PUSH para usuario {uid}")
+        trigger_push_notification(user_id=uid, title="🚨 Alerta Crítica", body="Se detectaron correos peligrosos.")
 
     return RedirectResponse(url="/mail/scanner?scanned=1", status_code=303)
