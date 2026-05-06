@@ -15,6 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.i18n.utils import get_lang_and_translator
 from app.ui import templates
 from app.security import get_current_user_cookie_optional
+from app.database import init_db # <--- IMPORTANTE: Importar init_db
 
 # Routers
 from app.routers import (
@@ -44,6 +45,12 @@ except Exception as e:
 
 app = FastAPI(title=APP_NAME)
 
+# --- SINCRONIZACIÓN DE BASE DE DATOS ---
+@app.on_event("startup")
+def on_startup():
+    """Ejecuta la creación de tablas al arrancar la app."""
+    init_db() # <--- ESTO SOLUCIONA EL ERROR DE LA TABLA FALTANTE
+
 # Middleware CORS (Vital para que la App Móvil no sea bloqueada)
 app.add_middleware(
     CORSMiddleware,
@@ -62,7 +69,6 @@ async def serve_sw():
     """Sirve el Service Worker desde la raíz para máximo alcance (Scope)."""
     sw_path = STATIC_DIR / "sw.js"
     if sw_path.exists():
-        # Añadimos cabecera de Service-Worker-Allowed para evitar problemas de permisos
         return FileResponse(
             sw_path, 
             media_type="application/javascript",
@@ -101,7 +107,7 @@ app.include_router(scheduler_status.router)
 app.include_router(alerts.router)
 app.include_router(i18n.router)
 app.include_router(tasks_mail.router)
-app.include_router(push.router) # Router de notificaciones POP-UP
+app.include_router(push.router)
 
 # Routers Opcionales
 _try_include_router("app.routers.billing_ui")
