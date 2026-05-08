@@ -66,8 +66,15 @@
       return;
     }
 
-    if (Notification.permission !== "granted") {
-      log("Notification permission not granted");
+    // --- MEJORA: Solicitar permiso si está en 'default' ---
+    let permission = Notification.permission;
+    if (permission === "default") {
+      log("Solicitando permiso de notificación...");
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission !== "granted") {
+      warn("Permiso de notificación no otorgado (Estado: " + permission + ")");
       return;
     }
 
@@ -79,9 +86,12 @@
 
     let registration;
     try {
-      registration = await navigator.serviceWorker.ready;
+      // Usamos .register para asegurar que el sw.js se cargue correctamente
+      registration = await navigator.serviceWorker.register('/static/sw.js');
+      await navigator.serviceWorker.ready;
+      log("ServiceWorker listo");
     } catch (err) {
-      error("ServiceWorker not ready:", err);
+      error("Error registrando ServiceWorker:", err);
       return;
     }
 
@@ -89,23 +99,25 @@
 
     if (!subscription) {
       try {
+        log("Creando nueva suscripción...");
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
         });
-        log("Push subscription created");
+        log("Suscripción creada exitosamente");
       } catch (err) {
-        error("Failed to create subscription:", err);
+        error("Fallo al crear la suscripción en el navegador:", err);
         return;
       }
     } else {
-      log("Existing push subscription found");
+      log("Suscripción existente encontrada");
     }
 
     // Normalize subscription before sending
     const payload = subscription.toJSON ? subscription.toJSON() : subscription;
 
     try {
+      log("Enviando suscripción al servidor Railway...");
       const res = await fetch("/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,13 +126,22 @@
       });
 
       if (!res.ok) {
-        warn("Backend rejected push subscription:", res.status);
+        warn("El servidor rechazó la suscripción:", res.status);
         return;
       }
 
-      log("Push subscription sent to backend");
+      log("Suscripción guardada en la base de datos");
+      
+      // --- FEEDBACK VISUAL ---
+      // Si tienes la función showToast la usamos, sino un alert clásico
+      if (typeof showToast === "function") {
+        showToast("🔔 Alertas configuradas", "success");
+      } else {
+        alert("🔔 AlertTrail: Notificaciones activadas");
+      }
+
     } catch (err) {
-      error("Failed sending subscription to backend:", err);
+      error("Error enviando la suscripción al backend:", err);
     }
   }
 
@@ -128,6 +149,9 @@
   // Boot
   // =========================
   document.addEventListener("DOMContentLoaded", () => {
-    initPush().catch((e) => error("Init push failed:", e));
+    // Pequeño delay para asegurar que todo el DOM esté listo
+    setTimeout(() => {
+      initPush().catch((e) => error("Fallo crítico en initPush:", e));
+    }, 500);
   });
 })();
