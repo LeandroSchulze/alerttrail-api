@@ -1,93 +1,39 @@
-{# app/templates/billing_subscriptions.html #}
 {% extends "base.html" %}
-
-{% block title %}
-  {{ t((lang or "es")|lower, "billing.page_title") }}
-{% endblock %}
-
 {% block body %}
   <div class="container" style="max-width:800px;margin:60px auto;">
-    <h1 style="margin-top:0;font-size:1.8rem;">
-      {{ t((lang or "es")|lower, "billing.title") }}
-    </h1>
+    <h1>{{ t(lang, "billing.title") }}</h1>
 
-    <p class="muted" style="color:#64748b;">
-      {{ t((lang or "es")|lower, "billing.subtitle") }}
-    </p>
+    <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:18px;background:#fff;">
+      <h3>{{ t(lang, "billing.current_plan_title") }}</h3>
 
-    <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin-top:20px;background:#fff;">
-      <h3>{{ t((lang or "es")|lower, "billing.current_plan_title") }}</h3>
-
-      <div class="chips" style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;">
-        <span class="chip" style="background:#eef2ff;border:1px solid #c7d2fe;color:#1e3a8a;padding:6px 10px;border-radius:999px;font-weight:600;font-size:14px;">
-          {{ plan }}
+      <div style="display:flex;gap:8px;margin:12px 0;">
+        <span style="background:#eef2ff;padding:6px 10px;border-radius:999px;font-weight:600;">
+          {{ current_plan }}
         </span>
-
-        <span class="chip" style="background:#eef2ff;border:1px solid #c7d2fe;color:#1e3a8a;padding:6px 10px;border-radius:999px;font-weight:600;font-size:14px;">
-          {{ currency }} {{ "%.2f"|format(price_month) }} / {{ t((lang or "es")|lower, "billing.per_month") }}
-        </span>
-
-        <span class="chip" style="background:#eef2ff;border:1px solid #c7d2fe;color:#1e3a8a;padding:6px 10px;border-radius:999px;font-weight:600;font-size:14px;">
-          {{ t((lang or "es")|lower, "billing.annual_label") }}:
-          {{ currency }} {{ "%.2f"|format(price_year) }}
-          ({{ disc_pct if disc_pct else 20 }}% OFF)
+        <span style="background:#f0fdf4;padding:6px 10px;border-radius:999px;font-weight:600;">
+          {{ currency }} {{ "%.2f"|format(price_month) }} / mes
         </span>
       </div>
 
-      {% if is_admin %}
-        <p class="muted" style="color:#64748b;">
-          {{ t((lang or "es")|lower, "billing.admin_note") }}
-        </p>
-      {% elif is_pro %}
-        <p class="muted" style="color:#64748b;">
-          {{ t((lang or "es")|lower, "billing.pro_note") }}
-        </p>
-      {% else %}
-        <p class="muted" style="color:#64748b;">
-          {{ t((lang or "es")|lower, "billing.free_note") }}
-        </p>
-      {% endif %}
-
-      <div class="actions" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">
-        <a class="btn" href="/billing/checkout?plan=PRO"
-           style="background:#2563eb;color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;text-decoration:none;">
-          {{ t((lang or "es")|lower, "billing.cta_pro") }}
+      <div class="actions" style="display:flex;gap:10px;margin-top:20px;">
+        <a href="/billing/checkout?plan=PRO" class="btn" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:700;">
+          {{ t(lang, "billing.cta_pro") }}
         </a>
-
-        <a class="btn outline" href="/billing/checkout?plan=BIZ"
-           style="background:#fff;color:#0f172a;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-weight:700;text-decoration:none;">
-          {{ t((lang or "es")|lower, "billing.cta_biz") }}
-        </a>
-
-        <a class="btn outline" href="/billing"
-           style="background:#fff;color:#0f172a;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-weight:700;text-decoration:none;">
-          {{ t((lang or "es")|lower, "billing.cta_history") }}
+        <a href="/billing/checkout?plan=BIZ" class="btn outline" style="border:1px solid #cbd5e1;padding:10px 20px;border-radius:8px;text-decoration:none;color:#334155;">
+          {{ t(lang, "billing.cta_biz") }}
         </a>
       </div>
     </div>
 
     <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin-top:20px;background:#fff;">
-      <h3>{{ t((lang or "es")|lower, "billing.biz_title") }}</h3>
-
-      <p class="muted" style="color:#64748b;">
-        {{ t((lang or "es")|lower, "billing.biz_desc",
-             n=biz_included,
-             price="%.2f"|format(biz_extra),
-             currency=currency
-        ) }}
+      <h3>{{ t(lang, "billing.biz_title") }}</h3>
+      <p style="color:#64748b;">
+        {{ t(lang, "billing.biz_desc") }} 
+        <strong>{{ biz_included }} asientos incluidos</strong>. 
+        Asiento extra: {{ currency }}{{ "%.2f"|format(biz_extra) }}.
       </p>
-
-      <div class="actions" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">
-        <a class="btn outline" href="/billing/checkout?plan=BIZ"
-           style="background:#fff;color:#0f172a;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-weight:700;text-decoration:none;">
-          {{ t((lang or "es")|lower, "billing.cta_biz_buy") }}
-        </a>
-      </div>
-    </div>
-
-    <div class="right" style="text-align:right;margin-top:8px;">
-      <a href="/dashboard" class="link" style="color:#2563eb;text-decoration:none;font-weight:500;">
-        &larr; {{ t((lang or "es")|lower, "common.back_dashboard") }}
+      <a href="/billing/checkout?plan=BIZ" style="color:#2563eb;font-weight:700;text-decoration:none;">
+        {{ t(lang, "billing.cta_biz_buy") }} &rarr;
       </a>
     </div>
   </div>
