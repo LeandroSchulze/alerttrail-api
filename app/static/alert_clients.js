@@ -1,157 +1,104 @@
-// app/static/alert_clients.js
 (function () {
   "use strict";
 
-  // =========================
-  // Helpers
-  // =========================
-  function log(...args) {
-    console.log("[Push]", ...args);
-  }
-
-  function warn(...args) {
-    console.warn("[Push]", ...args);
-  }
-
-  function error(...args) {
-    console.error("[Push]", ...args);
-  }
-
   function urlBase64ToUint8Array(base64String) {
     const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-    const base64 = (base64String + padding)
-      .replace(/-/g, "+")
-      .replace(/_/g, "/");
-
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
     const rawData = window.atob(base64);
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
 
-  // =========================
-  // Get VAPID public key from backend
-  // =========================
-  async function fetchVapidPublicKey() {
-    try {
-      const res = await fetch("/push/vapid-public", {
-        credentials: "same-origin",
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-      if (!data?.vapidPublicKey) {
-        throw new Error("Missing vapidPublicKey");
-      }
-
-      return data.vapidPublicKey;
-    } catch (err) {
-      warn("Failed to fetch VAPID public key:", err);
-      return null;
-    }
-  }
-
-  // =========================
-  // Main
-  // =========================
   async function initPush() {
+    // PASO 1: Inicio
+    alert("1. Iniciando script de Push...");
+
     if (!("serviceWorker" in navigator)) {
-      warn("ServiceWorker not supported");
+      alert("ERROR: Tu navegador no soporta Service Workers");
       return;
     }
 
-    if (!("PushManager" in window)) {
-      warn("PushManager not supported");
-      return;
-    }
-
-    // --- MEJORA: Solicitar permiso si está en 'default' ---
+    // PASO 2: Permisos
     let permission = Notification.permission;
+    alert("2. Permiso actual: " + permission);
+
     if (permission === "default") {
-      log("Solicitando permiso de notificación...");
+      alert("3. Solicitando permiso al navegador...");
       permission = await Notification.requestPermission();
     }
 
     if (permission !== "granted") {
-      warn("Permiso de notificación no otorgado (Estado: " + permission + ")");
+      alert("STOP: No diste permiso. Estado: " + permission);
       return;
     }
 
-    const vapidPublicKey = await fetchVapidPublicKey();
+    // PASO 3: VAPID Key
+    alert("4. Buscando llave VAPID en el servidor...");
+    let vapidPublicKey = null;
+    try {
+      const resVapid = await fetch("/push/vapid-public");
+      const data = await resVapid.json();
+      vapidPublicKey = data.vapidPublicKey;
+    } catch (e) {
+      alert("ERROR en Paso 4: No pude conectar con /push/vapid-public");
+      return;
+    }
+
     if (!vapidPublicKey) {
-      warn("VAPID public key missing, push disabled");
+      alert("STOP: El servidor no envió la llave VAPID.");
       return;
     }
 
+    // PASO 4: Service Worker
+    alert("5. Registrando Service Worker...");
     let registration;
     try {
-      // Usamos .register para asegurar que el sw.js se cargue correctamente
+      // Intentamos registrarlo. Asegurate que el archivo esté en esa ruta.
       registration = await navigator.serviceWorker.register('/static/sw.js');
       await navigator.serviceWorker.ready;
-      log("ServiceWorker listo");
+      alert("6. Service Worker listo y activo");
     } catch (err) {
-      error("Error registrando ServiceWorker:", err);
+      alert("ERROR en Paso 6: No se pudo registrar sw.js. ¿Existe el archivo?");
       return;
     }
 
+    // PASO 5: Suscripción
+    alert("7. Creando suscripción de Push...");
     let subscription = await registration.pushManager.getSubscription();
 
     if (!subscription) {
       try {
-        log("Creando nueva suscripción...");
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
         });
-        log("Suscripción creada exitosamente");
+        alert("8. Suscripción creada en el navegador");
       } catch (err) {
-        error("Fallo al crear la suscripción en el navegador:", err);
+        alert("ERROR en Paso 8: " + err.message);
         return;
       }
-    } else {
-      log("Suscripción existente encontrada");
     }
 
-    // Normalize subscription before sending
-    const payload = subscription.toJSON ? subscription.toJSON() : subscription;
-
+    // PASO 6: Guardado en Railway
+    alert("9. Enviando datos a la base de datos...");
     try {
-      log("Enviando suscripción al servidor Railway...");
       const res = await fetch("/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(subscription),
       });
 
-      if (!res.ok) {
-        warn("El servidor rechazó la suscripción:", res.status);
-        return;
-      }
-
-      log("Suscripción guardada en la base de datos");
-      
-      // --- FEEDBACK VISUAL ---
-      // Si tienes la función showToast la usamos, sino un alert clásico
-      if (typeof showToast === "function") {
-        showToast("🔔 Alertas configuradas", "success");
+      if (res.ok) {
+        alert("🎉 ¡TODO LISTO! Ya podés recibir pop-ups.");
       } else {
-        alert("🔔 AlertTrail: Notificaciones activadas");
+        alert("ERROR en Paso 9: Railway rechazó el guardado. Status: " + res.status);
       }
-
     } catch (err) {
-      error("Error enviando la suscripción al backend:", err);
+      alert("ERROR FINAL: No pude conectar con Railway para guardar.");
     }
   }
 
-  // =========================
-  // Boot
-  // =========================
   document.addEventListener("DOMContentLoaded", () => {
-    // Pequeño delay para asegurar que todo el DOM esté listo
-    setTimeout(() => {
-      initPush().catch((e) => error("Fallo crítico en initPush:", e));
-    }, 500);
+    // Esperamos 1 segundo para no interrumpir la carga inicial
+    setTimeout(initPush, 1000);
   });
 })();
