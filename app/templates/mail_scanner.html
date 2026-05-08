@@ -6,8 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/toast.js"></script>
-  <!-- Este script es vital para las notificaciones PWA -->
-  <script src="/static/alert_clients.js" defer></script>
+  <script src="/static/alert_clients.js?v=1.1" defer></script>
 </head>
 
 <body style="
@@ -109,7 +108,6 @@
                       {{ it.date or '—' }}
                     </span>
                     
-                    <!-- FIX CRÍTICO: Usamos verdict_key para el color y la traducción -->
                     {% set vk = it.verdict_key | default('alerts.severity_low') %}
                     <span style="display:inline-block; padding:3px 10px; border-radius:8px; font-size: 0.7rem; font-weight: 800;
                       {% if vk == 'alerts.severity_high' %} background:#fee2e2;color:#991b1b;border:1px solid #fecaca;
