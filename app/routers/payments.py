@@ -1,28 +1,28 @@
 # app/routers/payments.py
 import os
 import json
-import uuid
-import requests
 import logging
+import requests
 from typing import Optional, Tuple
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db, SessionLocal
 from ..security import get_current_user_cookie
-from ..models import User, Organization, PaymentHistory  # <-- Importamos modelos necesarios
+from ..models import User, Organization, PaymentHistory
 
-router = APIRouter()
+# Definimos el prefijo aquí para que coincida con tus botones (/payments/...)
+router = APIRouter(prefix="/payments", tags=["payments"])
 log = logging.getLogger(__name__)
 
 # ====== Config / Env ======
 MP_ACCESS_TOKEN = (os.getenv("MP_ACCESS_TOKEN") or "").strip()
 MP_WEBHOOK_SECRET = (os.getenv("MP_WEBHOOK_SECRET") or "").strip()
-REQ_TIMEOUT = int(os.getenv("MP_REQ_TIMEOUT_SEC", "25"))
 MP_MIN_AMOUNT_USD = float(os.getenv("MP_MIN_AMOUNT_USD", "15"))
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "http://localhost:8080").rstrip("/")
 
 def _require_mp_token():
     if not MP_ACCESS_TOKEN:
@@ -32,7 +32,7 @@ def _mp_headers():
     return {"Authorization": f"Bearer {MP_ACCESS_TOKEN}", "Content-Type": "application/json"}
 
 # -------------------------
-# User helpers (dict or ORM)
+# User helpers
 # -------------------------
 def _user_get(user, key: str, default=None):
     if user is None: return default
@@ -44,16 +44,10 @@ def _user_id(user) -> Optional[int]:
     try: return int(str(uid)) if uid else None
     except: return None
 
-def _user_email(user) -> Optional[str]:
-    email = _user_get(user, "email")
-    return str(email).strip() if email else None
-
 # ====== Precio / moneda ======
 def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
     currency = (os.getenv("PLAN_CURRENCY") or "USD").upper().strip()
-    pro_price = float(os.getenv("PLAN_PRICE") or 9.99)
-    
-    # BIZ (25 asientos por defecto)
+    pro_price = float(os.getenv("PLAN_PRICE") or 15.00)
     biz_base = float(os.getenv("BIZ_PRICE_MONTH_USD") or 99.0)
     biz_extra = float(os.getenv("BIZ_EXTRA_SET_USD") or 3.0)
     included = int(os.getenv("BIZ_INCLUDED_SEATS") or 25)
@@ -70,47 +64,69 @@ def _amount_currency(plan: str, seats: int) -> Tuple[float, str]:
         amount = MP_MIN_AMOUNT_USD
     return (float(amount), currency)
 
-# ====== Modelo local de suscripción (Sincronizado) ======
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, UniqueConstraint, Numeric
-from sqlalchemy.orm import declarative_base
+# -------------------------
+# ENDPOINT PRINCIPAL: /payments/pay
+# -------------------------
+@router.get("/pay")
+async def pay(plan: str = "PRO", seats: int = 1, user=Depends(get_current_user_cookie)):
+    _require_mp_token()
+    uid = _user_id(user)
+    if not uid:
+        return RedirectResponse(url="/auth/login")
 
-SubBase = declarative_base()
-_engine = SessionLocal().get_bind() if hasattr(SessionLocal, "get_bind") else SessionLocal().bind
+    amount, currency = _amount_currency(plan, seats)
+    
+    # IMPORTANTE: Formato exacto que espera tu Webhook para parsear
+    # user:ID:plan:PLAN:seats:CANTIDAD
+    ext_ref = f"user:{uid}:plan:{plan.upper()}:seats:{seats}:ts:{int(datetime.now().timestamp())}"
 
-class Subscription(SubBase):
-    __tablename__ = "subscriptions"
-    __table_args__ = (UniqueConstraint("preapproval_id", name="uq_preapproval_id"),)
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    preapproval_id = Column(String, unique=True, index=True)
-    status = Column(String) # authorized/paused/cancelled
-    plan = Column(String)
-    seats = Column(Integer, default=1)
-    currency = Column(String, default="USD")
-    amount = Column(Numeric(10, 2))
-    next_payment_date = Column(String)
-    external_reference = Column(String, index=True)
-    raw = Column(Text)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    preference_data = {
+        "items": [
+            {
+                "title": f"AlertTrail - Plan {plan.upper()}",
+                "quantity": 1,
+                "unit_price": amount,
+                "currency_id": currency
+            }
+        ],
+        "back_urls": {
+            "success": f"{PUBLIC_BASE_URL}/billing/subscriptions?payment=success",
+            "failure": f"{PUBLIC_BASE_URL}/billing/subscriptions?payment=failure",
+            "pending": f"{PUBLIC_BASE_URL}/billing/subscriptions?payment=pending"
+        },
+        "auto_return": "approved",
+        "external_reference": ext_ref,
+        "notification_url": f"{PUBLIC_BASE_URL}/payments/webhook"
+    }
 
-try: SubBase.metadata.create_all(_engine)
-except: pass
+    try:
+        r = requests.post(
+            "https://api.mercadopago.com/checkout/preferences",
+            headers=_mp_headers(),
+            json=preference_data,
+            timeout=20
+        )
+        r.raise_for_status()
+        res = r.json()
+        # Redirigimos al usuario al checkout de Mercado Pago
+        return RedirectResponse(url=res["init_point"])
+    except Exception as e:
+        log.error(f"Error creando preferencia MP: {e}")
+        raise HTTPException(status_code=500, detail="Error al conectar con Mercado Pago")
 
 # -------------------------
-# LÓGICA DE ACTIVACIÓN (Aquí se crean los 25 asientos)
+# LÓGICA DE ACTIVACIÓN
 # -------------------------
 def _activate_plan(db: Session, user_id: int, plan: str, seats: int, expiry: Optional[datetime] = None):
-    u = db.get(User, user_id)
+    u = db.query(User).filter(User.id == user_id).first()
     if not u: return
     
     plan_norm = plan.upper()
     u.plan = plan_norm
     u.is_pro = True
     if expiry: u.pro_expires_at = expiry
-    else: u.pro_expires_at = datetime.utcnow() + timedelta(days=30)
+    else: u.pro_expires_at = datetime.now(timezone.utc) + timedelta(days=30)
 
-    # Si es plan BIZ, creamos/actualizamos la Organización con sus 25 asientos
     if plan_norm == "BIZ":
         org = db.query(Organization).filter(Organization.owner_user_id == u.id).first()
         if not org:
@@ -118,64 +134,46 @@ def _activate_plan(db: Session, user_id: int, plan: str, seats: int, expiry: Opt
                 name=f"Empresa de {u.name or u.email}",
                 owner_user_id=u.id,
                 plan="BIZ",
-                seats_total=max(seats, 25), # Forzamos el mínimo de 25
+                seats_total=max(seats, 25),
                 seats_used=1
             )
             db.add(org)
             db.flush()
+        else:
+            org.seats_total = max(seats, org.seats_total)
         u.org_id = org.id
         u.is_org_admin = True
     
     db.commit()
-    log.info(f"Plan {plan_norm} activado para usuario {user_id} ({seats} asientos)")
+    log.info(f"✅ Plan {plan_norm} activado para usuario {user_id}")
 
-# ====== WEBHOOK UNIFICADO ======
-@router.post("/payments/webhook")
+# ====== WEBHOOK ======
+@router.post("/webhook")
 async def payments_webhook(request: Request, db: Session = Depends(get_db)):
-    _require_mp_token()
     try:
         body = await request.json()
-    except: return JSONResponse({"ok": False}, status_code=200)
+        log.info(f"Webhook recibido: {body}")
+    except: 
+        return JSONResponse({"ok": False}, status_code=200)
 
     topic = body.get("topic") or body.get("type")
     resource_id = body.get("data", {}).get("id") or body.get("id")
 
-    if not resource_id: return JSONResponse({"ok": True}, status_code=200)
-
-    # CASO 1: Pago Único (Checkout)
-    if topic in ("payment", "payment.updated"):
+    if topic in ("payment", "payment.updated") and resource_id:
         url = f"https://api.mercadopago.com/v1/payments/{resource_id}"
         r = requests.get(url, headers=_mp_headers())
         if r.status_code == 200:
             pdata = r.json()
             if pdata.get("status") == "approved":
                 ext_ref = pdata.get("external_reference") or ""
-                # Parsear: user:1:plan:BIZ:seats:25:...
                 try:
+                    # Parseo: user:1:plan:BIZ:seats:25:...
                     parts = ext_ref.split(":")
                     uid = int(parts[1])
                     plan = parts[3]
                     seats = int(parts[5])
                     _activate_plan(db, uid, plan, seats)
-                except: log.error(f"Error parseando external_ref: {ext_ref}")
-
-    # CASO 2: Suscripción (Preapproval)
-    elif topic in ("preapproval", "subscription"):
-        res = _sync_preapproval(db, preapproval_id=resource_id)
-        # _sync_preapproval ya llama a _activate_user_plan_if_authorized internamente
+                except Exception as e: 
+                    log.error(f"Error parseando external_ref '{ext_ref}': {e}")
 
     return JSONResponse({"ok": True})
-
-# --- Mantener el resto de tus funciones auxiliares (_sync_preapproval, etc) ---
-# ... (Copiar de tu archivo original las funciones _mp_create_preference, _mp_get_preapproval, etc.) ...
-
-# Reemplaza tu _activate_user_plan_if_authorized original por esta para incluir la lógica de Org:
-def _activate_user_plan_if_authorized(db: Session, *, sub: Subscription):
-    if (sub.status or "").lower() == "authorized" and sub.user_id:
-        expiry = None
-        if sub.next_payment_date:
-            try: expiry = datetime.fromisoformat(sub.next_payment_date.replace("Z", "+00:00"))
-            except: pass
-        _activate_plan(db, sub.user_id, sub.plan, sub.seats, expiry)
-
-# ... (Copiar tus endpoints de /payments/pay y /payments/subscribe del archivo anterior) ...
