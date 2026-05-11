@@ -1,64 +1,83 @@
 {% extends "base.html" %}
 {% block body %}
-  <div class="container" style="max-width:800px;margin:60px auto;">
-    <h1>{{ t(lang, "billing.title") }}</h1>
+<style>
+    .billing-container { max-width: 1000px; margin: 40px auto; font-family: 'Inter', sans-serif; }
+    .plan-card { border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px; background: #fff; transition: transform 0.2s, box-shadow 0.2s; position: relative; }
+    .plan-card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+    .plan-card.featured { border: 2px solid #2563eb; }
+    .badge-featured { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: #2563eb; color: #fff; padding: 4px 12px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+    .price-tag { font-size: 2.5rem; font-weight: 800; color: #1e293b; margin: 16px 0; }
+    .price-tag span { font-size: 1rem; color: #64748b; font-weight: 400; }
+    .feature-list { list-style: none; padding: 0; margin: 24px 0; text-align: left; }
+    .feature-list li { margin-bottom: 12px; color: #475569; display: flex; align-items: center; gap: 8px; }
+    .btn-upgrade { display: block; width: 100%; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: 700; text-align: center; transition: background 0.2s; }
+    .status-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 40px; display: flex; justify-content: space-between; align-items: center; }
+</style>
 
-    <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:24px;background:#fff;margin-bottom:24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
-      <h3 style="margin-top:0;">{{ t(lang, "billing.current_plan_title") }}</h3>
+<div class="billing-container text-center">
+    <h1 class="mb-2">Mejorá tu protección con AlertTrail</h1>
+    <p class="text-muted mb-5">Elegí el plan que mejor se adapte a tus necesidades de seguridad.</p>
 
-      <div style="display:flex; align-items:center; gap:12px; margin:16px 0;">
-        <span style="background:#2563eb; color:#fff; padding:6px 14px; border-radius:999px; font-weight:700; font-size: 0.9rem;">
-          {{ current_plan }}
-        </span>
-        
-        <span style="font-weight:600; color: #475569;">
-          {% if current_plan == 'FREE' %}
-            {{ t(lang, "billing.free_status") or "Sin costo mensual" }}
-          {% else %}
-            {{ currency }} {{ "%.2f"|format(price_month) }} / mes
-          {% endif %}
-        </span>
-      </div>
-
-      <div class="actions" style="display:flex; gap:12px; margin-top:24px; border-top: 1px solid #f1f5f9; padding-top: 20px;">
-        {% if current_plan == 'FREE' %}
-          <a href="/billing/checkout?plan=PRO" class="btn" style="background:#2563eb; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:700;">
-            {{ t(lang, "billing.cta_pro") }}
-          </a>
-        {% endif %}
-        
-        <a href="/billing/checkout?plan=BIZ" class="btn outline" style="border:1px solid #cbd5e1; padding:12px 24px; border-radius:8px; text-decoration:none; color:#334155; font-weight:600;">
-          {{ t(lang, "billing.cta_biz") }}
-        </a>
-      </div>
-    </div>
-
-    <div class="panel" style="border:1px solid #e2e8f0; border-radius:12px; padding:24px; background:#f8fafc;">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+    <div class="status-panel text-start">
         <div>
-          <h3 style="margin-top:0;">{{ t(lang, "billing.biz_title") }}</h3>
-          <p style="color:#64748b; max-width: 450px; margin-bottom: 0;">
-            {{ t(lang, "billing.biz_desc") }} 
-            Ideal para equipos de seguridad y pequeñas empresas.
-          </p>
+            <span class="text-muted small uppercase fw-bold">Tu plan actual</span>
+            <div class="d-flex align-items-center gap-2 mt-1">
+                <span class="badge" style="background: #e2e8f0; color: #475569; padding: 6px 12px; border-radius: 6px;">{{ current_plan }}</span>
+                <span class="fw-bold">
+                    {% if current_plan == 'FREE' %}
+                        Protección básica activada
+                    {% else %}
+                        {{ currency }} {{ "%.2f"|format(price_month) }} / mes
+                    {% endif %}
+                </span>
+            </div>
         </div>
-        <div style="text-align: right;">
-            <span style="font-size: 1.5rem; font-weight: 800; color: #1e293b;">{{ currency }} {{ "%.2f"|format(biz_price) }}</span>
-            <span style="display:block; color:#64748b; font-size: 0.85rem;">por mes</span>
+        {% if current_plan != 'BIZ' %}
+        <div class="text-muted small">
+            ¿Necesitás más potencia? Mirá nuestras opciones abajo ↓
         </div>
-      </div>
-
-      <div style="background:#fff; border-radius:8px; padding:15px; margin:20px 0; border: 1px solid #e2e8f0;">
-        <ul style="margin:0; padding:0; list-style:none; color:#475569;">
-            <li style="margin-bottom:8px;">✅ <strong>{{ biz_included }} asientos</strong> incluidos en el precio base.</li>
-            <li>✅ Solo {{ currency }}{{ "%.2f"|format(biz_extra) }} por cada usuario adicional.</li>
-        </ul>
-      </div>
-
-      <a href="/billing/checkout?plan=BIZ" style="display:inline-block; background:#1e293b; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:700; width:100%; text-align:center;">
-        {{ t(lang, "billing.cta_biz_buy") }}
-      </a>
+        {% endif %}
     </div>
 
-  </div>
+    <div class="row g-4">
+        <div class="col-md-6">
+            <div class="plan-card featured">
+                <div class="badge-featured">MÁS POPULAR</div>
+                <h2 class="h4">Plan PRO</h2>
+                <p class="text-muted small">Para usuarios que no dejan su seguridad al azar.</p>
+                <div class="price-tag">{{ currency }} {{ "%.2f"|format(price_month) }}<span>/mes</span></div>
+                
+                <ul class="feature-list">
+                    <li>✅ Escaneos automáticos en tiempo real</li>
+                    <li>✅ Soporte para múltiples casillas</li>
+                    <li>✅ Alertas críticas vía Push y Telegram</li>
+                    <li>✅ Historial de amenazas completo</li>
+                </ul>
+
+                {% if current_plan == 'FREE' %}
+                <a href="/billing/checkout?plan=PRO" class="btn-upgrade" style="background: #2563eb; color: #fff;">Mejorar a PRO ahora</a>
+                {% else %}
+                <button class="btn-upgrade" style="background: #f1f5f9; color: #94a3b8; cursor: default;" disabled>Plan actual</button>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="plan-card">
+                <h2 class="h4">Empresas / Equipos</h2>
+                <p class="text-muted small">Seguridad centralizada para toda tu organización.</p>
+                <div class="price-tag">{{ currency }} {{ "%.2f"|format(biz_price) }}<span>/mes</span></div>
+                
+                <ul class="feature-list">
+                    <li>✅ <strong>{{ biz_included }} asientos</strong> incluidos</li>
+                    <li>✅ Panel de administración de miembros</li>
+                    <li>✅ Facturación centralizada</li>
+                    <li>✅ Asiento extra por solo {{ currency }}{{ "%.2f"|format(biz_extra) }}</li>
+                </ul>
+
+                <a href="/billing/checkout?plan=BIZ" class="btn-upgrade" style="border: 2px solid #1e293b; color: #1e293b; background: transparent;">Contactar / Comprar BIZ</a>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
