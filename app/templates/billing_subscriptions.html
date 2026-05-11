@@ -3,38 +3,62 @@
   <div class="container" style="max-width:800px;margin:60px auto;">
     <h1>{{ t(lang, "billing.title") }}</h1>
 
-    <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:18px;background:#fff;">
-      <h3>{{ t(lang, "billing.current_plan_title") }}</h3>
+    <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:24px;background:#fff;margin-bottom:24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+      <h3 style="margin-top:0;">{{ t(lang, "billing.current_plan_title") }}</h3>
 
-      <div style="display:flex;gap:8px;margin:12px 0;">
-        <span style="background:#eef2ff;padding:6px 10px;border-radius:999px;font-weight:600;">
+      <div style="display:flex; align-items:center; gap:12px; margin:16px 0;">
+        <span style="background:#2563eb; color:#fff; padding:6px 14px; border-radius:999px; font-weight:700; font-size: 0.9rem;">
           {{ current_plan }}
         </span>
-        <span style="background:#f0fdf4;padding:6px 10px;border-radius:999px;font-weight:600;">
-          {{ currency }} {{ "%.2f"|format(price_month) }} / mes
+        
+        <span style="font-weight:600; color: #475569;">
+          {% if current_plan == 'FREE' %}
+            {{ t(lang, "billing.free_status") or "Sin costo mensual" }}
+          {% else %}
+            {{ currency }} {{ "%.2f"|format(price_month) }} / mes
+          {% endif %}
         </span>
       </div>
 
-      <div class="actions" style="display:flex;gap:10px;margin-top:20px;">
-        <a href="/billing/checkout?plan=PRO" class="btn" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:700;">
-          {{ t(lang, "billing.cta_pro") }}
-        </a>
-        <a href="/billing/checkout?plan=BIZ" class="btn outline" style="border:1px solid #cbd5e1;padding:10px 20px;border-radius:8px;text-decoration:none;color:#334155;">
+      <div class="actions" style="display:flex; gap:12px; margin-top:24px; border-top: 1px solid #f1f5f9; padding-top: 20px;">
+        {% if current_plan == 'FREE' %}
+          <a href="/billing/checkout?plan=PRO" class="btn" style="background:#2563eb; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:700;">
+            {{ t(lang, "billing.cta_pro") }}
+          </a>
+        {% endif %}
+        
+        <a href="/billing/checkout?plan=BIZ" class="btn outline" style="border:1px solid #cbd5e1; padding:12px 24px; border-radius:8px; text-decoration:none; color:#334155; font-weight:600;">
           {{ t(lang, "billing.cta_biz") }}
         </a>
       </div>
     </div>
 
-    <div class="panel" style="border:1px solid #e2e8f0;border-radius:12px;padding:18px;margin-top:20px;background:#fff;">
-      <h3>{{ t(lang, "billing.biz_title") }}</h3>
-      <p style="color:#64748b;">
-        {{ t(lang, "billing.biz_desc") }} 
-        <strong>{{ biz_included }} asientos incluidos</strong>. 
-        Asiento extra: {{ currency }}{{ "%.2f"|format(biz_extra) }}.
-      </p>
-      <a href="/billing/checkout?plan=BIZ" style="color:#2563eb;font-weight:700;text-decoration:none;">
-        {{ t(lang, "billing.cta_biz_buy") }} &rarr;
+    <div class="panel" style="border:1px solid #e2e8f0; border-radius:12px; padding:24px; background:#f8fafc;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+        <div>
+          <h3 style="margin-top:0;">{{ t(lang, "billing.biz_title") }}</h3>
+          <p style="color:#64748b; max-width: 450px; margin-bottom: 0;">
+            {{ t(lang, "billing.biz_desc") }} 
+            Ideal para equipos de seguridad y pequeñas empresas.
+          </p>
+        </div>
+        <div style="text-align: right;">
+            <span style="font-size: 1.5rem; font-weight: 800; color: #1e293b;">{{ currency }} {{ "%.2f"|format(biz_price) }}</span>
+            <span style="display:block; color:#64748b; font-size: 0.85rem;">por mes</span>
+        </div>
+      </div>
+
+      <div style="background:#fff; border-radius:8px; padding:15px; margin:20px 0; border: 1px solid #e2e8f0;">
+        <ul style="margin:0; padding:0; list-style:none; color:#475569;">
+            <li style="margin-bottom:8px;">✅ <strong>{{ biz_included }} asientos</strong> incluidos en el precio base.</li>
+            <li>✅ Solo {{ currency }}{{ "%.2f"|format(biz_extra) }} por cada usuario adicional.</li>
+        </ul>
+      </div>
+
+      <a href="/billing/checkout?plan=BIZ" style="display:inline-block; background:#1e293b; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:700; width:100%; text-align:center;">
+        {{ t(lang, "billing.cta_biz_buy") }}
       </a>
     </div>
+
   </div>
 {% endblock %}
