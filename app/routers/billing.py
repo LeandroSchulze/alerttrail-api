@@ -33,31 +33,40 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
         if isinstance(obj, dict): return obj.get(key, default)
         return getattr(obj, key, default)
 
+    # Identificación de Plan y Roles
     current_plan = (gv(user, "plan") or "FREE").upper()
     is_admin = gv(user, "role") == "admin" or gv(user, "is_admin", False)
     is_pro = gv(user, "is_pro", False) or current_plan in ("PRO", "BIZ") or is_admin
     had_trial = bool(gv(user, "trial_used", False))
 
-    currency = os.getenv("BILLING_CURRENCY_SYMBOL", "$")
-    price_month = _env_float("PLAN_PRICE", 9.99)
+    # Configuración de Precios (Sincronizado con lo que ves en pantalla)
+    currency = os.getenv("BILLING_CURRENCY_SYMBOL", "USD")
+    price_month = _env_float("PLAN_PRICE", 15.00) # Cambiado a 15.00 según tu log
     disc_pct = _env_int("PRO_ANNUAL_DISTCOUNT_PCT", 20)
     price_year = round(price_month * 12 * (1 - (disc_pct / 100.0)), 2)
 
+    # Configuración Plan Empresas (BIZ)
     biz_included = _env_int("BIZ_INCLUDED_SEATS", 25) 
     biz_extra = _env_float("BIZ_EXTRA_SET_USD", 3.00)
     biz_price = _env_float("BIZ_PRICE_MONTH_USD", 99.00)
 
-    # CORRECCIÓN: Usamos argumentos nombrados para evitar el error de Jinja2
     return templates.TemplateResponse(
         request=request,
         name="billing_subscriptions.html",
         context={
             "lang": lang, "t": t, "user": user,
-            "current_plan": current_plan, "is_pro": is_pro, "is_admin": is_admin,
-            "had_trial": had_trial, "trial_available": (not is_pro and not had_trial),
-            "plan": current_plan, "currency": currency,
-            "price_month": price_month, "price_year": price_year, "disc_pct": disc_pct,
-            "biz_included": biz_included, "biz_extra": biz_extra, "biz_price": biz_price
+            "current_plan": current_plan, 
+            "is_pro": is_pro, 
+            "is_admin": is_admin,
+            "had_trial": had_trial, 
+            "trial_available": (not is_pro and not had_trial),
+            "currency": currency,
+            "price_month": price_month, 
+            "price_year": price_year, 
+            "disc_pct": disc_pct,
+            "biz_included": biz_included, 
+            "biz_extra": biz_extra, 
+            "biz_price": biz_price
         }
     )
 
@@ -75,22 +84,27 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
         extra = _env_float("BIZ_EXTRA_SET_USD", 3.00)
         init_point = f"/payments/pay?plan=BIZ&seats={seats}"
     else:
-        price = _env_float("PLAN_PRICE", 9.99)
+        price = _env_float("PLAN_PRICE", 15.00)
         seats = 1
         extra = 0
         init_point = "/payments/pay?plan=PRO&seats=1"
 
     mp_enabled = bool(os.getenv("MP_ACCESS_TOKEN"))
 
-    # CORRECCIÓN: Usamos argumentos nombrados también aquí
+    # CORRECCIÓN: Ahora apunta a billing_checkout.html y pasa las variables necesarias
     return templates.TemplateResponse(
         request=request,
-        name="billing_subscriptions.html",
+        name="billing_checkout.html",
         context={
-            "lang": lang, "t": t, "user": user,
-            "plan": plan_norm, "mp_enabled": mp_enabled,
+            "lang": lang, 
+            "t": t, 
+            "user": user,
+            "plan": plan_norm, 
+            "mp_enabled": mp_enabled,
             "init_point": init_point if mp_enabled else None,
-            "currency_symbol": os.getenv("BILLING_CURRENCY_SYMBOL", "$"),
-            "price_month": price, "included_seats": seats, "extra_seat_price": extra,
+            "currency_symbol": os.getenv("BILLING_CURRENCY_SYMBOL", "USD"),
+            "price_month": price, 
+            "included_seats": seats, 
+            "extra_seat_price": extra,
         }
     )
