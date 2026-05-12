@@ -85,6 +85,9 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
     # Aquí iría el formulario (el código que ya tenías)
     return HTMLResponse(f"")
 
+# app/routers/analysis.py
+# ... (imports iguales)
+
 @router.post("/analyze")
 async def analyze(
     request: Request,
@@ -94,31 +97,42 @@ async def analyze(
 ):
     if not current: return RedirectResponse("/auth/login", status_code=302)
 
-    # Obtenemos el idioma y el traductor vinculado al usuario
-    lang, t_func = get_lang_and_translator(request, user=current)
-
     content = await file.read()
     text = content.decode("utf-8", errors="ignore")
-    
-    # Ejecutamos el análisis (ahora sí usamos el servicio correcto)
     results = analyze_log(text, user_id=getattr(current, "id", None))
 
+    pdf_url = None
     if pdf:
-        # Generar el archivo físico
-        pdf_rel_path = generate_pdf(results["summary"], filename_prefix="security_report")
-        
-        # Devolvemos la plantilla de éxito
-        return templates.TemplateResponse(
-            request=request,
-            name="pdf_ready.html",
-            context={
-                "request": request,
-                "url": f"/{pdf_rel_path}",
-                "lang": lang,
-                "t": t_func, # Pasamos el traductor funcional
-                "user": current
-            }
-        )
+        # Generamos el PDF pero nos quedamos en esta función
+        pdf_url = f"/{generate_pdf(results, filename_prefix='security_report')}"
 
-    # Si no pidió PDF, mostrar dashboard normal
+    # Pasamos la pdf_url al renderizador de HTML
+    return HTMLResponse(_render_html(results, lang=get_lang(request), pdf_url=pdf_url))
+
+def _render_html(results: dict, lang: str = "es", pdf_url: str = None) -> str:
+    # ... (lógica de rows igual que antes) ...
+
+    # BOTÓN DE DESCARGA (Solo aparece si se generó)
+    download_btn = ""
+    if pdf_url:
+        download_btn = f"""
+        <a href="{pdf_url}" download class="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-green-500/20">
+            <span>⬇</span> DESCARGAR REPORTE PDF
+        </a>
+        """
+
+    return f"""
+    <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+        <div>
+            <h1 class="text-3xl font-black italic text-white">AlertTrail <span class="text-sky-500 text-sm not-italic ml-2">SCANNER</span></h1>
+        </div>
+        <div class="flex items-center gap-4">
+            {download_btn}
+            <div class="bg-sky-500/10 border border-sky-500/20 px-6 py-3 rounded-2xl flex items-center gap-4">
+                <span class="text-xs font-bold uppercase text-sky-500">Total Lines:</span>
+                <span class="text-2xl font-mono font-black text-white">{results['summary'].get('total', 0)}</span>
+            </div>
+        </div>
+    </header>
+    """
     return HTMLResponse(_render_html(results, lang=lang))
