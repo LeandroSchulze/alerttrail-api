@@ -10,6 +10,8 @@ from app.security import get_current_user_cookie_optional
 from app.i18n import get_lang, t # Importamos t para las plantillas
 from app.ui import templates
 from app.services.pdf_service import generate_pdf # Importamos tu generador
+from app.services.analysis_service import analyze_log # Importar el servicio unificado
+from app.services.pdf_service import generate_pdf     # Importar el generador de PDF
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
@@ -82,6 +84,8 @@ def analyze_log(text: str) -> Dict[str, Any]:
 
 # ... (Mantenemos _tr y _render_html igual) ...
 
+# En app/routers/analysis.py
+
 @router.post("/analyze")
 async def analyze(
     request: Request,
@@ -89,31 +93,34 @@ async def analyze(
     pdf: Optional[str] = Form(None),
     current=Depends(get_current_user_cookie_optional),
 ):
-    if not current: return RedirectResponse("/auth/login", status_code=302)
+    if not current: return RedirectResponse("/auth/login")
 
-    lang = get_lang(request)
     content = await file.read()
     text = content.decode("utf-8", errors="ignore")
     
-    # Realizar el análisis
-    summary = analyze_log(text)
-
-    # CORRECCIÓN: Si marcó PDF, generar y mostrar pantalla de descarga
+    # 1. Usamos el cerebro unificado
+    results = analyze_log(text, user_id=getattr(current, "id", None))
+    
+    # 2. Si marcó la casilla de PDF (que en tu HTML se llama 'pdf')
     if pdf:
-        # report_data para el PDF (puedes pasarle el summary completo o simplificado)
-        pdf_rel_path = generate_pdf(summary, filename_prefix="security_report")
+        # Generar PDF usando el sumario de resultados
+        pdf_rel_path = generate_pdf(results["summary"], filename_prefix="security_report")
         
+        # Mostrar la pantalla de "PDF Listo" (pdf_ready.html)
         return templates.TemplateResponse(
             request=request,
             name="pdf_ready.html",
             context={
                 "request": request,
-                "lang": lang,
+                "url": f"/{pdf_rel_path}", # Ruta para el botón de descarga
+                "lang": get_lang(request),
                 "t": t,
-                "url": f"/{pdf_rel_path}", # Esto irá al botón de descarga
                 "user": current
             }
         )
 
+    # 3. Si no quiere PDF, mostramos el Dashboard HTML actual
+    # results ya contiene 'sqli_hits' y 'probe_hits' para que _render_html no de 0.
+    return HTMLResponse(_render_html(results, lang=get_lang(request)))
     # Si no, mostrar resultado HTML normal
     return HTMLResponse(_render_html(summary, lang=lang))
