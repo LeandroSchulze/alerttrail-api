@@ -13,22 +13,20 @@ from app.services.pdf_service import generate_pdf
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
-# --- REDIRECCIÓN DE ENTRADA ---
 @router.get("", include_in_schema=False)
 @router.get("/", include_in_schema=False)
 async def analysis_index():
-    """Redirige /analysis a /analysis/generate para evitar el 404."""
     return RedirectResponse(url="/analysis/generate", status_code=302)
 
 def _tr(lang: str, es: str, en: str) -> str:
     return en if (lang or "").lower().startswith("en") else es
 
+# --- UI DE RESULTADOS (DASHBOARD OSCURO) ---
 def _render_html(results: Dict[str, Any], lang: str = "es", pdf_url: str = None) -> str:
     summary = results.get("summary", {})
     sqli_hits = results.get("sqli_hits", [])
     probe_hits = results.get("probe_hits", [])
 
-    # Botón de descarga si existe PDF
     download_btn = ""
     if pdf_url:
         download_btn = f"""
@@ -52,7 +50,7 @@ def _render_html(results: Dict[str, Any], lang: str = "es", pdf_url: str = None)
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Resultado | AlertTrail</title>
+    <title>Análisis | AlertTrail</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-[#0b1620] text-[#eaf2f7] font-sans p-4 md:p-8">
@@ -94,30 +92,59 @@ def _render_html(results: Dict[str, Any], lang: str = "es", pdf_url: str = None)
 </body>
 </html>"""
 
+# --- UI DE CARGA (FORMULARIO LINDO) ---
 @router.get("/generate", response_class=HTMLResponse)
 async def generate_page(request: Request, current=Depends(get_current_user_cookie_optional)):
     if not current: return RedirectResponse("/auth/login", status_code=302)
-    lang, t_func = get_lang_and_translator(request, user=current)
+    lang, _ = get_lang_and_translator(request, user=current)
     
-    # Formulario (mantener tu código HTML del formulario aquí)
-    title, h1, file_lbl, pdf_lbl, btn = "Analizar", "Analizar logs", "Archivo", "PDF", "Procesar"
-    return HTMLResponse(f"""
-    <body class="bg-[#0b1620] text-[#eaf2f7] min-h-screen flex items-center justify-center p-4">
-        <div class="max-w-md w-full bg-white/5 p-8 rounded-3xl border border-white/10">
-            <h1 class="text-2xl font-black italic text-white mb-6 uppercase text-center">AlertTrail <span class="text-sky-500">Scanner</span></h1>
+    title = _tr(lang, "Analizar Logs", "Analyze Logs")
+    file_lbl = _tr(lang, "Seleccionar archivo de log", "Select log file")
+    pdf_lbl = _tr(lang, "Generar Reporte PDF", "Generate PDF Report")
+    btn_text = _tr(lang, "Procesar Ahora", "Process Now")
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="{lang}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{title} | AlertTrail</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#0b1620] text-[#eaf2f7] min-h-screen flex items-center justify-center p-4 font-sans">
+    <div class="max-w-md w-full">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-black tracking-tight text-white italic uppercase italic">AlertTrail <span class="text-sky-500 not-italic">Scanner</span></h1>
+            <p class="text-slate-400 text-xs mt-2 uppercase tracking-widest">Análisis de seguridad profundo</p>
+        </div>
+
+        <div class="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-md shadow-2xl">
             <form method="post" action="/analysis/analyze" enctype="multipart/form-data" class="space-y-6">
-                <input type="file" name="file" required class="block w-full text-sm bg-[#0e1c27] border border-white/10 rounded-xl p-2">
-                <label class="flex items-center space-x-3 cursor-pointer">
-                    <input type="checkbox" name="pdf" value="1" class="w-4 h-4 rounded text-sky-500">
-                    <span class="text-xs text-slate-400 uppercase tracking-widest">Generar Reporte PDF</span>
+                <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-[0.2em] text-sky-500 mb-3">{file_lbl}</label>
+                    <input type="file" name="file" required 
+                        class="block w-full text-xs text-slate-400
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-xl file:border-0
+                        file:text-xs file:font-bold
+                        file:bg-sky-500 file:text-[#03131c]
+                        hover:file:bg-sky-400 transition-all
+                        cursor-pointer bg-[#0e1c27] border border-white/10 rounded-xl p-2">
+                </div>
+                
+                <label class="flex items-center space-x-3 cursor-pointer group">
+                    <input type="checkbox" name="pdf" value="1" class="w-4 h-4 rounded border-white/20 bg-transparent text-sky-500 focus:ring-sky-500">
+                    <span class="text-xs font-medium text-slate-400 group-hover:text-sky-300 transition-colors uppercase tracking-wider">{pdf_lbl}</span>
                 </label>
-                <button class="w-full bg-sky-500 hover:bg-sky-400 text-[#03131c] py-4 rounded-xl font-black uppercase tracking-widest transition-all" type="submit">
-                    {btn}
+
+                <button class="w-full bg-sky-500 hover:bg-sky-400 text-[#03131c] py-4 rounded-xl font-black uppercase tracking-widest transition-all transform hover:scale-[1.02] shadow-lg shadow-sky-500/20" type="submit">
+                    {btn_text}
                 </button>
             </form>
         </div>
-    </body>
-    """)
+    </div>
+</body>
+</html>""")
 
 @router.post("/analyze")
 async def analyze(
@@ -134,7 +161,6 @@ async def analyze(
 
     pdf_url = None
     if pdf:
-        # Generamos el PDF pero nos quedamos en el dashboard
         pdf_rel_path = generate_pdf(results, filename_prefix="security_report")
         pdf_url = f"/{pdf_rel_path}"
 
