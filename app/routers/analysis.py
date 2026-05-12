@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 
 from app.security import get_current_user_cookie_optional
+# IMPORTANTE: Agregamos get_lang aquí
+from app.i18n import get_lang, t 
 from app.i18n.utils import get_lang_and_translator
 from app.ui import templates
 from app.services.analysis_service import analyze_log
@@ -21,7 +23,7 @@ async def analysis_index():
 def _tr(lang: str, es: str, en: str) -> str:
     return en if (lang or "").lower().startswith("en") else es
 
-# --- UI DE RESULTADOS (DASHBOARD OSCURO) ---
+# --- UI DE RESULTADOS (DASHBOARD) ---
 def _render_html(results: Dict[str, Any], lang: str = "es", pdf_url: str = None) -> str:
     summary = results.get("summary", {})
     sqli_hits = results.get("sqli_hits", [])
@@ -58,7 +60,7 @@ def _render_html(results: Dict[str, Any], lang: str = "es", pdf_url: str = None)
         <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
             <div>
                 <h1 class="text-3xl font-black tracking-tighter uppercase italic text-white">AlertTrail <span class="text-sky-500 text-sm not-italic tracking-widest ml-2">LOG_SCANNER</span></h1>
-                <p class="text-slate-500 text-sm italic">Deep traffic security analysis</p>
+                <p class="text-slate-500 text-sm italic">Análisis de seguridad profundo</p>
             </div>
             <div class="flex items-center gap-4">
                 {download_btn}
@@ -81,18 +83,17 @@ def _render_html(results: Dict[str, Any], lang: str = "es", pdf_url: str = None)
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="bg-red-500/5 border border-red-500/10 rounded-2xl p-6 shadow-xl relative overflow-hidden">
                 <h2 class="text-xs font-bold uppercase tracking-widest text-red-400 mb-4 uppercase">SQL Injection Hits</h2>
-                <ul class="space-y-2">{sqli_list or "<li class='text-slate-600 text-sm italic'>No threats detected</li>"}</ul>
+                <ul class="space-y-2">{sqli_list or "<li class='text-slate-600 text-sm italic'>No se detectaron amenazas</li>"}</ul>
             </div>
             <div class="bg-yellow-500/5 border border-yellow-500/10 rounded-2xl p-6 shadow-xl relative overflow-hidden">
                 <h2 class="text-xs font-bold uppercase tracking-widest text-yellow-400 mb-4 uppercase">Sensitive File Probes</h2>
-                <ul class="space-y-2">{probe_list or "<li class='text-slate-600 text-sm italic'>No suspicious probes</li>"}</ul>
+                <ul class="space-y-2">{probe_list or "<li class='text-slate-600 text-sm italic'>No se detectaron accesos sospechosos</li>"}</ul>
             </div>
         </div>
     </div>
 </body>
 </html>"""
 
-# --- UI DE CARGA (FORMULARIO LINDO) ---
 @router.get("/generate", response_class=HTMLResponse)
 async def generate_page(request: Request, current=Depends(get_current_user_cookie_optional)):
     if not current: return RedirectResponse("/auth/login", status_code=302)
@@ -114,30 +115,22 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
 <body class="bg-[#0b1620] text-[#eaf2f7] min-h-screen flex items-center justify-center p-4 font-sans">
     <div class="max-w-md w-full">
         <div class="text-center mb-8">
-            <h1 class="text-3xl font-black tracking-tight text-white italic uppercase italic">AlertTrail <span class="text-sky-500 not-italic">Scanner</span></h1>
-            <p class="text-slate-400 text-xs mt-2 uppercase tracking-widest">Análisis de seguridad profundo</p>
+            <h1 class="text-3xl font-black italic text-white uppercase">AlertTrail <span class="text-sky-500 not-italic">Scanner</span></h1>
         </div>
 
         <div class="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-md shadow-2xl">
             <form method="post" action="/analysis/analyze" enctype="multipart/form-data" class="space-y-6">
                 <div>
                     <label class="block text-[10px] font-bold uppercase tracking-[0.2em] text-sky-500 mb-3">{file_lbl}</label>
-                    <input type="file" name="file" required 
-                        class="block w-full text-xs text-slate-400
-                        file:mr-4 file:py-2 file:px-4
-                        file:rounded-xl file:border-0
-                        file:text-xs file:font-bold
-                        file:bg-sky-500 file:text-[#03131c]
-                        hover:file:bg-sky-400 transition-all
-                        cursor-pointer bg-[#0e1c27] border border-white/10 rounded-xl p-2">
+                    <input type="file" name="file" required class="block w-full text-xs text-slate-400 bg-[#0e1c27] border border-white/10 rounded-xl p-2 cursor-pointer">
                 </div>
                 
                 <label class="flex items-center space-x-3 cursor-pointer group">
-                    <input type="checkbox" name="pdf" value="1" class="w-4 h-4 rounded border-white/20 bg-transparent text-sky-500 focus:ring-sky-500">
+                    <input type="checkbox" name="pdf" value="1" class="w-4 h-4 rounded border-white/20 bg-transparent text-sky-500">
                     <span class="text-xs font-medium text-slate-400 group-hover:text-sky-300 transition-colors uppercase tracking-wider">{pdf_lbl}</span>
                 </label>
 
-                <button class="w-full bg-sky-500 hover:bg-sky-400 text-[#03131c] py-4 rounded-xl font-black uppercase tracking-widest transition-all transform hover:scale-[1.02] shadow-lg shadow-sky-500/20" type="submit">
+                <button class="w-full bg-sky-500 hover:bg-sky-400 text-[#03131c] py-4 rounded-xl font-black uppercase tracking-widest transition-all" type="submit">
                     {btn_text}
                 </button>
             </form>
@@ -155,6 +148,9 @@ async def analyze(
 ):
     if not current: return RedirectResponse("/auth/login", status_code=302)
 
+    # Obtenemos el idioma aquí para pasarlo luego
+    lang = get_lang(request)
+
     content = await file.read()
     text = content.decode("utf-8", errors="ignore")
     results = analyze_log(text, user_id=getattr(current, "id", None))
@@ -164,4 +160,4 @@ async def analyze(
         pdf_rel_path = generate_pdf(results, filename_prefix="security_report")
         pdf_url = f"/{pdf_rel_path}"
 
-    return HTMLResponse(_render_html(results, lang=get_lang(request), pdf_url=pdf_url))
+    return HTMLResponse(_render_html(results, lang=lang, pdf_url=pdf_url))
