@@ -8,7 +8,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 
 def generate_pdf(results: dict, filename_prefix: str = "security_report") -> str:
-    # 1. Usar la misma carpeta que main.py
+    # 1. Definir la carpeta (igual que en main.py)
     folder = os.getenv("REPORTS_DIR", "./reports_data")
     reports_dir = Path(folder)
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -19,93 +19,80 @@ def generate_pdf(results: dict, filename_prefix: str = "security_report") -> str
     c = canvas.Canvas(str(full_path), pagesize=A4)
     width, height = A4
 
-    # --- ENCABEZADO ESTILO CYBER ---
-    c.setFillColor(colors.HexColor("#0f172a")) # Dark Navy
+    # --- DISEÑO: Encabezado ---
+    c.setFillColor(colors.HexColor("#0f172a")) # Azul AlertTrail
     c.rect(0, height - 3.5*cm, width, 3.5*cm, fill=1)
-    
     c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(1.5*cm, height - 1.8*cm, "AlertTrail")
-    c.setFont("Helvetica", 12)
-    c.drawString(1.5*cm, height - 2.5*cm, "Informe de Auditoría de Seguridad")
-    
-    c.drawRightString(width - 1.5*cm, height - 1.8*cm, "ESTADO: PROTEGIDO")
-    c.setFont("Helvetica", 8)
-    c.drawRightString(width - 1.5*cm, height - 2.5*cm, f"Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(1.5*cm, height - 1.8*cm, "AlertTrail - Auditoría de Seguridad")
+    c.setFont("Helvetica", 10)
+    c.drawString(1.5*cm, height - 2.5*cm, f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    c.drawRightString(width - 1.5*cm, height - 1.8*cm, "REPORTE TÉCNICO")
 
-    # --- RESUMEN DE RIESGO ---
+    # --- RESUMEN DE MÉTRICAS ---
     y = height - 5*cm
     summary = results.get("summary", {})
-    risk = summary.get("risk", "low").upper()
-    color_risk = colors.red if risk == "HIGH" else colors.orange if risk == "MEDIUM" else colors.green
-
+    
     c.setFillColor(colors.black)
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(1.5*cm, y, "1. Evaluación de Riesgo")
+    c.drawString(1.5*cm, y, "1. Resumen de Hallazgos")
     y -= 1*cm
-    
-    c.setFont("Helvetica", 12)
-    c.drawString(2*cm, y, "Nivel detectado:")
-    c.setFillColor(color_risk)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(5.5*cm, y, risk)
-    
-    y -= 1.5*cm
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(1.5*cm, y, "2. Hallazgos Técnicos")
-    y -= 0.8*cm
 
-    # --- TABLA DE MÉTRICAS ---
-    c.setFont("Helvetica", 11)
     metrics = [
-        ("Registros procesados:", str(summary.get("total", 0))),
+        ("Registros analizados:", str(summary.get("total", 0))),
         ("Inyecciones SQL (SQLi):", str(summary.get("sqli", 0))),
-        ("Intento de acceso a archivos:", str(summary.get("traversal", 0))),
-        ("Ataques de Fuerza Bruta:", str(summary.get("ssh_failed", 0)))
+        ("Accesos a archivos sensibles:", str(summary.get("traversal", 0))),
+        ("Nivel de Riesgo General:", summary.get("risk", "LOW").upper())
     ]
-    
+
+    c.setFont("Helvetica", 11)
     for label, val in metrics:
         c.drawString(2*cm, y, label)
+        c.setFont("Helvetica-Bold", 11)
+        # Cambiar color si el riesgo es alto
+        if "Riesgo" in label and val == "HIGH": c.setFillColor(colors.red)
         c.drawRightString(width - 2*cm, y, val)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 11)
         y -= 0.6*cm
 
-    # --- SECCIÓN EXPLICATIVA (NUEVO) ---
+    # --- SECCIÓN EXPLICATIVA Y RECOMENDACIONES ---
     y -= 1*cm
-    c.setStrokeColor(colors.lightgrey)
-    c.line(1.5*cm, y, width - 1.5*cm, y)
-    y -= 1*cm
-    
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(1.5*cm, y, "3. Recomendaciones de Seguridad")
-    y -= 0.8*cm
-    
-    c.setFont("Helvetica", 10)
+    c.drawString(1.5*cm, y, "2. Análisis y Recomendaciones")
+    y -= 1*cm
+
+    # Lógica explicativa
     advices = []
     if summary.get("sqli", 0) > 0:
-        advices.append("• SQLi detectado: Implementar sentencias preparadas (ORM) y validar inputs.")
+        advices.append(("SQL Injection", "Se detectaron intentos de manipular la base de datos. \nRECOMENDACIÓN: Use ORMs o sentencias preparadas y escape todos los caracteres especiales."))
     if summary.get("traversal", 0) > 0:
-        advices.append("• Path Traversal: Sanitizar rutas de archivos y restringir permisos del sistema.")
-    if summary.get("ssh_failed", 0) > 5:
-        advices.append("• Fuerza Bruta: Cambiar puerto SSH predeterminado y activar Fail2Ban.")
+        advices.append(("Path Traversal", "Alguien intentó ver archivos internos del servidor. \nRECOMENDACIÓN: Revise los permisos de las carpetas y sanitice las rutas en su código."))
     
     if not advices:
-        advices.append("• No se detectaron anomalías críticas. Mantenga el sistema actualizado.")
+        advices.append(("Sin Amenazas Críticas", "No se detectaron patrones de ataque conocidos. \nRECOMENDACIÓN: Mantenga sus dependencias actualizadas y monitoree logs regularmente."))
 
-    for advice in advices:
-        c.drawString(2*cm, y, advice)
+    for title, desc in advices:
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(2*cm, y, f"• {title}:")
         y -= 0.5*cm
+        c.setFont("Helvetica", 10)
+        # Manejo de saltos de línea manual para el PDF
+        for line in desc.split('\n'):
+            c.drawString(2.5*cm, y, line)
+            y -= 0.5*cm
+        y -= 0.4*cm
 
-    # --- EVIDENCIA ---
+    # --- EVIDENCIA DE HALLAZGOS ---
     if results.get("findings"):
-        y -= 1.5*cm
+        y -= 0.5*cm
         c.setFont("Helvetica-Bold", 14)
-        c.drawString(1.5*cm, y, "4. Evidencia Extraída")
-        y -= 0.8*cm
+        c.drawString(1.5*cm, y, "3. Evidencia de Logs Sospechosos")
+        y -= 1*cm
         c.setFont("Courier", 7)
-        c.setFillColor(colors.HexColor("#7f1d1d")) # Rojo oscuro para logs
+        c.setFillColor(colors.HexColor("#450a0a")) # Rojo sangre oscuro para logs
         for line in results["findings"][:15]:
-            if y < 3*cm: 
+            if y < 2*cm:
                 c.showPage()
                 y = height - 2*cm
                 c.setFont("Courier", 7)
@@ -114,4 +101,4 @@ def generate_pdf(results: dict, filename_prefix: str = "security_report") -> str
 
     c.showPage()
     c.save()
-    return filename # Solo devolvemos el nombre para evitar conflictos de rutas
+    return filename # Retornamos solo el nombre del archivo
