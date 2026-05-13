@@ -139,6 +139,8 @@ async def generate_page(request: Request, current=Depends(get_current_user_cooki
 </body>
 </html>""")
 
+# app/routers/analysis.py
+
 @router.post("/analyze")
 async def analyze(
     request: Request,
@@ -148,16 +150,18 @@ async def analyze(
 ):
     if not current: return RedirectResponse("/auth/login", status_code=302)
 
-    # Obtenemos el idioma aquí para pasarlo luego
-    lang = get_lang(request)
-
     content = await file.read()
     text = content.decode("utf-8", errors="ignore")
     results = analyze_log(text, user_id=getattr(current, "id", None))
 
     pdf_url = None
     if pdf:
-        pdf_rel_path = generate_pdf(results, filename_prefix="security_report")
-        pdf_url = f"/{pdf_rel_path}"
+        # 1. Generamos el PDF (se guarda en ./reports_data)
+        pdf_filename = generate_pdf(results, filename_prefix="security_report")
+        
+        # 2. IMPORTANTE: Forzamos la URL para que FastAPI la sirva desde /reports/
+        # Esto soluciona el 404 que sale en tus logs
+        pdf_url = f"/reports/{pdf_filename}"
 
-    return HTMLResponse(_render_html(results, lang=lang, pdf_url=pdf_url))
+    # Devolvemos el dashboard con el botón de descarga arriba
+    return HTMLResponse(_render_html(results, lang=get_lang(request), pdf_url=pdf_url))
