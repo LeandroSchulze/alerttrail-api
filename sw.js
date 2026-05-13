@@ -1,4 +1,4 @@
-/* app/sw.js - Versión Mejorada */
+/* app/sw.js */
 
 self.addEventListener("push", (event) => {
   let data = {};
@@ -11,14 +11,17 @@ self.addEventListener("push", (event) => {
   const title = data.title || "AlertTrail";
   const options = {
     body: data.body || "Nueva alerta de seguridad",
-    icon: data.icon || "/static/icon.png",
-    badge: data.badge || "/static/icon.png",
+    
+    // --- ACTUALIZADO: Usamos el nuevo icono SVG ---
+    icon: "/static/icon.svg",
+    badge: "/static/icon.svg",
+    
     data: data.data || {},
     
     // --- TOQUES DE CALIDAD ---
-    vibrate: [200, 100, 200, 100, 400], // Patrón de vibración de alerta
-    tag: "security-alert",               // Agrupa notificaciones para no llenar la pantalla
-    renotify: true,                      // Hace que el cel vibre aunque ya haya una notif previa
+    vibrate: [200, 100, 200, 100, 400], // Patrón de alerta
+    tag: "security-alert",               // Agrupa notificaciones
+    renotify: true,                      // Vibra siempre
     actions: [
       { action: 'view', title: 'Ver Detalle' },
       { action: 'close', title: 'Cerrar' }
@@ -31,7 +34,6 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  // Si hizo clic en el botón 'close', no hacemos nada más
   if (event.action === 'close') return;
 
   const url = (event.notification.data && event.notification.data.url) || "/dashboard";
@@ -39,10 +41,8 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        // Mejoramos la búsqueda: si la URL coincide, enfocamos
         if (client.url.includes(url) && "focus" in client) return client.focus();
       }
-      // Si no hay ninguna abierta, abrimos una nueva
       if (clients.openWindow) return clients.openWindow(url);
     })
   );
