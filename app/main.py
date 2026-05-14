@@ -34,9 +34,16 @@ mail_logger = logging.getLogger("alerttrail.mail")
 APP_NAME = os.getenv("APP_NAME", "AlertTrail")
 SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
 
-# Directorios
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
+# --- LÓGICA DE DIRECTORIOS INTELIGENTE ---
+BASE_DIR = Path(__file__).resolve().parent # app/
+ROOT_DIR = BASE_DIR.parent                  # /app (root de Railway)
+
+# Buscamos 'static' en app/static o en ./static
+if (BASE_DIR / "static").exists():
+    STATIC_DIR = BASE_DIR / "static"
+else:
+    STATIC_DIR = ROOT_DIR / "static"
+
 REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "./reports_data"))
 
 try:
@@ -46,13 +53,10 @@ except Exception as e:
 
 app = FastAPI(title=APP_NAME)
 
-# --- SINCRONIZACIÓN DE BASE DE DATOS ---
 @app.on_event("startup")
 def on_startup():
-    """Ejecuta la creación de tablas al arrancar la app."""
     init_db() 
 
-# Middleware CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -64,11 +68,11 @@ app.add_middleware(
 app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
-# --- CONFIGURACIÓN PWA / SERVICE WORKER (RUTAS RAÍZ) ---
+# --- CONFIGURACIÓN PWA (RUTAS RAÍZ) ---
 
 @app.get("/sw.js", include_in_schema=False)
 async def serve_sw():
-    """Sirve el Service Worker desde la raíz para evitar el 404."""
+    """Sirve el Service Worker buscando en la ruta detectada."""
     sw_path = STATIC_DIR / "sw.js"
     if sw_path.exists():
         return FileResponse(
@@ -76,32 +80,23 @@ async def serve_sw():
             media_type="application/javascript",
             headers={"Service-Worker-Allowed": "/"}
         )
-    logger.error(f"Service Worker no encontrado en: {sw_path}")
+    # Log de error corregido para saber dónde buscamos exactamente
+    logger.error(f"ERROR CRÍTICO: sw.js no encontrado en {sw_path}")
     return HTMLResponse("Service Worker not found", status_code=404)
 
 @app.get("/manifest.json", include_in_schema=False)
 async def serve_manifest():
-    """Sirve el manifiesto desde la raíz para habilitar la instalación."""
     manifest_path = STATIC_DIR / "manifest.json"
     if manifest_path.exists():
         return FileResponse(manifest_path, media_type="application/json")
     return HTMLResponse("Manifest not found", status_code=404)
 
-# Montaje de archivos estáticos
+# Montaje de estáticos usando la ruta detectada
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 if REPORTS_DIR.exists():
     app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
-
-def _try_include_router(module_path: str) -> None:
-    try:
-        mod = import_module(module_path)
-        router = getattr(mod, "router", None)
-        if router:
-            app.include_router(router)
-    except Exception:
-        logger.exception("Failed including optional router: %s", module_path)
 
 # Registro de Routers
 app.include_router(auth.router)
@@ -121,13 +116,6 @@ app.include_router(tasks_mail.router)
 app.include_router(push.router)
 app.include_router(scanner.router)
 
-# Routers Opcionales
-_try_include_router("app.routers.billing_ui")
-_try_include_router("app.routers.payments_ui")
-_try_include_router("app.routers.audit")
-_try_include_router("app.routers.admin_dashboard_ui")
-
-# Endpoints de salud
 @app.get("/health", include_in_schema=False)
 def health():
     return {"status": "ok", "app": APP_NAME}
@@ -140,18 +128,10 @@ def root():
 def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
-
     lang, t_func = get_lang_and_translator(request, user=user)
-
     return templates.TemplateResponse(
-        request=request,
-        name="dashboard.html",
-        context={
-            "lang": lang,
-            "t": t_func,
-            "user": user,
-            "current_user": user,
-        },
+        request=request, name="dashboard.html",
+        context={"lang": lang, "t": t_func, "user": user, "current_user": user}
     )
 
 # --- SCHEDULER ---
@@ -169,7 +149,6 @@ if (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true":
     if not scheduler.running:
         scheduler.start()
 
-# Manejo Global de Errores
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error: %s", exc)
