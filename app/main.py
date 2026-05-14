@@ -21,8 +21,7 @@ from app.database import init_db
 from app.routers import (
     auth, analysis, mail, admin, reports, profile, tools,
     scheduler_status, alerts, i18n, billing, payments,
-    webhooks, tasks_mail, push,
-    scanner 
+    webhooks, tasks_mail, push, scanner 
 )
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -34,18 +33,12 @@ mail_logger = logging.getLogger("alerttrail.mail")
 APP_NAME = os.getenv("APP_NAME", "AlertTrail")
 SESSION_SECRET = os.getenv("SESSION_SECRET", os.getenv("JWT_SECRET", "change-me-in-env"))
 
-# --- LÓGICA DE DIRECTORIOS INTELIGENTE ---
-BASE_DIR = Path(__file__).resolve().parent # app/
-ROOT_DIR = BASE_DIR.parent                  # /app (root de Railway)
-
-# Buscamos 'static' en app/static o en ./static
-if (BASE_DIR / "static").exists():
-    STATIC_DIR = BASE_DIR / "static"
-else:
-    STATIC_DIR = ROOT_DIR / "static"
+# --- CONFIGURACIÓN DE RUTAS INTELIGENTE ---
+BASE_DIR = Path(__file__).resolve().parent # /app/app
+ROOT_DIR = BASE_DIR.parent                  # /app (Raíz de Railway)
+STATIC_DIR = BASE_DIR / "static"
 
 REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "./reports_data"))
-
 try:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 except Exception as e:
@@ -68,37 +61,43 @@ app.add_middleware(
 app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
-# --- CONFIGURACIÓN PWA (RUTAS RAÍZ) ---
+# --- SERVIR PWA DESDE CUALQUIER UBICACIÓN ---
 
 @app.get("/sw.js", include_in_schema=False)
 async def serve_sw():
-    """Sirve el Service Worker buscando en la ruta detectada."""
-    sw_path = STATIC_DIR / "sw.js"
-    if sw_path.exists():
-        return FileResponse(
-            sw_path, 
-            media_type="application/javascript",
-            headers={"Service-Worker-Allowed": "/"}
-        )
-    # Log de error corregido para saber dónde buscamos exactamente
-    logger.error(f"ERROR CRÍTICO: sw.js no encontrado en {sw_path}")
+    # Buscamos en: 1. Raíz, 2. Carpeta App, 3. Carpeta Static
+    locations = [ROOT_DIR / "sw.js", BASE_DIR / "sw.js", STATIC_DIR / "sw.js"]
+    for path in locations:
+        if path.exists():
+            return FileResponse(path, media_type="application/javascript", headers={"Service-Worker-Allowed": "/"})
+    
+    logger.error(f"404 CRÍTICO: sw.js no encontrado. Buscado en: {[str(p) for p in locations]}")
     return HTMLResponse("Service Worker not found", status_code=404)
 
 @app.get("/manifest.json", include_in_schema=False)
 async def serve_manifest():
-    manifest_path = STATIC_DIR / "manifest.json"
-    if manifest_path.exists():
-        return FileResponse(manifest_path, media_type="application/json")
+    locations = [ROOT_DIR / "manifest.json", BASE_DIR / "manifest.json", STATIC_DIR / "manifest.json"]
+    for path in locations:
+        if path.exists():
+            return FileResponse(path, media_type="application/json")
     return HTMLResponse("Manifest not found", status_code=404)
 
-# Montaje de estáticos usando la ruta detectada
+@app.get("/icon.svg", include_in_schema=False)
+async def serve_icon():
+    locations = [ROOT_DIR / "icon.svg", BASE_DIR / "icon.svg", STATIC_DIR / "icon.svg"]
+    for path in locations:
+        if path.exists():
+            return FileResponse(path, media_type="image/svg+xml")
+    return HTMLResponse("Icon not found", status_code=404)
+
+# Montaje de carpetas
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 if REPORTS_DIR.exists():
     app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
-# Registro de Routers
+# Registro de Routers (Sin tocar nada)
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
