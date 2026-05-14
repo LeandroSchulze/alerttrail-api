@@ -22,7 +22,7 @@ from app.routers import (
     auth, analysis, mail, admin, reports, profile, tools,
     scheduler_status, alerts, i18n, billing, payments,
     webhooks, tasks_mail, push,
-    scanner  # <--- AGREGADO: Importamos el nuevo router
+    scanner 
 )
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -64,9 +64,11 @@ app.add_middleware(
 app.state.templates = templates
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
 
-# --- CONFIGURACIÓN PWA / SERVICE WORKER ---
+# --- CONFIGURACIÓN PWA / SERVICE WORKER (RUTAS RAÍZ) ---
+
 @app.get("/sw.js", include_in_schema=False)
 async def serve_sw():
+    """Sirve el Service Worker desde la raíz para evitar el 404."""
     sw_path = STATIC_DIR / "sw.js"
     if sw_path.exists():
         return FileResponse(
@@ -74,7 +76,16 @@ async def serve_sw():
             media_type="application/javascript",
             headers={"Service-Worker-Allowed": "/"}
         )
+    logger.error(f"Service Worker no encontrado en: {sw_path}")
     return HTMLResponse("Service Worker not found", status_code=404)
+
+@app.get("/manifest.json", include_in_schema=False)
+async def serve_manifest():
+    """Sirve el manifiesto desde la raíz para habilitar la instalación."""
+    manifest_path = STATIC_DIR / "manifest.json"
+    if manifest_path.exists():
+        return FileResponse(manifest_path, media_type="application/json")
+    return HTMLResponse("Manifest not found", status_code=404)
 
 # Montaje de archivos estáticos
 if STATIC_DIR.exists():
@@ -108,7 +119,7 @@ app.include_router(alerts.router)
 app.include_router(i18n.router)
 app.include_router(tasks_mail.router)
 app.include_router(push.router)
-app.include_router(scanner.router)  # <--- AGREGADO: Registramos la ruta /scanner
+app.include_router(scanner.router)
 
 # Routers Opcionales
 _try_include_router("app.routers.billing_ui")
