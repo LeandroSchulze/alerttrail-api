@@ -26,8 +26,6 @@ from app.routers import (
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-scheduler.add_job(check_monthly_billing, "cron", hour=0, minute=0)
-
 # Configuración de Logging
 logger = logging.getLogger("alerttrail")
 mail_logger = logging.getLogger("alerttrail.mail")
@@ -137,6 +135,7 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
 
 # --- SCHEDULER ---
 scheduler = BackgroundScheduler()
+
 def _safe_run_mail_poll():
     try:
         from app.tasks.mail_poll import poll_all_accounts
@@ -144,11 +143,23 @@ def _safe_run_mail_poll():
     except Exception:
         mail_logger.exception("Mail poll failed")
 
+def _safe_run_billing_check():
+    try:
+        from app.tasks.billing_check import check_monthly_billing
+        check_monthly_billing()
+    except Exception:
+        logger.exception("Monthly billing check failed")
+
+# Configuración de ejecuciones del planificador
 if (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true":
     interval = int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10"))
     scheduler.add_job(_safe_run_mail_poll, "interval", minutes=interval)
-    if not scheduler.running:
-        scheduler.start()
+
+# 💳 Agregamos el chequeo de abonos a la medianoche (No depende del mail poll)
+scheduler.add_job(_safe_run_billing_check, "cron", hour=0, minute=0)
+
+if not scheduler.running:
+    scheduler.start()
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
