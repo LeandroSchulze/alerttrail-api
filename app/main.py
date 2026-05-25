@@ -26,6 +26,8 @@ from app.routers import (
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+scheduler.add_job(check_monthly_billing, "cron", hour=0, minute=0)
+
 # Configuración de Logging
 logger = logging.getLogger("alerttrail")
 mail_logger = logging.getLogger("alerttrail.mail")
