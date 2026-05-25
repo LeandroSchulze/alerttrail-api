@@ -6,7 +6,10 @@ import sys
 import os
 
 from app.services.mail_scanner import scan_all_connected_mailboxes
-from app.routers.push import trigger_push_notification, _load
+from app.routers.push import trigger_push_notification
+# --- CONEXIONES COMPATIBLES AGREGADAS ---
+from app.database import SessionLocal
+from app.models import PushSubscription
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,16 +33,24 @@ def poll_all_accounts() -> int:
         
         # Si se escanearon cuentas, disparamos la notificación
         if scanned_count > 0:
-            # Lógica temporal: Notificar a todos los que tengan una suscripción activa
-            # Esto asegura que recibas la alerta mientras ajustamos la granularidad por ID
-            data = _load()
-            for user_id in data.keys():
-                log.info("Sending push alert to user: %s", user_id)
-                trigger_push_notification(
-                    user_id=user_id,
-                    title="Alerta de Seguridad",
-                    body="Se detectaron correos sospechosos en tu bandeja."
-                )
+            # 🔌 CONEXIÓN REAL CON POSTGRESQL:
+            # Abrimos una sesión manual limpia (esencial para tareas en segundo plano / hilos)
+            db = SessionLocal()
+            try:
+                # Buscamos de forma única todos los user_id que tengan alertas configuradas
+                active_subs = db.query(PushSubscription.user_id).distinct().all()
+                
+                for (user_id,) in active_subs:
+                    log.info("Sending push alert to user: %s", user_id)
+                    trigger_push_notification(
+                        user_id=user_id,
+                        title="Alerta de Seguridad",
+                        body="Se detectaron correos sospechosos en tu bandeja."
+                    )
+            except Exception as db_err:
+                log.error("Error al obtener suscripciones de la DB en segundo plano: %s", db_err)
+            finally:
+                db.close() # 🔑 CLAVE: Cerramos siempre la conexión para no agotar el pool de Railway
         
         return scanned_count
     except Exception as e:
