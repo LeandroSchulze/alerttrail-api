@@ -1,48 +1,92 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>Admin Dashboard – AlertTrail</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #f5f7fb;
-      padding: 40px;
-    }
-    .card {
-      background: white;
-      padding: 24px;
-      border-radius: 12px;
-      max-width: 500px;
-      margin-bottom: 20px;
-      box-shadow: 0 10px 25px rgba(0,0,0,.08);
-    }
-    h1 {
-      margin-bottom: 8px;
-    }
-    .metric {
-      font-size: 32px;
-      font-weight: bold;
-    }
-    .label {
-      color: #666;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - AlertTrail</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+            background: 
+                radial-gradient(circle at top, rgba(56,189,248,0.15) 0, transparent 45%),
+                radial-gradient(circle at bottom, rgba(59,130,246,0.15) 0, transparent 55%),
+                linear-gradient(to bottom, #f0f9ff, #dbeafe);
+            color: #0f172a;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.98);
+            padding: 32px;
+            border-radius: 20px;
+            width: 100%;
+            max-width: 500px;
+            border: 1px solid #dbeafe;
+            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+        }
+        h1 { 
+            margin: 0 0 4px; 
+            font-size: 1.6rem;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .admin-session {
+            color: #64748b;
+            font-size: 0.9rem;
+            margin: 0 0 24px 0;
+        }
+        .grid {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        .item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 18px;
+            border-radius: 14px;
+        }
+        .metric {
+            font-size: 32px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-top: 4px;
+        }
+        .label {
+            color: #64748b;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin: 0;
+        }
+    </style>
 </head>
 <body>
 
-  <h1>Admin Dashboard</h1>
-  <p>Logged as <strong>{{ current_user.email }}</strong></p>
+<div class="card">
+    <h1>🛠️ Admin Dashboard</h1>
+    <p class="admin-session">Logged as <strong style="color: #0ea5e9;">{{ current_user.email }}</strong></p>
 
-  <div class="card">
-    <div class="label">Total users</div>
-    <div class="metric">{{ total_users }}</div>
-  </div>
+    <div class="grid">
+        <div class="item">
+            <p class="label">Total Users</p>
+            <div class="metric">{{ total_users }}</div>
+        </div>
 
-  <div class="card">
-    <div class="label">New users – {{ month }}</div>
-    <div class="metric">{{ new_users_month }}</div>
-  </div>
+        <div class="item">
+            <p class="label">New Users</p>
+            <div class="metric" style="color: #22c55e;">+{{ new_users_month }}</div>
+        </div>
+    </div>
+</div>
 
 </body>
 </html>
