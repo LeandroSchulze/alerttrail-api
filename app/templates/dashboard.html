@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - AlertTrail</title>
+    <title>Dashboard - AlertTrail</title>
     <style>
         body {
             margin: 0;
             font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
             background: 
-                radial-gradient(circle at top, rgba(56,189,248,0.15) 0, transparent 45%),
-                radial-gradient(circle at bottom, rgba(59,130,246,0.15) 0, transparent 55%),
+                radial-gradient(circle at top, rgba(56,189,248,0.18) 0, transparent 45%),
+                radial-gradient(circle at bottom, rgba(59,130,246,0.18) 0, transparent 55%),
                 linear-gradient(to bottom, #f0f9ff, #dbeafe);
             color: #0f172a;
             min-height: 100vh;
@@ -25,78 +25,124 @@
             padding: 32px;
             border-radius: 20px;
             width: 100%;
-            max-width: 550px;
+            max-width: 520px;
             border: 1px solid #dbeafe;
-            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.06);
         }
         h1 { 
-            margin: 0 0 24px; 
-            font-size: 1.6rem;
+            margin: 0 0 6px; 
+            font-size: 1.5rem;
             font-weight: 800;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        }
+        .subtitle {
+            color: #64748b;
+            font-size: 0.9rem;
+            margin: 0 0 24px 0;
         }
         .grid {
             display: flex;
             flex-direction: column;
-            gap: 18px;
+            gap: 16px;
         }
         .item {
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             padding: 16px;
-            border-radius: 12px;
-        }
-        .metric {
-            font-size: 24px;
-            font-weight: 800;
-            color: #0f172a;
-            margin-top: 4px;
+            border-radius: 14px;
         }
         .label {
             color: #64748b;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
             font-weight: 700;
             letter-spacing: 0.5px;
-            margin: 0;
+            margin: 0 0 4px 0;
         }
-        hr {
-            border: 0;
-            height: 1px;
-            background: #e2e8f0;
-            margin: 12px 0;
+        .user-email {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #0f172a;
+            word-break: break-all;
+        }
+        .btn-primary {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            text-decoration: none;
+            background: linear-gradient(135deg, #22c55e, #0ea5e9);
+            color: white;
+            padding: 14px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 14px rgba(14, 165, 233, 0.3);
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .btn-primary:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
+        }
+        #btn-instalar-app:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
         }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h1>🛠️ Admin Dashboard</h1>
+    <h1>🛡️ Panel de Protección</h1>
+    <p class="subtitle">Estado del sistema en tiempo real</p>
 
     <div class="grid">
+        <div id="pwa-install-banner" class="item" style="display: none; background: linear-gradient(135deg, #e0f2fe, #f0f9ff); border: 1px solid #7dd3fc;">
+            <p class="label" style="color: #0369a1;">Aplicación disponible</p>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #0f172a; margin: 4px 0 12px; line-height: 1.4;">
+                Descargá AlertTrail en tu pantalla de inicio para un ingreso inmediato y alertas Push en tiempo real.
+            </div>
+            <button id="btn-instalar-app" style="background: linear-gradient(135deg, #0ea5e9, #2563eb); color: white; border: none; padding: 10px 18px; border-radius: 999px; font-weight: 700; font-size: 0.85rem; cursor: pointer; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.2); width: 100%; transition: all 0.2s; display: block;">
+                📲 Descargar App
+            </button>
+        </div>
+
         <div class="item">
-            <p class="label">Usuario logueado</p>
-            <div class="metric" style="font-size: 1.15rem; font-weight: 600; color: #0ea5e9; word-break: break-all;">
-                {{ admin_email }}
-            </div>
+            <p class="label">Usuario Protegido</p>
+            <div class="user-email">{{ current_user.email }}</div>
         </div>
 
-        <hr>
-
-        <div class="item" style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
-            <div>
-                <p class="label">Usuarios totales</p>
-                <div class="metric">{{ total_users }}</div>
-            </div>
-            <div style="text-align: right;">
-                <p class="label">Nuevos este mes</p>
-                <div class="metric" style="color: #22c55e;">+{{ new_users_month }}</div>
-            </div>
-        </div>
+        <a href="/mail/scanner" class="btn-primary">
+            🔍 Ir al Escáner de Correos
+        </a>
     </div>
 </div>
+
+<script>
+    let promptInstalacion;
+    const bannerInstalar = document.getElementById('pwa-install-banner');
+    const botonInstalar = document.getElementById('btn-instalar-app');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        promptInstalacion = e;
+        bannerInstalar.style.display = 'block'; // Muestra la tarjeta si es instalable
+    });
+
+    botonInstalar.addEventListener('click', async () => {
+        if (!promptInstalacion) return;
+        promptInstalacion.prompt();
+        const { outcome } = await promptInstalacion.userChoice;
+        promptInstalacion = null;
+        if (outcome === 'accepted') {
+            bannerInstalar.style.display = 'none';
+        }
+    });
+
+    window.addEventListener('appinstalled', () => {
+        bannerInstalar.style.display = 'none';
+    });
+</script>
 
 </body>
 </html>
