@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - AlertTrail</title>
+    <title>Panel de Control - AlertTrail</title>
     <style>
         body {
             margin: 0;
             font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
             background: 
-                radial-gradient(circle at top, rgba(56,189,248,0.18) 0, transparent 45%),
-                radial-gradient(circle at bottom, rgba(59,130,246,0.18) 0, transparent 55%),
+                radial-gradient(circle at top, rgba(56,189,248,0.15) 0, transparent 45%),
+                radial-gradient(circle at bottom, rgba(59,130,246,0.15) 0, transparent 55%),
                 linear-gradient(to bottom, #f0f9ff, #dbeafe);
             color: #0f172a;
             min-height: 100vh;
@@ -25,14 +25,17 @@
             padding: 32px;
             border-radius: 20px;
             width: 100%;
-            max-width: 520px;
+            max-width: 550px;
             border: 1px solid #dbeafe;
-            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.06);
+            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
         }
         h1 { 
             margin: 0 0 6px; 
-            font-size: 1.5rem;
+            font-size: 1.6rem;
             font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         .subtitle {
             color: #64748b;
@@ -42,79 +45,141 @@
         .grid {
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 18px;
         }
         .item {
             background: #f8fafc;
             border: 1px solid #e2e8f0;
-            padding: 16px;
+            padding: 18px;
             border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .item-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .label {
             color: #64748b;
-            font-size: 0.75rem;
+            font-size: 0.8rem;
             text-transform: uppercase;
             font-weight: 700;
             letter-spacing: 0.5px;
-            margin: 0 0 4px 0;
+            margin: 0;
         }
-        .user-email {
-            font-size: 1.05rem;
+        .value {
+            font-size: 1.1rem;
             font-weight: 600;
             color: #0f172a;
-            word-break: break-all;
         }
-        .btn-primary {
+        .badge {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-success {
+            background: #dcfce7;
+            color: #15803d;
+        }
+        .btn {
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
             text-decoration: none;
-            background: linear-gradient(135deg, #22c55e, #0ea5e9);
-            color: white;
-            padding: 14px;
+            padding: 12px 20px;
             border-radius: 999px;
             font-weight: 700;
-            font-size: 0.95rem;
-            box-shadow: 0 4px 14px rgba(14, 165, 233, 0.3);
+            font-size: 0.9rem;
             transition: all 0.2s;
             text-align: center;
+            cursor: pointer;
+            border: none;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #0ea5e9, #2563eb);
+            color: white;
+            box-shadow: 0 4px 14px rgba(14, 165, 233, 0.3);
         }
         .btn-primary:hover {
             opacity: 0.95;
             transform: translateY(-1px);
         }
-        #btn-instalar-app:hover {
+        .btn-success {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: white;
+            box-shadow: 0 4px 14px rgba(34, 197, 94, 0.3);
+        }
+        .btn-success:hover {
             opacity: 0.95;
             transform: translateY(-1px);
+        }
+        hr {
+            border: 0;
+            height: 1px;
+            background: #e2e8f0;
+            margin: 8px 0;
         }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h1>🛡️ Panel de Protección</h1>
-    <p class="subtitle">Estado del sistema en tiempo real</p>
+    <h1>🛡️ AlertTrail</h1>
+    <p class="subtitle">Panel de Control de Seguridad</p>
 
     <div class="grid">
         <div id="pwa-install-banner" class="item" style="display: none; background: linear-gradient(135deg, #e0f2fe, #f0f9ff); border: 1px solid #7dd3fc;">
-            <p class="label" style="color: #0369a1;">Aplicación disponible</p>
-            <div style="font-size: 0.9rem; font-weight: 600; color: #0f172a; margin: 4px 0 12px; line-height: 1.4;">
-                Descargá AlertTrail en tu pantalla de inicio para un ingreso inmediato y alertas Push en tiempo real.
+            <p class="label" style="color: #0369a1;">Aplicación Disponible</p>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #0f172a; margin: 2px 0 10px; line-height: 1.4;">
+                Instalá AlertTrail en tu pantalla de inicio para un ingreso inmediato y alertas de amenazas en tiempo real.
             </div>
-            <button id="btn-instalar-app" style="background: linear-gradient(135deg, #0ea5e9, #2563eb); color: white; border: none; padding: 10px 18px; border-radius: 999px; font-weight: 700; font-size: 0.85rem; cursor: pointer; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.2); width: 100%; transition: all 0.2s; display: block;">
-                📲 Descargar App
+            <button id="btn-instalar-app" class="btn btn-primary" style="width: 100%;">
+                📲 Instalar Aplicación
             </button>
         </div>
 
         <div class="item">
             <p class="label">Usuario Protegido</p>
-            <div class="user-email">{{ current_user.email }}</div>
+            <div class="value" style="color: #0ea5e9; word-break: break-all;">
+                {{ current_user.email }}
+            </div>
         </div>
 
-        <a href="/mail/scanner" class="btn-primary">
-            🔍 Ir al Escáner de Correos
-        </a>
+        <div class="item">
+            <div class="item-row">
+                <div>
+                    <p class="label">Detección de Amenazas</p>
+                    <div class="value" style="margin-top: 4px;">Escáner de Casillas</div>
+                </div>
+                <span class="badge badge-success">Activo</span>
+            </div>
+            <hr>
+            <a href="/mail/scanner" class="btn btn-primary" style="margin-top: 4px;">
+                🔍 Abrir Escáner de Correos
+            </a>
+        </div>
+
+        <div class="item">
+            <div class="item-row">
+                <div>
+                    <p class="label">Suscripción</p>
+                    <div class="value" style="margin-top: 4px;">Plan de Monitoreo</div>
+                </div>
+                <span class="badge badge-success">Al Día</span>
+            </div>
+            <hr>
+            <p style="margin: 4px 0 8px 0; font-size: 0.85rem; color: #64748b; line-height: 1.4;">
+                Gestioná tu facturación de abonos mensuales de forma automática y segura.
+            </p>
+            <a href="/billing" class="btn btn-success">
+                💳 Facturación y MercadoPago
+            </a>
+        </div>
     </div>
 </div>
 
@@ -126,7 +191,7 @@
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         promptInstalacion = e;
-        bannerInstalar.style.display = 'block'; // Muestra la tarjeta si es instalable
+        bannerInstalar.style.display = 'block';
     });
 
     botonInstalar.addEventListener('click', async () => {
