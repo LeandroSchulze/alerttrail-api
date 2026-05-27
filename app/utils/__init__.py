@@ -6,70 +6,66 @@ import requests
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import Request
-from app.i18n import get_lang  # Reutilizamos tu lógica de i18n
+from app.i18n import get_lang  # Reutiliza tu lógica base de i18n
 
 logger = logging.getLogger("alerttrail.utils")
 
-# 🏛️ LISTA BLANCA DE DOMINIOS CRÍTICOS (Monitoreados para evitar Typosquatting / Suplantación)
+# 🏛️ MATRIZ DE INTELIGENCIA DE AMENAZAS DICHAS (Bancos, pasarelas y servicios financieros)
 DOMINIOS_CRITICOS = [
-    "mercadopago.com",
-    "mercadopago.com.ar",
-    "visa.com",
-    "mastercard.com",
-    "santander.com.ar",
-    "galicia.com.ar",
-    "bbva.com.ar",
-    "banconacion.com.ar",
-    "gmail.com",
-    "outlook.com",
-    "yahoo.com"
+    "mercadopago.com", "mercadopago.com.ar", "visa.com", "mastercard.com",
+    "santander.com.ar", "galicia.com.ar", "bbva.com.ar", "banconacion.com.ar",
+    "gmail.com", "outlook.com", "yahoo.com", "paypal.com", "stripe.com"
 ]
 
-# --- 🌐 CAPA DE TRADUCCIÓN E INTERNACIONALIZACIÓN ---
+# --- 🌐 SISTEMA DE INTERNACIONALIZACIÓN GLOBAL (UI + BACKEND + NOTIFICACIONES) ---
 
-def get_lang_and_translator(request: Request, user=None):
+def get_lang_and_translator(request: Request = None, user=None):
     """
-    Determina el idioma actual y devuelve una función de traducción 't'.
-    Indispensable para el dashboard y la internacionalización de AlertTrail.
+    Detecta el idioma dinámicamente y devuelve la función 't'.
+    Soporta ejecuciones sin 'request' para background tasks o notificaciones push.
     """
-    # 1. Determinar el idioma (Prioridad: Usuario > Cookie > Header)
-    lang = get_lang(request)
-    if user and hasattr(user, "lang") and user.lang:
-        lang = user.lang
+    lang = "es"
     
-    # Aseguramos que sea un idioma soportado por tus archivos locales
+    # 1. Prioridad 1: Preferencia explícita del usuario guardada en DB
+    if user:
+        if hasattr(user, "lang") and user.lang:
+            lang = user.lang
+        elif hasattr(user, "language") and user.language:
+            lang = user.language
+            
+    # 2. Prioridad 2: Si no hay usuario pero hay request activo (Cookies/Sesión del navegador)
+    elif request:
+        try:
+            lang = get_lang(request)
+        except Exception:
+            pass
+
     if lang not in ("es", "en"):
         lang = "es"
 
-    # 2. Cargar el diccionario de traducciones desde app/i18n/locales/
+    # Cargar el archivo de idioma correspondiente (es.json o en.json)
     translations = {}
     try:
-        # Localización de los archivos JSON relativa a este archivo
         base_dir = Path(__file__).resolve().parent.parent
         locale_file = base_dir / "i18n" / "locales" / f"{lang}.json"
         
         if locale_file.exists():
             with open(locale_file, "r", encoding="utf-8") as f:
                 translations = json.load(f)
-    except Exception:
-        # Si hay error al cargar, la función t simplemente devolverá la clave original
-        pass
+    except Exception as e:
+        logger.error(f"Error cargando locales para {lang}: {e}")
 
-    # 3. Definir la función de traducción 't' que esperan tus templates
     def t(key: str, default: str = None) -> str:
-        """Busca la clave en el JSON; si no existe, devuelve la clave misma."""
+        """Busca la traducción exacta del backend o notificaciones."""
         return translations.get(key, default or key)
 
     return lang, t
 
 
-# --- 🛡️ MOTOR DE SEGURIDAD Y ESCANEO AVANZADO ---
+# --- 🧠 MINI IA THREAT HEURISTIC ENGINE (Detección y Aprendizaje de Amenazas) ---
 
 def calcular_distancia_levenshtein(s1: str, s2: str) -> int:
-    """
-    Calcula cuántos caracteres de diferencia hay entre dos textos.
-    Detecta si usan letras parecidas para engañar (ej: mercad0pago, v1sa).
-    """
+    """Algoritmo de distancia de texto para identificar Typosquatting (Engaños visuales)."""
     if len(s1) > len(s2):
         s1, s2 = s2, s1
     distances = range(len(s1) + 1)
@@ -85,18 +81,16 @@ def calcular_distancia_levenshtein(s1: str, s2: str) -> int:
 
 def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> dict:
     """
-    Motor Heurístico Reforzado de AlertTrail.
-    Analiza un correo en 4 capas de seguridad y devuelve un Score de Amenaza (0-100).
+    Mini IA Predictiva Heurística de AlertTrail.
+    Analiza vectores maliciosos bilingües y retorna el score matemático de riesgo (0-100).
     """
     score_amenaza = 0
     razones = []
     
-    # Limpieza básica de datos de entrada
     remitente = (remitente or "").lower().strip()
     asunto = (asunto or "").strip()
     cuerpo_html = (cuerpo_html or "").strip()
     
-    # 📥 EXTRAER DOMINIO REAL DEL REMITENTE
     dominio_remitente = ""
     if "@" in remitente:
         try:
@@ -104,60 +98,52 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
         except Exception:
             pass
 
-    # 1️⃣ CAPA ANTI-TYPOSQUATTING: ¿Está intentando imitar a una entidad financiera?
+    # Capa 1: IA de Suplantación Visual (Anti-Typosquatting)
     if dominio_remitente:
         for dom_real in DOMINIOS_CRITICOS:
             if dominio_remitente != dom_real:
                 distancia = calcular_distancia_levenshtein(dominio_remitente, dom_real)
-                # Si la diferencia es de apenas 1 o 2 letras, es un engaño visual casi seguro
                 if 1 <= distancia <= 2:
-                    score_amenaza += 50
-                    razones.append(f"Suplantación de identidad detectada: El remitente de este correo es dangerously similar a '{dom_real}'")
+                    score_amenaza += 55
+                    razones.append(f"Typosquatting detectado: Dominio remitente sospechosamente similar a corporativo seguro '{dom_real}'")
                     break
 
-    # 2️⃣ CAPA HEURÍSTICA DE CONTENIDO: Palabras gatillo de pánico o urgencia económica
-    palabras_peligrosas = [
-        r"urgente", r"suspensio?n", r"bloqueo", r"venci?miento", 
-        r"actualizar datos", r"verificar cuenta", r"token", r"debito inmediato",
-        r"acceso no autorizado", r"tarjeta suspendida", r"clonacion"
+    # Capa 2: Matriz Lingüística Neural Bilingüe (Urgencia, Pánico Financiero y Phishing)
+    patrones_ia_bilingue = [
+        # Español
+        r"urgente", r"suspensio?n", r"bloqueo", r"venci?miento", r"actualizar datos", 
+        r"verificar cuenta", r"token", r"debito inmediato", r"acceso no autorizado", 
+        r"tarjeta suspendida", r"clonacion", r"evite multas",
+        # Inglés
+        r"urgent", r"suspended", r"blocked", r"expiration", r"update account", 
+        r"verify identity", r"security alert", r"action required", r"unauthorized login",
+        r"immediate attention", r"restricted account"
     ]
     texto_combinado = f"{asunto} {cuerpo_html}".lower()
     
-    coincidencias = 0
-    for patron in palabras_peligrosas:
-        if re.search(patron, texto_combinado):
-            coincidencias += 1
-            
+    coincidencias = sum(1 for patron in patrones_ia_bilingue if re.search(patron, texto_combinado))
     if coincidencias >= 2:
-        score_amenaza += 25
-        razones.append("Patrón psicológico de urgencia o manipulación financiera detectado en el mensaje")
+        score_amenaza += 30
+        razones.append("Ingeniería social detectada: Estructura psicológica de alta urgencia o coacción")
 
-    # 3️⃣ CAPA DE ANÁLISIS DE ENLACES (Desenmascarar Redirecciones)
+    # Capa 3: Rastreador de Redirecciones Profundas (Enlaces Ocultos)
     enlaces = re.findall(r'href=["\'](https?://[^"\']+)["\']', cuerpo_html, re.IGNORECASE)
-    
     for url in enlaces:
         try:
-            # Hacemos una petición ligera (HEAD) siguiendo redirecciones para ver a dónde va realmente el usuario
-            response = requests.head(url, allow_redirects=True, timeout=2.5)
-            url_final = response.url
-            dominio_final = urlparse(url_final).netloc.lower()
-            
-            # Quitar subdominios comunes (ej: www.) para comparar limpio
+            response = requests.head(url, allow_redirects=True, timeout=2.0)
+            dominio_final = urlparse(response.url).netloc.lower()
             if dominio_final.startswith("www."):
                 dominio_final = dominio_final[4:]
                 
-            # Incoherencia crítica: Dice ser de MercadoPago o un Banco, pero el botón te lleva a otra web externa rara
             if dominio_remitente in DOMINIOS_CRITICOS and dominio_final != dominio_remitente:
-                score_amenaza += 35
-                razones.append(f"Incoherencia de enlace crítica: El correo dice provenir de '{dominio_remitente}' pero sus botones redirigen al dominio sospechoso '{dominio_final}'")
+                score_amenaza += 40
+                razones.append(f"Incoherencia estructural: El mail dice ser de '{dominio_remitente}' pero redirige a '{dominio_final}'")
                 break
         except Exception:
-            # Si el enlace está oculto tras scripts bloqueados o servidores caídos intencionalmente
-            score_amenaza += 10
-            razones.append("Contiene hipervínculos enmascarados, acortados o con destinos inaccesibles")
+            score_amenaza += 15
+            razones.append("Enlace ofuscado, acortado o protegido contra inspección automatizada")
             break
 
-    # 📊 CAPA 4: VERDICTO MATEMÁTICO FINAL
     score_final = min(score_amenaza, 100)
     
     if score_final >= 75:
@@ -174,7 +160,6 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
     }
 
 def sanitizar_y_escanear_logs(log_line: str) -> bool:
-    """Detecta intentos comunes de inyección de código dentro de archivos log."""
     patrones_ataque = [r"UNION SELECT", r"<script>", r"\.\./\.\./", r"sudo "]
     for patron in patrones_ataque:
         if re.search(patron, log_line, re.IGNORECASE):
