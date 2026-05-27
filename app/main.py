@@ -10,12 +10,13 @@ from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from sqlalchemy.orm import Session  # <-- Agregado de forma segura para tipado de base de datos
 
 # Utilidades y Seguridad
 from app.i18n.utils import get_lang_and_translator
 from app.ui import templates
 from app.security import get_current_user_cookie_optional
-from app.database import init_db 
+from app.database import init_db, get_db  # <-- Agregado get_db para persistir el idioma elegido
 
 # Routers
 from app.routers import (
@@ -122,6 +123,64 @@ def health():
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse(url="/dashboard", status_code=302)
+
+# 🌐 --- ENDPOINT CONTROLADOR DE IDIOMAS GLOBAL (CORRECCIÓN DEL 404) ---
+@app.get("/set-lang", include_in_schema=False)
+def set_language(
+    request: Request, 
+    lang: str = Query("es"), 
+    next: str = Query("/dashboard"),
+    user = Depends(get_current_user_cookie_optional),
+    db: Session = Depends(get_db)
+):
+    if lang not in ("es", "en"):
+        lang = "es"
+        
+    # 1. Guardar en la Sesión de Starlette
+    try:
+        request.session["lang"] = lang
+    except Exception:
+        pass
+        
+    response = RedirectResponse(url=next, status_code=302)
+    
+    # 2. Guardar en Cookies del Navegador (Asegura Jinja2 y Service Workers bilingües)
+    response.set_cookie(key="lang", value=lang, max_age=31536000, path="/")
+    
+    # 3. Si el usuario está logueado, actualizamos su preferencia en la Base de Datos
+    if user:
+        for attr in ("language", "lang"):
+            if hasattr(user, attr):
+                try:
+                    setattr(user, attr, lang)
+                    db.add(user)
+                    db.commit()
+                    return response
+                except Exception:
+                    pass
+        
+        uid = None
+        if isinstance(user, dict):
+            uid = user.get("id") or user.get("user_id") or user.get("sub")
+        elif hasattr(user, "id"):
+            uid = user.id
+            
+        if uid:
+            try:
+                from app import models
+                for model_name in ("User", "Usuario", "Account"):
+                    if hasattr(models, model_name):
+                        ModelClass = getattr(models, model_name)
+                        db_user = db.query(ModelClass).filter(ModelClass.id == int(uid)).first()
+                        if db_user:
+                            if hasattr(db_user, "language"): db_user.language = lang
+                            if hasattr(db_user, "lang"): db_user.lang = lang
+                            db.commit()
+                            break
+            except Exception:
+                pass
+                
+    return response
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
