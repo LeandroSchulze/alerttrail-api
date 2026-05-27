@@ -264,5 +264,7 @@
   "common.pdf_ready": "PDF listo",
   "analysis.pdf_generated": "PDF generado con éxito",
   "analysis.pdf_ready_desc": "Tu reporte de seguridad ha sido procesado y está listo para descargar.",
-  "common.download": "Descargar"
+  "common.download": "Descargar",
+  "notifications.critical_title": "🚨 ALERTA CRÍTICA",
+  "notifications.critical_body": "Se detectó un posible correo malicioso."
   }
