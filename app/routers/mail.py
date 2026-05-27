@@ -18,6 +18,7 @@ from app.services.mail_scan import scan_mailbox
 from app.database import get_db
 from app.models import MailAccount, PushSubscription
 from app.routers.push import trigger_push_notification
+from app.utils import analizar_correo_avanzado
 
 # --- DEFINICIÓN DEL ROUTER (Esto faltaba o estaba abajo) ---
 router = APIRouter(prefix="/mail", tags=["mail"])
@@ -84,6 +85,10 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional
         "lang": lang, "t": t_func, "user": user, "linked": linked, 
         "last_scan": last_scan, "scan_items": last_scan_raw.get("items", [])
     })
+
+# Adentro de tu ruta:
+resultado = analizar_correo_avanzado(remitente=correo_remitente, asunto=correo_asunto, cuerpo_html=correo_cuerpo)
+# Esto te devuelve el diccionario: resultado["status"], resultado["score"], resultado["alerts"]
 
 @router.get("/scan")
 def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db), limit: int = Query(20)):
