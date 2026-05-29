@@ -5,18 +5,18 @@ import logging
 from pathlib import Path
 from importlib import import_module
 
-from fastapi import FastAPI, Request, Depends, Query
+from fastapi import FastAPI, Request, Depends, Query, APIRouter, HTTPException, Header
 from fastapi.responses import RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy.orm import Session  # <-- Agregado de forma segura para tipado de base de datos
+from sqlalchemy.orm import Session  
 
 # Utilidades y Seguridad
 from app.i18n.utils import get_lang_and_translator
 from app.ui import templates
 from app.security import get_current_user_cookie_optional
-from app.database import init_db, get_db  # <-- Agregado get_db para persistir el idioma elegido
+from app.database import init_db, get_db  
 
 # Routers
 from app.routers import (
@@ -98,7 +98,7 @@ if STATIC_DIR.exists():
 if REPORTS_DIR.exists():
     app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 
-# Registro de Routers (Sin tocar nada)
+# Registro de Routers
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(mail.router)
@@ -124,7 +124,7 @@ def health():
 def root():
     return RedirectResponse(url="/dashboard", status_code=302)
 
-# 🌐 --- ENDPOINT CONTROLADOR DE IDIOMAS GLOBAL (CORRECCIÓN DEL 404) ---
+# 🌐 --- ENDPOINT CONTROLADOR DE IDIOMAS GLOBAL ---
 @app.get("/set-lang", include_in_schema=False)
 def set_language(
     request: Request, 
@@ -136,18 +136,14 @@ def set_language(
     if lang not in ("es", "en"):
         lang = "es"
         
-    # 1. Guardar en la Sesión de Starlette
     try:
         request.session["lang"] = lang
     except Exception:
         pass
         
     response = RedirectResponse(url=next, status_code=302)
-    
-    # 2. Guardar en Cookies del Navegador (Asegura Jinja2 y Service Workers bilingües)
     response.set_cookie(key="lang", value=lang, max_age=31536000, path="/")
     
-    # 3. Si el usuario está logueado, actualizamos su preferencia en la Base de Datos
     if user:
         for attr in ("language", "lang"):
             if hasattr(user, attr):
@@ -192,6 +188,37 @@ def dashboard(request: Request, user=Depends(get_current_user_cookie_optional)):
         context={"lang": lang, "t": t_func, "user": user, "current_user": user}
     )
 
+# =========================================================================
+# 🪙 CÓDIGO NUEVO DE CONEXIÓN INTERNA Y ACTUALIZACIÓN DE TIPO DE CAMBIO (TC)
+# =========================================================================
+router = APIRouter()
+
+# Este token secreto lo definís vos en las variables de Railway de las 3 apps
+TOKEN_INTERNO_SECRETO = os.getenv("TOKEN_SISTEMAS_SECRETO")
+
+# Dejamos el valor base/fallback como variable global
+TIPO_CAMBIO = float(os.getenv("COTIZACION", 1000.0)) 
+
+@router.post("/api/v1/internal/update-tc")
+def actualizar_tipo_cambio_interno(payload: dict, x_internal_token: str = Header(None)):
+    global TIPO_CAMBIO
+    
+    # Validamos que la petición venga realmente de tu Panel Central
+    if x_internal_token != TOKEN_INTERNO_SECRETO:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    nuevo_tc = payload.get("nuevo_tc")
+    if not nuevo_tc or not isinstance(nuevo_tc, (int, float)):
+        raise HTTPException(status_code=400, detail="Valor de TC inválido")
+    
+    # Se actualiza en la memoria del servidor de la app en vivo
+    TIPO_CAMBIO = float(nuevo_tc)
+    
+    return {"status": "actualizado", "nuevo_tipo_cambio": TIPO_CAMBIO}
+
+# Incluimos formalmente el router de actualización de TC en la app raíz
+app.include_router(router)
+
 # --- SCHEDULER ---
 scheduler = BackgroundScheduler()
 
@@ -209,12 +236,10 @@ def _safe_run_billing_check():
     except Exception:
         logger.exception("Monthly billing check failed")
 
-# Configuración de ejecuciones del planificador
 if (os.getenv("MAIL_POLL_ENABLED") or "true").lower() == "true":
     interval = int(os.getenv("MAIL_POLL_INTERVAL_MIN", "10"))
     scheduler.add_job(_safe_run_mail_poll, "interval", minutes=interval)
 
-# 💳 Agregamos el chequeo de abonos a la medianoche (No depende del mail poll)
 scheduler.add_job(_safe_run_billing_check, "cron", hour=0, minute=0)
 
 if not scheduler.running:
