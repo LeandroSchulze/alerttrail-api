@@ -69,9 +69,18 @@ def _scan_file_for(user: Dict[str, Any]) -> Path:
 def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # 🛑 CONTROL PREMIUM: Si la cuenta es FREE, lo rebotamos al plan de suscripciones
+    # Obtener email del usuario para validación
+    user_email = getattr(user, "email", "") or (user.get("email") if isinstance(user, dict) else "")
+    
     current_plan = (getattr(user, "plan", None) or (user.get("plan") if isinstance(user, dict) else "FREE")).upper()
     is_admin = getattr(user, "role", None) == "admin" or (isinstance(user, dict) and user.get("role") == "admin")
+    
+    # 👑 OVERRIDE MAESTRO DE PRUEBAS PARA EL ADMINISTRADOR
+    if user_email == "admin@alerttrail.com":
+        is_admin = True
+        current_plan = "PRO"
+
+    # CONTROL PREMIUM
     if current_plan not in ("PRO", "BIZ", "BUSINESS") and not is_admin:
         return RedirectResponse(url="/billing/subscriptions?error=premium_only", status_code=303)
 
@@ -83,7 +92,6 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional
         if acc: linked = {"address": acc.email}
     last_scan_raw = _load_json(_scan_file_for(user), {})
     
-    # Aseguramos compatibilidad con el template
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or "", 
         "total": last_scan_raw.get("total", 0),
@@ -98,9 +106,18 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional
 def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db), limit: int = Query(20)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # 🛑 CONTROL PREMIUM: Evita ejecuciones forzadas por URL desde cuentas FREE
+    # Obtener email del usuario para validación
+    user_email = getattr(user, "email", "") or (user.get("email") if isinstance(user, dict) else "")
+    
     current_plan = (getattr(user, "plan", None) or (user.get("plan") if isinstance(user, dict) else "FREE")).upper()
     is_admin = getattr(user, "role", None) == "admin" or (isinstance(user, dict) and user.get("role") == "admin")
+    
+    # 👑 OVERRIDE MAESTRO DE PRUEBAS PARA EL ADMINISTRADOR
+    if user_email == "admin@alerttrail.com":
+        is_admin = True
+        current_plan = "PRO"
+
+    # CONTROL PREMIUM
     if current_plan not in ("PRO", "BIZ", "BUSINESS") and not is_admin:
         return RedirectResponse(url="/billing/subscriptions?error=premium_only", status_code=303)
 
@@ -127,16 +144,13 @@ def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), d
         reasons_flat = str(raw_reasons).lower()
         cuerpo_mail = getattr(it, "body", "") or getattr(it, "html", "") or reasons_flat
         
-        # 🚀 EJECUCIÓN DEL MOTOR DE INTELIGENCIA PREDICTIVA BILINGÜE
         ai_res = analizar_correo_avanzado(remitente=str(it.from_email), asunto=str(it.subject), cuerpo_html=cuerpo_mail)
         score = ai_res["score"]
         
-        # Compatibilidad e inyección de reglas locales
         if "links_count" in reasons_flat and "20" in reasons_flat: score += 20
         if "phishing" in reasons_flat: score += 10
         if any(w in subject for w in ["alerta", "urgente", "bloqueo", "confirm"]): score += 10
             
-        # 🔥 RECALIBRACIÓN ULTRA-ESTRICTA DE AMENAZAS (SENSIBILIDAD RESTAURADA)
         if score >= 30:
             final_lvl = "ALTA"
             high_threat_found = True
@@ -171,7 +185,6 @@ def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), d
         subs = db.query(PushSubscription).filter(PushSubscription.user_id == uid).all()
         print(f"🔔 AMENAZA ALTA DETECTADA. Suscripciones en DB: {len(subs)}")
         if len(subs) > 0:
-            # Captura del idioma bilingüe para notificaciones en background
             lang, t_func = get_lang_and_translator(request, user=user)
             push_title = t_func("notifications.critical_title", "🚨 ALERTA CRÍTICA" if lang == "es" else "🚨 CRITICAL ALERT")
             push_body = t_func("notifications.critical_body", "Se detectó un posible correo malicioso." if lang == "es" else "A potentially malicious email has been detected.")
