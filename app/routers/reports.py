@@ -13,7 +13,6 @@ router = APIRouter(prefix="/reports_browser", tags=["reports"])
 REPORTS_DIR = Path("app/reports")
 
 def gv(obj, key, default=None):
-    """Extrae atributos de forma segura tanto si 'obj' es un diccionario como un objeto de DB."""
     if isinstance(obj, dict): 
         return obj.get(key, default)
     return getattr(obj, key, default)
@@ -24,15 +23,19 @@ def reports_browser(request: Request, current=Depends(get_current_user_cookie_op
     if not current:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    # 1. Identificación de Plan Segura (Evita el Error 500)
     current_plan = (gv(current, "plan") or "FREE").upper()
     role = gv(current, "role") or ""
     is_admin = role == "admin" or gv(current, "is_admin", False)
+    user_email = gv(current, "email", "")
     
-    # Validamos si el plan tiene acceso a reportes corporativos PRO
+    # 👑 OVERRIDE MAESTRO DE PRUEBAS PARA EL ADMINISTRADOR
+    if user_email == "admin@alerttrail.com":
+        is_admin = True
+        current_plan = "PRO"
+    
+    # Validación de acceso a reportes corporativos
     is_authorized = current_plan in ("PRO", "BIZ", "BUSINESS", "EMPRESA") or is_admin
 
-    # Detectar idioma para la pantalla de bloqueo
     lang = "es"
     try:
         from app.utils import get_lang_and_translator
@@ -40,7 +43,7 @@ def reports_browser(request: Request, current=Depends(get_current_user_cookie_op
     except:
         pass
 
-    # 2. ESCUDO PARA USUARIOS FREE: Renderiza un Dashboard de venta/paywall limpio
+    # ESCUDO PARA USUARIOS FREE REALES
     if not is_authorized:
         title = "Acceso Restringido" if lang == "es" else "Restricted Access"
         msg = "Los reportes avanzados corporativos están disponibles únicamente para usuarios de planes PRO y BIZ." if lang == "es" else "Advanced corporate reports are only available for PRO and BIZ plan users."
@@ -64,7 +67,7 @@ def reports_browser(request: Request, current=Depends(get_current_user_cookie_op
                 .back-link {{ display: block; margin-top: 16px; color: #64748b; text-decoration: none; font-size: 14px; }}
                 .back-link:hover {{ color: #1e293b; }}
             </style>
-        </head>
+ head>
         <body>
             <div class="card">
                 <div style="font-size: 50px; margin-bottom: 16px;">🔒</div>
@@ -78,16 +81,16 @@ def reports_browser(request: Request, current=Depends(get_current_user_cookie_op
         """
         return HTMLResponse(content=html_paywall, status_code=200)
 
-    # 3. Código Original de carga de archivos para usuarios autorizados
+    # Carga de archivos para el administrador autorizado
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     files = sorted([p.name for p in REPORTS_DIR.glob("*.pdf")], reverse=True)
 
     user_data = {
         "id": gv(current, "id"),
         "name": gv(current, "name", "User"),
-        "email": gv(current, "email", ""),
+        "email": user_email,
         "plan": current_plan,
-        "role": role
+        "role": "admin" if is_admin else role
     }
 
     return templates.TemplateResponse(
