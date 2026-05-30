@@ -18,7 +18,7 @@ from app.services.mail_scan import scan_mailbox
 from app.database import get_db
 from app.models import MailAccount, PushSubscription
 from app.routers.push import trigger_push_notification
-from app.utils import analizar_correo_avanzado, get_lang_and_translator as get_global_translator
+from app.utils import analizar_correo_avanzado
 
 # --- DEFINICIÓN DEL ROUTER ---
 router = APIRouter(prefix="/mail", tags=["mail"])
@@ -68,6 +68,13 @@ def _scan_file_for(user: Dict[str, Any]) -> Path:
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
+    
+    # 🛑 CONTROL PREMIUM: Si la cuenta es FREE, lo rebotamos al plan de suscripciones
+    current_plan = (getattr(user, "plan", None) or (user.get("plan") if isinstance(user, dict) else "FREE")).upper()
+    is_admin = getattr(user, "role", None) == "admin" or (isinstance(user, dict) and user.get("role") == "admin")
+    if current_plan not in ("PRO", "BIZ", "BUSINESS") and not is_admin:
+        return RedirectResponse(url="/billing/subscriptions?error=premium_only", status_code=303)
+
     lang, t_func = get_lang_and_translator(request, user=user)
     uid = _extract_uid(user)
     linked = None
@@ -76,6 +83,7 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional
         if acc: linked = {"address": acc.email}
     last_scan_raw = _load_json(_scan_file_for(user), {})
     
+    # Aseguramos compatibilidad con el template
     last_scan = {
         "ts": last_scan_raw.get("scanned_at") or "", 
         "total": last_scan_raw.get("total", 0),
@@ -89,11 +97,15 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional
 @router.get("/scan")
 def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db), limit: int = Query(20)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
-    uid = _extract_uid(user)
     
-    # Cargar traductor del usuario actual para alertar de forma bilingüe
-    lang, t_func = get_global_translator(request=request, user=user)
-    print(f"🔍 Iniciando escaneo manual con Mini IA para usuario ID: {uid} (Idioma: {lang})")
+    # 🛑 CONTROL PREMIUM: Evita ejecuciones forzadas por URL desde cuentas FREE
+    current_plan = (getattr(user, "plan", None) or (user.get("plan") if isinstance(user, dict) else "FREE")).upper()
+    is_admin = getattr(user, "role", None) == "admin" or (isinstance(user, dict) and user.get("role") == "admin")
+    if current_plan not in ("PRO", "BIZ", "BUSINESS") and not is_admin:
+        return RedirectResponse(url="/billing/subscriptions?error=premium_only", status_code=303)
+
+    uid = _extract_uid(user)
+    print(f"🔍 Iniciando escaneo manual para usuario ID: {uid}")
     
     acc = db.query(MailAccount).filter(MailAccount.user_id == uid).first() if uid else None
     if not acc or not acc.password_encrypted: 
@@ -111,21 +123,24 @@ def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), d
 
     for it in (res.items or []):
         raw_reasons = getattr(it.analysis, "reasons", [])
+        subject = str(it.subject).lower()
         reasons_flat = str(raw_reasons).lower()
-        cuerpo_mail = getattr(it, "body", "") or reasons_flat
+        cuerpo_mail = getattr(it, "body", "") or getattr(it, "html", "") or reasons_flat
         
-        # 🚀 EJECUTAMOS LA MINI IA SOBRE CADA EMAIL REAL RECIBIDO
+        # 🚀 EJECUCIÓN DEL MOTOR DE INTELIGENCIA PREDICTIVA BILINGÜE
         ai_res = analizar_correo_avanzado(remitente=str(it.from_email), asunto=str(it.subject), cuerpo_html=cuerpo_mail)
         score = ai_res["score"]
         
-        # Combinamos con tus métricas anteriores de compatibilidad
+        # Compatibilidad e inyección de reglas locales
         if "links_count" in reasons_flat and "20" in reasons_flat: score += 20
         if "phishing" in reasons_flat: score += 10
+        if any(w in subject for w in ["alerta", "urgente", "bloqueo", "confirm"]): score += 10
             
-        if score >= 50:
+        # 🔥 RECALIBRACIÓN ULTRA-ESTRICTA DE AMENAZAS (SENSIBILIDAD RESTAURADA)
+        if score >= 30:
             final_lvl = "ALTA"
             high_threat_found = True
-        elif score >= 20:
+        elif score >= 10:
             final_lvl = "MEDIA"
         else:
             final_lvl = "BAJA"
@@ -152,13 +167,12 @@ def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), d
         "folder": "INBOX"
     })
 
-    # --- ENVÍO DE NOTIFICACIONES TOTALMENTE INTERNACIONALIZADAS ---
     if high_threat_found and uid:
         subs = db.query(PushSubscription).filter(PushSubscription.user_id == uid).all()
-        print(f"🔔 AMENAZA ALTA DETECTADA. Suscripciones activas en DB: {len(subs)}")
+        print(f"🔔 AMENAZA ALTA DETECTADA. Suscripciones en DB: {len(subs)}")
         if len(subs) > 0:
-            # Traduce dinámicamente usando las llaves de tus locales. 
-            # Si no existen en tu archivo JSON, usa los strings bilingües de fallback automáticos.
+            # Captura del idioma bilingüe para notificaciones en background
+            lang, t_func = get_lang_and_translator(request, user=user)
             push_title = t_func("notifications.critical_title", "🚨 ALERTA CRÍTICA" if lang == "es" else "🚨 CRITICAL ALERT")
             push_body = t_func("notifications.critical_body", "Se detectó un posible correo malicioso." if lang == "es" else "A potentially malicious email has been detected.")
             
