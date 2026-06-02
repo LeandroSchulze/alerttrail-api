@@ -3,52 +3,37 @@ import re
 import json
 import logging
 import requests
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import Request
-from app.i18n import get_lang  # Reutiliza tu lógica base de i18n
+from app.i18n import get_lang
 
 logger = logging.getLogger("alerttrail.utils")
 
-# 🏛️ MATRIZ DE INTELIGENCIA DE AMENAZAS DICHAS (Bancos, pasarelas y servicios financieros)
+# 🏛️ MATRIZ DE INTELIGENCIA DE AMENAZAS DICHAS
 DOMINIOS_CRITICOS = [
     "mercadopago.com", "mercadopago.com.ar", "visa.com", "mastercard.com",
     "santander.com.ar", "galicia.com.ar", "bbva.com.ar", "banconacion.com.ar",
-    "gmail.com", "outlook.com", "yahoo.com", "paypal.com", "stripe.com"
+    "gmail.com", "outlook.com", "yahoo.com", "paypal.com", "stripe.com", "netflix.com"
 ]
 
-# --- 🌐 SISTEMA DE INTERNACIONALIZACIÓN GLOBAL (UI + BACKEND + NOTIFICACIONES) ---
-
+# --- 🌐 SISTEMA DE INTERNACIONALIZACIÓN GLOBAL ---
 def get_lang_and_translator(request: Request = None, user=None):
-    """
-    Detecta el idioma dinámicamente y devuelve la función 't'.
-    Soporta ejecuciones sin 'request' para background tasks o notificaciones push.
-    """
     lang = "es"
-    
-    # 1. Prioridad 1: Preferencia explícita del usuario guardada en DB
     if user:
-        if hasattr(user, "lang") and user.lang:
-            lang = user.lang
-        elif hasattr(user, "language") and user.language:
-            lang = user.language
-            
-    # 2. Prioridad 2: Si no hay usuario pero hay request activo (Cookies/Sesión del navegador)
+        if hasattr(user, "lang") and user.lang: lang = user.lang
+        elif hasattr(user, "language") and user.language: lang = user.language
     elif request:
-        try:
-            lang = get_lang(request)
-        except Exception:
-            pass
+        try: lang = get_lang(request)
+        except Exception: pass
 
-    if lang not in ("es", "en"):
-        lang = "es"
+    if lang not in ("es", "en"): lang = "es"
 
-    # Cargar el archivo de idioma correspondiente (es.json o en.json)
     translations = {}
     try:
         base_dir = Path(__file__).resolve().parent.parent
         locale_file = base_dir / "i18n" / "locales" / f"{lang}.json"
-        
         if locale_file.exists():
             with open(locale_file, "r", encoding="utf-8") as f:
                 translations = json.load(f)
@@ -56,112 +41,104 @@ def get_lang_and_translator(request: Request = None, user=None):
         logger.error(f"Error cargando locales para {lang}: {e}")
 
     def t(key: str, default: str = None) -> str:
-        """Busca la traducción exacta del backend o notificaciones."""
         return translations.get(key, default or key)
-
     return lang, t
 
+# --- 🧠 MINI IA THREAT HEURISTIC ENGINE (VERSIÓN MAXIMIZADA) ---
 
-# --- 🧠 MINI IA THREAT HEURISTIC ENGINE (Detección y Aprendizaje de Amenazas) ---
+def _limpiar_texto_ofuscado(texto: str) -> str:
+    """Elimina caracteres invisibles, ceros por 'o', y símbolos usados para evadir filtros."""
+    if not texto: return ""
+    texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('utf-8')
+    texto = texto.lower()
+    # Reemplazos comunes de hackers (Ej: m3rcad0pag0 -> mercadopago)
+    reemplazos = {'0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '@': 'a', '.': '', '-': '', '_': '', ' ': ''}
+    texto_limpio = "".join(reemplazos.get(c, c) for c in texto)
+    return texto_limpio
 
 def calcular_distancia_levenshtein(s1: str, s2: str) -> int:
-    """Algoritmo de distancia de texto para identificar Typosquatting (Engaños visuales)."""
-    if len(s1) > len(s2):
-        s1, s2 = s2, s1
+    if len(s1) > len(s2): s1, s2 = s2, s1
     distances = range(len(s1) + 1)
     for i2, c2 in enumerate(s2):
         distances_ = [i2+1]
         for i1, c1 in enumerate(s1):
-            if c1 == c2:
-                distances_.append(distances[i1])
-            else:
-                distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
+            if c1 == c2: distances_.append(distances[i1])
+            else: distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
         distances = distances_
     return distances[-1]
 
 def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> dict:
-    """
-    Mini IA Predictiva Heurística de AlertTrail.
-    Analiza vectores maliciosos bilingües y retorna el score matemático de riesgo (0-100).
-    """
     score_amenaza = 0
     razones = []
     
     remitente = (remitente or "").lower().strip()
     asunto = (asunto or "").strip()
     cuerpo_html = (cuerpo_html or "").strip()
+    texto_combinado = f"{asunto} {cuerpo_html}".lower()
     
     dominio_remitente = ""
     if "@" in remitente:
-        try:
-            dominio_remitente = remitente.split("@")[-1].strip()
-        except Exception:
-            pass
+        try: dominio_remitente = remitente.split("@")[-1].strip()
+        except Exception: pass
 
-    # Capa 1: IA de Suplantación Visual (Anti-Typosquatting)
+    # 1. Capa Anti-Typosquatting Extrema (Analizando dominio crudo y ofuscado)
     if dominio_remitente:
+        dominio_limpio = _limpiar_texto_ofuscado(dominio_remitente.split('.')[0])
         for dom_real in DOMINIOS_CRITICOS:
+            dom_real_base = dom_real.split('.')[0]
             if dominio_remitente != dom_real:
-                distancia = calcular_distancia_levenshtein(dominio_remitente, dom_real)
-                if 1 <= distancia <= 2:
-                    score_amenaza += 55
-                    razones.append(f"Typosquatting detectado: Dominio remitente sospechosamente similar a corporativo seguro '{dom_real}'")
+                # Comparamos distancias de la raíz (ej: mercadopago)
+                dist = calcular_distancia_levenshtein(dominio_limpio, dom_real_base)
+                if dist == 1 or dist == 2:
+                    score_amenaza += 60  # Castigo altísimo
+                    razones.append(f"Typosquatting Severo: Remitente intenta suplantar a '{dom_real}'")
                     break
 
-    # Capa 2: Matriz Lingüística Neural Bilingüe (Urgencia, Pánico Financiero y Phishing)
-    patrones_ia_bilingue = [
-        # Español
-        r"urgente", r"suspensio?n", r"bloqueo", r"venci?miento", r"actualizar datos", 
-        r"verificar cuenta", r"token", r"debito inmediato", r"acceso no autorizado", 
-        r"tarjeta suspendida", r"clonacion", r"evite multas",
-        # Inglés
-        r"urgent", r"suspended", r"blocked", r"expiration", r"update account", 
-        r"verify identity", r"security alert", r"action required", r"unauthorized login",
-        r"immediate attention", r"restricted account"
+    # 2. Matriz de Urgencia y Extorsión Compuesta (Patrones combinados)
+    patrones_extorsion = [
+        r"(cuenta|tarjeta).{0,20}(suspendida|bloqueada|restringida)",
+        r"(actividad|inicio de sesion).{0,20}(inusual|sospechos[oa])",
+        r"(verificar|actualizar|confirmar).{0,20}(identidad|datos|cuenta)",
+        r"(pago|transferencia).{0,20}(rechazad[oa]|retenid[oa]|pendiente)",
+        r"(evite|evitar).{0,20}(multas|cargos|suspension)"
     ]
-    texto_combinado = f"{asunto} {cuerpo_html}".lower()
     
-    coincidencias = sum(1 for patron in patrones_ia_bilingue if re.search(patron, texto_combinado))
-    if coincidencias >= 2:
-        score_amenaza += 30
-        razones.append("Ingeniería social detectada: Estructura psicológica de alta urgencia o coacción")
+    coincidencias_compuestas = sum(1 for p in patrones_extorsion if re.search(p, texto_combinado))
+    if coincidencias_compuestas > 0:
+        score_amenaza += 35 * coincidencias_compuestas
+        razones.append("Ingeniería Social: Tácticas de extorsión o pánico financiero detectadas.")
 
-    # Capa 3: Rastreador de Redirecciones Profundas (Enlaces Ocultos)
-    enlaces = re.findall(r'href=["\'](https?://[^"\']+)["\']', cuerpo_html, re.IGNORECASE)
-    for url in enlaces:
+    # 3. Análisis de Enlaces y Redirecciones Ocultas (Más rápido y tolerante a fallos)
+    enlaces = set(re.findall(r'href=["\'](https?://[^"\']+)["\']', cuerpo_html, re.IGNORECASE))
+    enlaces_sospechosos = 0
+    
+    for url in list(enlaces)[:5]: # Límite de 5 enlaces para no ralentizar el escáner
         try:
-            response = requests.head(url, allow_redirects=True, timeout=2.0)
-            dominio_final = urlparse(response.url).netloc.lower()
-            if dominio_final.startswith("www."):
-                dominio_final = dominio_final[4:]
-                
+            # Usamos un timeout estricto de 1.5s. Si el server demora, es mala señal.
+            res = requests.head(url, allow_redirects=True, timeout=1.5)
+            dominio_final = urlparse(res.url).netloc.lower()
+            if dominio_final.startswith("www."): dominio_final = dominio_final[4:]
+            
+            # Penalizamos si el correo finge ser oficial pero el link va a un lugar raro
             if dominio_remitente in DOMINIOS_CRITICOS and dominio_final != dominio_remitente:
-                score_amenaza += 40
-                razones.append(f"Incoherencia estructural: El mail dice ser de '{dominio_remitente}' pero redirige a '{dominio_final}'")
-                break
-        except Exception:
-            score_amenaza += 15
-            razones.append("Enlace ofuscado, acortado o protegido contra inspección automatizada")
-            break
+                score_amenaza += 50
+                enlaces_sospechosos += 1
+                razones.append(f"Phishing Link: Finge ser {dominio_remitente} pero redirige a {dominio_final}")
+                break # Con uno falso alcanza para condenarlo
+        except requests.RequestException:
+            # Sitios caídos o que bloquean HEAD suelen ser infraestructura de atacantes efímera
+            score_amenaza += 10
+            razones.append(f"Enlace Irrastreable: Contiene URLs ocultas o de infraestructura maliciosa.")
 
+    # 4. Veredicto Final Normalizado
     score_final = min(score_amenaza, 100)
     
-    if score_final >= 75:
-        estado = "CRÍTICO"
-    elif score_final >= 35:
-        estado = "SOSPECHOSO"
-    else:
-        estado = "SEGURO"
+    if score_final >= 50: estado = "CRÍTICO"
+    elif score_final >= 20: estado = "SOSPECHOSO"
+    else: estado = "SEGURO"
 
-    return {
-        "status": estado,
-        "score": score_final,
-        "alerts": razones
-    }
+    return {"status": estado, "score": score_final, "alerts": list(set(razones))}
 
 def sanitizar_y_escanear_logs(log_line: str) -> bool:
     patrones_ataque = [r"UNION SELECT", r"<script>", r"\.\./\.\./", r"sudo "]
-    for patron in patrones_ataque:
-        if re.search(patron, log_line, re.IGNORECASE):
-            return True
-    return False
+    return any(re.search(p, log_line, re.IGNORECASE) for p in patrones_ataque)
