@@ -65,22 +65,25 @@ def _scan_file_for(user: Dict[str, Any]) -> Path:
 
 # --- RUTAS ---
 
+# 🛑 SOLUCIÓN AL 404 DEL BOTÓN "VOLVER"
+@router.get("", include_in_schema=False)
+@router.get("/", include_in_schema=False)
+def redirect_mail_to_dashboard():
+    """Redirige peticiones a /mail hacia el dashboard principal."""
+    return RedirectResponse(url="/dashboard", status_code=302)
+
 @router.get("/scanner", response_class=HTMLResponse)
 def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # Obtener email del usuario para validación
     user_email = getattr(user, "email", "") or (user.get("email") if isinstance(user, dict) else "")
-    
     current_plan = (getattr(user, "plan", None) or (user.get("plan") if isinstance(user, dict) else "FREE")).upper()
     is_admin = getattr(user, "role", None) == "admin" or (isinstance(user, dict) and user.get("role") == "admin")
     
-    # 👑 OVERRIDE MAESTRO DE PRUEBAS PARA EL ADMINISTRADOR
     if user_email == "admin@alerttrail.com":
         is_admin = True
         current_plan = "PRO"
 
-    # CONTROL PREMIUM
     if current_plan not in ("PRO", "BIZ", "BUSINESS") and not is_admin:
         return RedirectResponse(url="/billing/subscriptions?error=premium_only", status_code=303)
 
@@ -106,18 +109,14 @@ def mail_scanner(request: Request, user=Depends(get_current_user_cookie_optional
 def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), db: Session = Depends(get_db), limit: int = Query(20)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
     
-    # Obtener email del usuario para validación
     user_email = getattr(user, "email", "") or (user.get("email") if isinstance(user, dict) else "")
-    
     current_plan = (getattr(user, "plan", None) or (user.get("plan") if isinstance(user, dict) else "FREE")).upper()
     is_admin = getattr(user, "role", None) == "admin" or (isinstance(user, dict) and user.get("role") == "admin")
     
-    # 👑 OVERRIDE MAESTRO DE PRUEBAS PARA EL ADMINISTRADOR
     if user_email == "admin@alerttrail.com":
         is_admin = True
         current_plan = "PRO"
 
-    # CONTROL PREMIUM
     if current_plan not in ("PRO", "BIZ", "BUSINESS") and not is_admin:
         return RedirectResponse(url="/billing/subscriptions?error=premium_only", status_code=303)
 
@@ -187,7 +186,6 @@ def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), d
         if len(subs) > 0:
             lang, t_func = get_lang_and_translator(request, user=user)
             
-            # SOLUCIÓN: Usamos extracción limpia en lugar de forzar argumentos posicionales
             raw_title = t_func("notifications.critical_title")
             push_title = raw_title if raw_title != "notifications.critical_title" else ("🚨 ALERTA CRÍTICA" if lang == "es" else "🚨 CRITICAL ALERT")
             
