@@ -23,25 +23,28 @@ def _env_int(name: str, default: int) -> int:
         return int(str(v).strip())
     except: return int(default)
 
+def _get_val(obj, key, default=None):
+    if isinstance(obj, dict): return obj.get(key, default)
+    return getattr(obj, key, default)
+
 @router.get("/subscriptions", response_class=HTMLResponse, include_in_schema=False)
 def subscriptions(request: Request, user=Depends(get_current_user_cookie_optional)):
     if not user: return RedirectResponse(url="/auth/login", status_code=302)
 
     lang = get_lang(request)
-    
-    def gv(obj, key, default=None):
-        if isinstance(obj, dict): return obj.get(key, default)
-        return getattr(obj, key, default)
 
     # Identificación de Plan y Roles
-    current_plan = (gv(user, "plan") or "FREE").upper()
-    is_admin = gv(user, "role") == "admin" or gv(user, "is_admin", False)
-    is_pro = gv(user, "is_pro", False) or current_plan in ("PRO", "BIZ") or is_admin
-    had_trial = bool(gv(user, "trial_used", False))
+    current_plan = (_get_val(user, "plan") or "FREE").upper()
+    is_admin = _get_val(user, "role") == "admin" or _get_val(user, "is_admin", False)
+    is_pro = _get_val(user, "is_pro", False) or current_plan in ("PRO", "BIZ") or is_admin
+    
+    # Verificamos si ya usó la prueba gratuita alguna vez
+    had_trial = bool(_get_val(user, "trial_used", False))
+    trial_available = not is_pro and not had_trial
 
-    # Configuración de Precios (Sincronizado con lo que ves en pantalla)
+    # Configuración de Precios
     currency = os.getenv("BILLING_CURRENCY_SYMBOL", "USD")
-    price_month = _env_float("PLAN_PRICE", 15.00) # Cambiado a 15.00 según tu log
+    price_month = _env_float("PLAN_PRICE", 15.00) 
     disc_pct = _env_int("PRO_ANNUAL_DISTCOUNT_PCT", 20)
     price_year = round(price_month * 12 * (1 - (disc_pct / 100.0)), 2)
 
@@ -49,6 +52,7 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
     biz_included = _env_int("BIZ_INCLUDED_SEATS", 25) 
     biz_extra = _env_float("BIZ_EXTRA_SET_USD", 3.00)
     biz_price = _env_float("BIZ_PRICE_MONTH_USD", 99.00)
+    support_email = os.getenv("SUPPORT_EMAIL", "soporte@alerttrail.com")
 
     return templates.TemplateResponse(
         request=request,
@@ -59,14 +63,15 @@ def subscriptions(request: Request, user=Depends(get_current_user_cookie_optiona
             "is_pro": is_pro, 
             "is_admin": is_admin,
             "had_trial": had_trial, 
-            "trial_available": (not is_pro and not had_trial),
+            "trial_available": trial_available,
             "currency": currency,
             "price_month": price_month, 
             "price_year": price_year, 
             "disc_pct": disc_pct,
             "biz_included": biz_included, 
             "biz_extra": biz_extra, 
-            "biz_price": biz_price
+            "biz_price": biz_price,
+            "support_email": support_email
         }
     )
 
@@ -78,20 +83,29 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
     plan = (plan or "PRO").upper().strip()
     plan_norm = "BIZ" if plan in ("BIZ", "BUSINESS", "EMPRESA", "EMPRESAS") else "PRO"
 
+    support_email = os.getenv("SUPPORT_EMAIL", "soporte@alerttrail.com")
+
+    # 🛑 ESTRATEGIA BIZ: Bloqueamos checkout automático y derivamos a venta consultiva
     if plan_norm == "BIZ":
-        price = _env_float("BIZ_PRICE_MONTH_USD", 99.00)
-        seats = _env_int("BIZ_INCLUDED_SEATS", 25)
-        extra = _env_float("BIZ_EXTRA_SET_USD", 3.00)
-        init_point = f"/payments/pay?plan=BIZ&seats={seats}"
-    else:
-        price = _env_float("PLAN_PRICE", 15.00)
-        seats = 1
-        extra = 0
-        init_point = "/payments/pay?plan=PRO&seats=1"
+        subject = "Consulta Plan Empresas - AlertTrail"
+        body = "Hola equipo de AlertTrail,%0D%0A%0D%0AMe gustaría recibir más información sobre el despliegue corporativo del escáner para mi organización.%0D%0A%0D%0A"
+        return RedirectResponse(url=f"mailto:{support_email}?subject={subject}&body={body}", status_code=303)
+
+    # 🟢 ESTRATEGIA PRO: Calculamos si aplica el mes gratis
+    had_trial = bool(_get_val(user, "trial_used", False))
+    is_pro = _get_val(user, "is_pro", False) or (_get_val(user, "plan") or "FREE").upper() in ("PRO", "BIZ") or (_get_val(user, "role") == "admin")
+    trial_available = not is_pro and not had_trial
+
+    price = _env_float("PLAN_PRICE", 15.00)
+    seats = 1
+    extra = 0
+    
+    # Si tiene trial, le inyectamos la bandera a la URL de pagos para que la suscripción inicie desfasada
+    trial_param = "&trial=30" if trial_available else ""
+    init_point = f"/payments/pay?plan=PRO&seats=1{trial_param}"
 
     mp_enabled = bool(os.getenv("MP_ACCESS_TOKEN"))
 
-    # CORRECCIÓN: Ahora apunta a billing_checkout.html y pasa las variables necesarias
     return templates.TemplateResponse(
         request=request,
         name="billing_checkout.html",
@@ -106,5 +120,6 @@ def checkout(request: Request, plan: str = "PRO", user=Depends(get_current_user_
             "price_month": price, 
             "included_seats": seats, 
             "extra_seat_price": extra,
+            "trial_available": trial_available
         }
     )
