@@ -1,282 +1,407 @@
-<!DOCTYPE html>
-<html lang="{{ lang }}">
+<!doctype html>
+<html lang="{{ lang or 'es' }}">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - AlertTrail</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ t("dashboard.page_title") }}</title>
+  
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  
+  <link rel="stylesheet" href="/static/style.css">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    /* PALETA DE SEGURIDAD PREMIUM */
+    :root {
+      --bg-body: #f8fafc;          
+      --sidebar-bg: #0f172a;       
+      --sidebar-text: #f8fafc;
+      --card-bg: #ffffff;
+      --card-border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --accent-main: #0ea5e9;           
+      --accent-hover: #0284c7;
+      --success-main: #10b981;
+      --danger-main: #ef4444;
+      --danger-soft: #fee2e2;
+    }
+
+    /* --- RESET ABSOLUTO PARA EL DASHBOARD (Aisla de style.css) --- */
+    body {
+      background: var(--bg-body) !important;
+      color: var(--text-main) !important;
+      display: flex !important;
+      min-height: 100vh !important;
+      overflow-x: hidden !important;
+      font-family: 'Inter', system-ui, sans-serif !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    /* --- LAYOUT BLINDADO --- */
+    .dash-container {
+      display: flex !important;
+      flex-direction: row !important;
+      flex: 1 !important;
+      width: 100% !important;
+      margin: 0 !important;
+      max-width: none !important;
+      padding: 0 !important;
+    }
+
+    /* SIDEBAR (Armadura Extrema) */
+    .dash-sidebar {
+      width: 260px !important;
+      max-width: 260px !important;
+      min-width: 260px !important;
+      background-color: var(--sidebar-bg) !important;
+      display: block !important; /* Fuerza bloque, anula flex-wrap raros */
+      padding: 24px 0 !important;
+      flex-shrink: 0 !important;
+      min-height: 100vh !important;
+      border-right: none !important;
+      box-shadow: none !important;
+      margin: 0 !important;
+    }
+
+    .dash-sidebar-logo {
+      font-size: 22px !important;
+      font-weight: 700 !important;
+      padding: 0 24px 24px !important;
+      border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+      margin: 0 0 24px 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 12px !important;
+      color: white !important;
+      font-family: 'Inter', sans-serif !important;
+    }
+
+    /* Navegación del Sidebar */
+    .dash-nav {
+      display: block !important; /* Fuerza bloque, anula grids del css global */
+      width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    .dash-nav-link {
+      padding: 14px 24px !important;
+      color: #94a3b8 !important;
+      text-decoration: none !important;
+      font-weight: 500 !important;
+      font-size: 0.95rem !important;
+      transition: all 0.2s !important;
+      border-left: 3px solid transparent !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      white-space: nowrap !important;
+      width: 100% !important;
+      margin: 0 !important;
+      border-radius: 0 !important; /* Anula border-radius de botones globales */
+      background: transparent !important;
+      font-family: 'Inter', sans-serif !important;
+    }
+
+    .dash-nav-link:hover, .dash-nav-link.active {
+      background-color: rgba(255,255,255,0.05) !important;
+      color: #ffffff !important;
+      border-left-color: var(--accent-main) !important;
+      box-shadow: none !important; /* Anula sombras raras al hacer hover */
+      filter: none !important;
+    }
+
+    /* CONTENIDO PRINCIPAL */
+    .dash-main-content {
+      flex: 1 !important;
+      padding: 40px !important;
+      max-width: 1200px !important;
+      margin: 0 auto !important;
+      overflow-y: auto !important;
+      display: block !important;
+    }
+
+    /* HEADER */
+    .dash-header {
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: flex-start !important;
+      margin-bottom: 32px !important;
+      padding-bottom: 24px !important;
+      border-bottom: 1px solid var(--card-border) !important;
+      width: 100% !important;
+    }
+
+    .dash-title {
+      font-size: 1.75rem !important;
+      font-weight: 700 !important;
+      letter-spacing: -0.02em !important;
+      margin: 0 0 6px 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      color: var(--text-main) !important;
+    }
+
+    .dash-subtitle { color: var(--text-muted) !important; font-size: 0.95rem !important; margin: 0 !important; }
+
+    .dash-user-controls {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: flex-end !important;
+      gap: 12px !important;
+    }
+
+    /* Banners */
+    .dash-alert-banner {
+      background: var(--card-bg) !important;
+      border: 1px solid var(--card-border) !important;
+      border-left: 4px solid var(--accent-main) !important;
+      padding: 20px !important;
+      border-radius: 12px !important;
+      margin-bottom: 24px !important;
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      gap: 20px !important;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03) !important;
+      width: 100% !important;
+    }
+    .dash-alert-banner.success { border-left-color: var(--success-main) !important; }
     
-    <style>
-        /* PALETA DE CIBERSEGURIDAD CONFIABLE */
-        :root {
-            --bg-body: #f4f7f9;          /* Gris muy claro para el fondo */
-            --bg-card: #ffffff;          /* Tarjetas inmaculadas */
-            --text-main: #0f172a;        /* Texto principal (Casi negro) */
-            --text-muted: #64748b;       /* Texto secundario (Slate) */
-            --primary: #2563eb;          /* Azul corporativo fuerte (Confianza) */
-            --primary-hover: #1d4ed8;
-            --success: #10b981;          /* Verde esmeralda (Seguro) */
-            --danger: #ef4444;           /* Rojo alerta (Crítico) */
-            --border-color: #e2e8f0;
-            --sidebar-bg: #0f172a;       /* Panel lateral oscuro premium */
-            --sidebar-text: #f8fafc;
-        }
+    .dash-banner-text strong { display: block !important; font-size: 1.05rem !important; margin-bottom: 4px !important; color: var(--text-main) !important; }
+    .dash-banner-text span { font-size: 0.9rem !important; color: var(--text-muted) !important; }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Inter', system-ui, sans-serif;
-        }
+    /* STATS HEADER */
+    .dash-stats-header {
+      display: grid !important;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important;
+      gap: 20px !important;
+      margin-bottom: 32px !important;
+      width: 100% !important;
+    }
+    
+    .dash-stat-box {
+      background: var(--card-bg) !important;
+      padding: 20px !important;
+      border-radius: 12px !important;
+      border: 1px solid var(--card-border) !important;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
+    }
+    .dash-stat-label { font-size: 0.75rem !important; font-weight: 700 !important; color: var(--text-muted) !important; text-transform: uppercase !important; margin-bottom: 8px !important; }
+    .dash-stat-number { font-size: 2rem !important; font-weight: 700 !important; color: var(--text-main) !important; margin: 0 !important; }
+    .dash-stat-number.success { color: var(--success-main) !important; }
+    .dash-stat-number.danger { color: var(--danger-main) !important; }
 
-        body {
-            background-color: var(--bg-body);
-            color: var(--text-main);
-            display: flex;
-            min-height: 100vh;
-            flex-direction: column;
-        }
+    /* CARDS GRID */
+    .dash-grid-layout { 
+      display: grid !important; 
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)) !important; 
+      gap: 24px !important; 
+      width: 100% !important; 
+    }
 
-        /* --- ARQUITECTURA RESPONSIVA --- */
-        .app-container {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
-        }
+    .dash-card {
+      background: var(--card-bg) !important;
+      border-radius: 12px !important;
+      border: 1px solid var(--card-border) !important;
+      padding: 24px !important;
+      display: flex !important;
+      flex-direction: column !important;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03) !important;
+      margin: 0 !important;
+      transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+    }
+    .dash-card:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.08) !important; }
 
-        /* Sidebar Oscuro Premium */
-        .sidebar {
-            width: 260px;
-            background-color: var(--sidebar-bg);
-            color: var(--sidebar-text);
-            display: flex;
-            flex-direction: column;
-            padding: 24px 0;
-            transition: transform 0.3s ease;
-        }
+    .dash-heading { font-size: 1.15rem !important; font-weight: 700 !important; margin: 0 0 8px 0 !important; color: var(--text-main) !important; }
+    .dash-muted { font-size: 0.9rem !important; color: var(--text-muted) !important; margin: 0 0 24px 0 !important; line-height: 1.5 !important; }
 
-        .sidebar-logo {
-            font-size: 24px;
-            font-weight: 700;
-            padding: 0 24px 24px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+    /* BOTONES AISLADOS (No toman .btn general) */
+    .dash-btn-row { display: flex !important; flex-wrap: wrap !important; gap: 12px !important; margin-top: auto !important; }
+    .dash-btn-action {
+      padding: 10px 16px !important; border-radius: 8px !important; font-size: 0.9rem !important; font-weight: 600 !important; text-decoration: none !important;
+      display: inline-flex !important; align-items: center !important; justify-content: center !important; transition: all 0.2s !important;
+      border: 1px solid var(--card-border) !important; background: var(--card-bg) !important; color: var(--text-main) !important; cursor: pointer !important;
+      white-space: nowrap !important; box-shadow: none !important; margin: 0 !important;
+    }
+    .dash-btn-action:hover { background: #f8fafc !important; border-color: #cbd5e1 !important; filter: none !important; }
+    .dash-btn-primary { background: var(--accent-main) !important; color: white !important; border: none !important; }
+    .dash-btn-primary:hover { background: var(--accent-hover) !important; color: white !important; }
+    .dash-btn-danger { color: var(--danger-main) !important; border-color: var(--danger-soft) !important; background: #fffcfc !important; }
+    .dash-btn-danger:hover { background: var(--danger-soft) !important; }
 
-        .nav-link {
-            padding: 12px 24px;
-            color: #cbd5e1;
-            text-decoration: none;
-            font-weight: 500;
-            transition: all 0.2s;
-            border-left: 4px solid transparent;
-        }
-
-        .nav-link:hover, .nav-link.active {
-            background-color: rgba(255,255,255,0.05);
-            color: white;
-            border-left-color: var(--primary);
-        }
-
-        /* Contenido Principal */
-        .main-content {
-            flex: 1;
-            padding: 32px;
-            overflow-y: auto;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 32px;
-        }
-
-        .header h1 {
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-        }
-
-        .user-badge {
-            background: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            border: 1px solid var(--border-color);
-            font-weight: 500;
-            font-size: 14px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-        }
-
-        /* Grilla de Tarjetas (Se adapta sola a móviles) */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 24px;
-            margin-bottom: 32px;
-        }
-
-        .stat-card {
-            background: var(--bg-card);
-            padding: 24px;
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
-        }
-
-        .stat-title {
-            color: var(--text-muted);
-            font-size: 14px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 12px;
-        }
-
-        .stat-value {
-            font-size: 36px;
-            font-weight: 700;
-            color: var(--text-main);
-        }
-
-        .stat-value.danger { color: var(--danger); }
-        .stat-value.success { color: var(--success); }
-
-        /* Panel Central (Ej: Últimos Escaneos) */
-        .panel {
-            background: var(--bg-card);
-            border-radius: 12px;
-            border: 1px solid var(--border-color);
-            padding: 24px;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-        }
-
-        .panel-header {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        /* Botones Profesionales */
-        .btn-primary {
-            background: var(--primary);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 6px;
-            text-decoration: none;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            border: none;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .btn-primary:hover {
-            background: var(--primary-hover);
-        }
-
-        /* Ajustes perfectos para pantallas pequeñas (Móviles) */
-        @media (max-width: 768px) {
-            .app-container {
-                flex-direction: column;
-            }
-            .sidebar {
-                width: 100%;
-                padding: 16px 0;
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-            }
-            .sidebar-logo {
-                border-bottom: none;
-                margin-bottom: 0;
-                padding: 0 20px;
-            }
-            .nav-link {
-                padding: 8px 16px;
-                border-left: none;
-                border-bottom: 3px solid transparent;
-            }
-            .nav-link.active {
-                border-left: none;
-                border-bottom-color: var(--primary);
-            }
-            .header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 16px;
-            }
-            .main-content {
-                padding: 20px;
-            }
-        }
-    </style>
+    /* RESPONSIVE */
+    @media (max-width: 860px) {
+      .dash-container { flex-direction: column !important; }
+      .dash-sidebar {
+        width: 100% !important; max-width: 100% !important; padding: 16px 20px !important;
+        display: flex !important; flex-direction: row !important; align-items: center !important; justify-content: space-between !important; min-height: auto !important;
+      }
+      .dash-sidebar-logo { margin: 0 !important; padding: 0 !important; }
+      .dash-nav { display: none !important; }
+      .dash-main-content { padding: 24px 16px !important; }
+      .dash-header { flex-direction: column !important; gap: 20px !important; }
+      .dash-user-controls { align-items: flex-start !important; width: 100% !important; }
+      .dash-alert-banner { flex-direction: column !important; align-items: flex-start !important; }
+    }
+  </style>
 </head>
 <body>
 
-<div class="app-container">
-    <aside class="sidebar">
-        <div class="sidebar-logo">
-            <span style="color: #38bdf8;">🛡️</span> AlertTrail
-        </div>
-        <nav>
-            <a href="/dashboard" class="nav-link active">Dashboard</a>
-            <a href="/mail/scanner" class="nav-link">Scanner Mail</a>
-            <a href="/reports_browser" class="nav-link">Auditoría & Reportes</a>
-            <a href="/billing/subscriptions" class="nav-link">Suscripción</a>
-        </nav>
+  <div class="dash-container">
+    
+    <aside class="dash-sidebar">
+      <div class="dash-sidebar-logo">
+        <span>🛡️</span> AlertTrail
+      </div>
+      <nav class="dash-nav">
+        <a href="/dashboard" class="dash-nav-link active">❖ Dashboard</a>
+        <a href="/mail/scanner" class="dash-nav-link">✉️ Mail Scanner</a>
+        <a href="/analysis" class="dash-nav-link">📋 Log Scanner</a>
+        <a href="/reports_browser" class="dash-nav-link">📊 Auditoría & Reportes</a>
+        <a href="/billing/subscriptions" class="dash-nav-link">💳 Facturación</a>
+      </nav>
     </aside>
 
-    <main class="main-content">
-        <header class="header">
-            <div>
-                <h1>Bienvenido, {{ user.name | default('Admin') }}</h1>
-                <p style="color: var(--text-muted); margin-top: 4px;">Monitoreo de seguridad en tiempo real.</p>
-            </div>
-            <div class="user-badge">
-                Plan: <strong style="color: var(--primary);">{{ current_plan | default('PRO') }}</strong>
-            </div>
-        </header>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-title">Estado del Sistema</div>
-                <div class="stat-value success">PROTEGIDO</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-title">Correos Analizados Hoy</div>
-                <div class="stat-value">1,204</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-title">Amenazas Críticas Frenadas</div>
-                <div class="stat-value danger">3</div>
-            </div>
+    <main class="dash-main-content">
+      
+      <header class="dash-header">
+        <div>
+          <h1 class="dash-title">
+            {{ t("dashboard.hello") }}, {{ user.name or current_user.name or current_user.email.split('@')[0] or t("dashboard.user_fallback") }}
+          </h1>
+          <p class="dash-subtitle">{{ t("dashboard.subtitle") }}</p>
         </div>
 
-        <div class="panel">
-            <div class="panel-header">Acciones Rápidas</div>
-            <p style="color: var(--text-muted); margin-bottom: 20px;">
-                Ejecutá un análisis de vulnerabilidad profundo en tu bandeja de entrada ahora mismo.
-            </p>
-            <a href="/mail/scanner" class="btn-primary">
-                🔍 Iniciar Escaneo Heurístico
-            </a>
+        <div class="dash-user-controls">
+          <div class="user-email" style="font-size:0.85rem; color:#64748b;">{{ current_user.email or user.email }}</div>
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <div style="display:inline-flex; align-items:center; gap:8px; border:1px solid #e2e8f0; background:#fff; padding:4px 12px; border-radius:999px; font-size:0.85rem; font-weight:600;">
+              <span>{{ t("dashboard.plan") }}</span>
+              {% set plan_name = (user.plan or current_user.plan or "FREE")|upper %}
+              <span style="background:#0ea5e9; color:#fff; padding:2px 8px; border-radius:999px; font-size:0.75rem;">{{ plan_name }}</span>
+            </div>
+            
+            <div style="display:flex; background:#e2e8f0; padding:2px; border-radius:6px;">
+              <a href="/set-lang?lang=es&next={{ request.url.path }}" style="padding:4px 10px; font-size:0.75rem; font-weight:600; border-radius:4px; text-decoration:none; color:{% if lang == 'es' %}#0f172a{% else %}#64748b{% endif %}; background:{% if lang == 'es' %}#fff{% else %}transparent{% endif %};">ES</a>
+              <a href="/set-lang?lang=en&next={{ request.url.path }}" style="padding:4px 10px; font-size:0.75rem; font-weight:600; border-radius:4px; text-decoration:none; color:{% if lang == 'en' %}#0f172a{% else %}#64748b{% endif %}; background:{% if lang == 'en' %}#fff{% else %}transparent{% endif %};">EN</a>
+            </div>
+          </div>
         </div>
+      </header>
+
+      {% if not current_user.is_pro %}
+      <div class="dash-alert-banner">
+        <div style="display:flex; align-items:center; gap:16px;">
+          <div style="font-size:24px;">🚀</div>
+          <div class="dash-banner-text">
+            <strong>{{ t("dashboard.trial_available_title") }}</strong>
+            <span>{{ t("dashboard.trial_available_body") }}</span>
+          </div>
+        </div>
+        <a href="/billing/subscriptions" class="dash-btn-action dash-btn-primary">{{ t("dashboard.trial_activate") }}</a>
+      </div>
+      {% endif %}
+
+      <div id="pwa-install-banner" class="dash-alert-banner success" style="display: none;">
+        <div style="display:flex; align-items:center; gap:16px;">
+          <div style="font-size:24px;">📲</div>
+          <div class="dash-banner-text">
+            <strong>AlertTrail Desktop / Mobile</strong>
+            <span>Instalá la aplicación en tu dispositivo para alertas push instantáneas y acceso nativo.</span>
+          </div>
+        </div>
+        <button id="btn-instalar-app" class="dash-btn-action dash-btn-primary">
+          Descargar App
+        </button>
+      </div>
+
+      <div class="dash-stats-header">
+        <div class="dash-stat-box">
+          <div class="dash-stat-label">Estado del Sistema</div>
+          <div class="dash-stat-number success">PROTEGIDO</div>
+        </div>
+        <div class="dash-stat-box">
+          <div class="dash-stat-label">Correos Analizados Hoy</div>
+          <div class="dash-stat-number">1,204</div>
+        </div>
+        <div class="dash-stat-box">
+          <div class="dash-stat-label">Amenazas Críticas Detectadas</div>
+          <div class="dash-stat-number danger">3</div>
+        </div>
+      </div>
+
+      <div class="dash-grid-layout">
+        
+        <article class="dash-card">
+          <div style="font-size:24px; margin-bottom:16px; padding:10px; background:#f1f5f9; border-radius:10px; width:max-content;">🎯</div>
+          <div class="dash-heading">{{ t("dashboard.account_status_title") }}</div>
+          <p class="dash-muted">{{ t("dashboard.account_status_subtitle") }}</p>
+          <div class="dash-btn-row">
+            <a class="dash-btn-action dash-btn-primary" href="/mail/scanner">{{ t("dashboard.go_mail_scanner") }}</a>
+            <a class="dash-btn-action" href="/analysis">{{ t("dashboard.go_log_scanner") }}</a>
+          </div>
+        </article>
+
+        <article class="dash-card">
+          <div style="font-size:24px; margin-bottom:16px; padding:10px; background:#f1f5f9; border-radius:10px; width:max-content;">🏢</div>
+          <div class="dash-heading">{{ t("dashboard.pro_title") }}</div>
+          <p class="dash-muted">{{ t("dashboard.pro_subtitle") }}</p>
+          <div class="dash-btn-row">
+            <a class="dash-btn-action" href="/reports_browser">{{ t("dashboard.go_reports_short") }}</a>
+            <a class="dash-btn-action" href="/audit">{{ t("dashboard.go_audit") }}</a>
+          </div>
+        </article>
+
+        <article class="dash-card">
+          <div style="font-size:24px; margin-bottom:16px; padding:10px; background:#f1f5f9; border-radius:10px; width:max-content;">⚙️</div>
+          <div class="dash-heading">{{ t("dashboard.billing_title") }}</div>
+          <p class="dash-muted">{{ t("dashboard.billing_subtitle") }}</p>
+          <div class="dash-btn-row">
+            <a class="dash-btn-action" href="/billing/subscriptions">{{ t("dashboard.billing_view_sub") }}</a>
+            <a class="dash-btn-action dash-btn-danger" href="/auth/logout">{{ t("common.logout") }}</a>
+          </div>
+        </article>
+
+      </div>
+
+      <footer style="margin-top:48px; text-align:center; font-size:0.85rem; color:#94a3b8; border-top:1px solid #e2e8f0; padding-top:24px;">
+        {{ t("dashboard.footer") }}
+      </footer>
+      
     </main>
-</div>
+  </div>
 
+  <script>
+    let promptInstalacion;
+    const bannerInstalar = document.getElementById('pwa-install-banner');
+    const botonInstalar = document.getElementById('btn-instalar-app');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        promptInstalacion = e;
+        bannerInstalar.style.display = 'flex';
+    });
+
+    botonInstalar.addEventListener('click', async () => {
+        if (!promptInstalacion) return;
+        promptInstalacion.prompt();
+        const { outcome } = await promptInstalacion.userChoice;
+        promptInstalacion = null;
+        if (outcome === 'accepted') {
+            bannerInstalar.style.display = 'none';
+        }
+    });
+
+    window.addEventListener('appinstalled', () => {
+        bannerInstalar.style.display = 'none';
+    });
+  </script>
 </body>
 </html>
