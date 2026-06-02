@@ -186,8 +186,13 @@ def scan_get(request: Request, user=Depends(get_current_user_cookie_optional), d
         print(f"🔔 AMENAZA ALTA DETECTADA. Suscripciones en DB: {len(subs)}")
         if len(subs) > 0:
             lang, t_func = get_lang_and_translator(request, user=user)
-            push_title = t_func("notifications.critical_title", "🚨 ALERTA CRÍTICA" if lang == "es" else "🚨 CRITICAL ALERT")
-            push_body = t_func("notifications.critical_body", "Se detectó un posible correo malicioso." if lang == "es" else "A potentially malicious email has been detected.")
+            
+            # SOLUCIÓN: Usamos extracción limpia en lugar de forzar argumentos posicionales
+            raw_title = t_func("notifications.critical_title")
+            push_title = raw_title if raw_title != "notifications.critical_title" else ("🚨 ALERTA CRÍTICA" if lang == "es" else "🚨 CRITICAL ALERT")
+            
+            raw_body = t_func("notifications.critical_body")
+            push_body = raw_body if raw_body != "notifications.critical_body" else ("Se detectó un posible correo malicioso." if lang == "es" else "A potentially malicious email has been detected.")
             
             trigger_push_notification(user_id=uid, title=push_title, body=push_body)
 
