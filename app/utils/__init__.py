@@ -19,6 +19,18 @@ DOMINIOS_CRITICOS = [
     "netflix.com", "amazon.com", "apple.com", "microsoft.com"
 ]
 
+# Diccionario para cazar a quienes fingen ser una marca sin usar su dominio oficial
+MARCAS_CLAVE = {
+    "mercado pago": "mercadopago", "mercadopago": "mercadopago", 
+    "visa": "visa", "mastercard": "mastercard", 
+    "bbva": "bbva", "santander": "santander", 
+    "galicia": "galicia", "banco nacion": "bna", "banconacion": "bna",
+    "paypal": "paypal", "netflix": "netflix", "amazon": "amazon"
+}
+
+# Acortadores que los bancos NO usan pero los hackers sí
+ACORTADORES = ["bit.ly", "t.co", "tinyurl.com", "is.gd", "cutt.ly", "shorturl.at", "ow.ly", "buff.ly"]
+
 # --- 🌐 SISTEMA DE INTERNACIONALIZACIÓN GLOBAL ---
 def get_lang_and_translator(request: Request = None, user=None):
     lang = "es"
@@ -45,14 +57,13 @@ def get_lang_and_translator(request: Request = None, user=None):
         return translations.get(key, default or key)
     return lang, t
 
-# --- 🧠 MINI IA THREAT HEURISTIC ENGINE (VERSIÓN MAXIMIZADA) ---
+# --- 🧠 MINI IA THREAT HEURISTIC ENGINE (VERSIÓN BLINDADA) ---
 
 def _limpiar_texto_ofuscado(texto: str) -> str:
     """Elimina caracteres invisibles, ceros por 'o', y símbolos usados para evadir filtros."""
     if not texto: return ""
     texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('utf-8')
     texto = texto.lower()
-    # Reemplazos comunes de hackers (Ej: m3rcad0pag0 -> mercadopago)
     reemplazos = {'0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '@': 'a', '.': '', '-': '', '_': '', ' ': ''}
     texto_limpio = "".join(reemplazos.get(c, c) for c in texto)
     return texto_limpio
@@ -76,8 +87,12 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
     asunto = (asunto or "").strip()
     cuerpo_html = (cuerpo_html or "").strip()
     
-    # Normalizamos acentos para que los tildes no engañen a las expresiones regulares
-    texto_combinado = f"{asunto} {cuerpo_html}".lower()
+    # 🧹 1. LIMPIEZA EXTREMA: Quitamos HTML y saltos de línea que rompen a la IA
+    cuerpo_texto = re.sub(r'<[^>]+>', ' ', cuerpo_html)
+    texto_combinado = f"{asunto} {cuerpo_texto}".lower()
+    # Aplanamos el texto a una sola línea continua para que el regex no se corte
+    texto_combinado = re.sub(r'\s+', ' ', texto_combinado) 
+    
     texto_combinado_sin_tildes = unicodedata.normalize('NFKD', texto_combinado).encode('ASCII', 'ignore').decode('utf-8')
     
     dominio_remitente = ""
@@ -85,57 +100,74 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
         try: dominio_remitente = remitente.split("@")[-1].strip()
         except Exception: pass
 
-    # 1. Capa Anti-Typosquatting Extrema (Analizando dominio crudo y ofuscado)
+    # --- Capa 0: Suplantación de Marca por Contexto (NUEVA) ---
+    if dominio_remitente:
+        for marca, dominio_base in MARCAS_CLAVE.items():
+            # Si nombra al banco en el mail, pero el mail no viene del banco...
+            if marca in texto_combinado_sin_tildes and dominio_base not in dominio_remitente:
+                # Perdonamos cuentas de correo masivas estándar (quizás te lo reenviaste vos mismo)
+                if dominio_remitente not in ["gmail.com", "hotmail.com", "yahoo.com", "outlook.com"]:
+                    score_amenaza += 45
+                    razones.append(f"Suplantación de Marca: El correo se hace pasar por '{marca.title()}' pero viene de ({dominio_remitente}).")
+                    break
+
+    # --- Capa 1: Anti-Typosquatting Extrema ---
     if dominio_remitente:
         dominio_limpio = _limpiar_texto_ofuscado(dominio_remitente.split('.')[0])
         for dom_real in DOMINIOS_CRITICOS:
             dom_real_base = dom_real.split('.')[0]
             if dominio_remitente != dom_real:
-                # Comparamos distancias de la raíz (ej: mercadopago)
                 dist = calcular_distancia_levenshtein(dominio_limpio, dom_real_base)
                 if dist == 1 or dist == 2:
-                    score_amenaza += 60  # Castigo altísimo
+                    score_amenaza += 60  
                     razones.append(f"Typosquatting Severo: Remitente intenta suplantar a '{dom_real}'")
                     break
 
-    # 2. Matriz de Urgencia y Extorsión Compuesta (Patrones combinados)
+    # --- Capa 2: Matriz de Urgencia y Extorsión Compuesta (Corregida) ---
+    # Ampliamos la ventana .{0,40} y usamos raíces de palabras para atrapar más variantes
     patrones_extorsion = [
-        r"(cuenta|tarjeta).{0,20}(suspendida|bloqueada|restringida)",
-        r"(actividad|inicio de sesion).{0,20}(inusual|sospechos[oa])",
-        r"(verificar|actualizar|confirmar).{0,20}(identidad|datos|cuenta)",
-        r"(pago|transferencia).{0,20}(rechazad[oa]|retenid[oa]|pendiente)",
-        r"(evite|evitar).{0,20}(multas|cargos|suspension)"
+        r"(cuenta|tarjeta|servicio).{0,40}(suspendi|bloquea|restringi|inhabilit)",
+        r"(actividad|inicio de sesion|acceso).{0,40}(inusual|sospechos|no reconocid|desconocid)",
+        r"(verific|actualiz|confirm|valid).{0,40}(identidad|datos|cuenta)",
+        r"(pago|transferencia|fondos).{0,40}(rechazad|retenid|pendient)",
+        r"(evit).{0,40}(multa|cargo|suspension|bloqueo|cierre)"
     ]
     
-    # Evaluamos contra el texto sin tildes para mayor efectividad
     coincidencias_compuestas = sum(1 for p in patrones_extorsion if re.search(p, texto_combinado_sin_tildes))
     if coincidencias_compuestas > 0:
-        score_amenaza += 35 * coincidencias_compuestas
+        score_amenaza += 35 * coincidencias_compuestas # Con solo 2 patrones ya da 70 puntos (CRÍTICO)
         razones.append("Ingeniería Social: Tácticas de extorsión o pánico financiero detectadas.")
 
-    # 3. Análisis de Enlaces y Redirecciones Ocultas (Más rápido y tolerante a fallos)
+    # --- Capa 3: Análisis de Enlaces y Acortadores (Mejorada) ---
     enlaces = set(re.findall(r'href=["\'](https?://[^"\']+)["\']', cuerpo_html, re.IGNORECASE))
-    enlaces_sospechosos = 0
     
-    for url in list(enlaces)[:5]: # Límite de 5 enlaces para no ralentizar el escáner
+    # Si te mandaron el mail en texto plano sin etiquetas <a>, igual extrae la URL:
+    if not enlaces:
+        enlaces = set(re.findall(r'(https?://[^\s]+)', texto_combinado, re.IGNORECASE))
+        
+    for url in list(enlaces)[:5]:
+        dominio_inicial = urlparse(url).netloc.lower()
+        
+        # Penalizamos acortadores automáticamente
+        if any(acortador in dominio_inicial for acortador in ACORTADORES):
+            score_amenaza += 40
+            razones.append(f"Enlace Peligroso: Usa un acortador oculto ({dominio_inicial}) muy frecuente en fraudes.")
+            break
+            
         try:
-            # Usamos un timeout estricto de 1.5s. Si el server demora, es mala señal.
             res = requests.head(url, allow_redirects=True, timeout=1.5)
             dominio_final = urlparse(res.url).netloc.lower()
             if dominio_final.startswith("www."): dominio_final = dominio_final[4:]
             
-            # 🛡️ CORRECCIÓN CLAVE: Usamos endswith para aceptar subdominios legítimos (ej: pagos.mercadopago.com)
             if dominio_remitente in DOMINIOS_CRITICOS and not dominio_final.endswith(dominio_remitente):
                 score_amenaza += 50
-                enlaces_sospechosos += 1
                 razones.append(f"Phishing Link: Finge ser {dominio_remitente} pero redirige a {dominio_final}")
-                break # Con uno falso alcanza para condenarlo
+                break 
         except requests.RequestException:
-            # Sitios caídos o que bloquean HEAD suelen ser infraestructura de atacantes efímera
             score_amenaza += 10
-            razones.append(f"Enlace Irrastreable: Contiene URLs ocultas o de infraestructura maliciosa.")
+            razones.append(f"Enlace Irrastreable: Contiene URLs ocultas o protegidas.")
 
-    # 4. Veredicto Final Normalizado
+    # --- 4. Veredicto Final Normalizado ---
     score_final = min(score_amenaza, 100)
     
     if score_final >= 50: estado = "CRÍTICO"
