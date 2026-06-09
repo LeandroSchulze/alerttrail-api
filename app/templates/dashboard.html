@@ -59,7 +59,7 @@
       max-width: 260px !important;
       min-width: 260px !important;
       background-color: var(--sidebar-bg) !important;
-      display: block !important; /* Fuerza bloque, anula flex-wrap raros */
+      display: block !important; 
       padding: 24px 0 !important;
       flex-shrink: 0 !important;
       min-height: 100vh !important;
@@ -83,7 +83,7 @@
 
     /* Navegación del Sidebar */
     .dash-nav {
-      display: block !important; /* Fuerza bloque, anula grids del css global */
+      display: block !important; 
       width: 100% !important;
       padding: 0 !important;
       margin: 0 !important;
@@ -103,7 +103,7 @@
       white-space: nowrap !important;
       width: 100% !important;
       margin: 0 !important;
-      border-radius: 0 !important; /* Anula border-radius de botones globales */
+      border-radius: 0 !important; 
       background: transparent !important;
       font-family: 'Inter', sans-serif !important;
     }
@@ -112,7 +112,7 @@
       background-color: rgba(255,255,255,0.05) !important;
       color: #ffffff !important;
       border-left-color: var(--accent-main) !important;
-      box-shadow: none !important; /* Anula sombras raras al hacer hover */
+      box-shadow: none !important; 
       filter: none !important;
     }
 
@@ -236,6 +236,30 @@
     .dash-btn-danger { color: var(--danger-main) !important; border-color: var(--danger-soft) !important; background: #fffcfc !important; }
     .dash-btn-danger:hover { background: var(--danger-soft) !important; }
 
+    /* ESTILO PARA BOTONES DESHABILITADOS */
+    .dash-btn-disabled {
+      opacity: 0.6 !important;
+      cursor: not-allowed !important;
+      background: #f1f5f9 !important;
+      color: #94a3b8 !important;
+      border-color: #e2e8f0 !important;
+    }
+    .dash-btn-disabled:hover {
+      background: #f1f5f9 !important;
+      border-color: #e2e8f0 !important;
+    }
+    .badge-proximamente {
+      background: #cbd5e1;
+      color: #475569;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     /* RESPONSIVE */
     @media (max-width: 860px) {
       .dash-container { flex-direction: column !important; }
@@ -355,7 +379,13 @@
           <p class="dash-muted">{{ t("dashboard.pro_subtitle") }}</p>
           <div class="dash-btn-row">
             <a class="dash-btn-action" href="/reports_browser">{{ t("dashboard.go_reports_short") }}</a>
-            <a class="dash-btn-action" href="/audit">{{ t("dashboard.go_audit") }}</a>
+            
+            <!-- ACÁ ESTÁ EL BOTÓN BLOQUEADO DE AUDITORÍA -->
+            <span class="dash-btn-action dash-btn-disabled">
+              {{ t("dashboard.go_audit") }}
+              <span class="badge-proximamente">Próximamente</span>
+            </span>
+            
           </div>
         </article>
 
