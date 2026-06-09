@@ -15,7 +15,8 @@ logger = logging.getLogger("alerttrail.utils")
 DOMINIOS_CRITICOS = [
     "mercadopago.com", "mercadopago.com.ar", "visa.com", "mastercard.com",
     "santander.com.ar", "galicia.com.ar", "bbva.com.ar", "banconacion.com.ar",
-    "gmail.com", "outlook.com", "yahoo.com", "paypal.com", "stripe.com", "netflix.com"
+    "gmail.com", "outlook.com", "yahoo.com", "paypal.com", "stripe.com", 
+    "netflix.com", "amazon.com", "apple.com", "microsoft.com"
 ]
 
 # --- 🌐 SISTEMA DE INTERNACIONALIZACIÓN GLOBAL ---
@@ -74,7 +75,10 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
     remitente = (remitente or "").lower().strip()
     asunto = (asunto or "").strip()
     cuerpo_html = (cuerpo_html or "").strip()
+    
+    # Normalizamos acentos para que los tildes no engañen a las expresiones regulares
     texto_combinado = f"{asunto} {cuerpo_html}".lower()
+    texto_combinado_sin_tildes = unicodedata.normalize('NFKD', texto_combinado).encode('ASCII', 'ignore').decode('utf-8')
     
     dominio_remitente = ""
     if "@" in remitente:
@@ -103,7 +107,8 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
         r"(evite|evitar).{0,20}(multas|cargos|suspension)"
     ]
     
-    coincidencias_compuestas = sum(1 for p in patrones_extorsion if re.search(p, texto_combinado))
+    # Evaluamos contra el texto sin tildes para mayor efectividad
+    coincidencias_compuestas = sum(1 for p in patrones_extorsion if re.search(p, texto_combinado_sin_tildes))
     if coincidencias_compuestas > 0:
         score_amenaza += 35 * coincidencias_compuestas
         razones.append("Ingeniería Social: Tácticas de extorsión o pánico financiero detectadas.")
@@ -119,8 +124,8 @@ def analizar_correo_avanzado(remitente: str, asunto: str, cuerpo_html: str) -> d
             dominio_final = urlparse(res.url).netloc.lower()
             if dominio_final.startswith("www."): dominio_final = dominio_final[4:]
             
-            # Penalizamos si el correo finge ser oficial pero el link va a un lugar raro
-            if dominio_remitente in DOMINIOS_CRITICOS and dominio_final != dominio_remitente:
+            # 🛡️ CORRECCIÓN CLAVE: Usamos endswith para aceptar subdominios legítimos (ej: pagos.mercadopago.com)
+            if dominio_remitente in DOMINIOS_CRITICOS and not dominio_final.endswith(dominio_remitente):
                 score_amenaza += 50
                 enlaces_sospechosos += 1
                 razones.append(f"Phishing Link: Finge ser {dominio_remitente} pero redirige a {dominio_final}")
