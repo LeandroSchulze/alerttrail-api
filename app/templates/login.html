@@ -81,7 +81,17 @@
       margin: 0 0 40px;
     }
 
-    /* Tarjetas de Testimonios */
+    /* Tarjetas de Testimonios y Animación */
+    #testimonial-container {
+      min-height: 320px; /* Evita que la pantalla salte al cambiar textos */
+      transition: opacity 0.5s ease-in-out;
+      opacity: 1;
+    }
+
+    #testimonial-container.fading {
+      opacity: 0;
+    }
+
     .testimonial-box {
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -234,7 +244,9 @@
         text-align: center;
       }
       .app-logo { justify-content: center; }
-      .testimonial-box:nth-child(n+3) { display: none; } /* Oculta algunos testimonios en móvil para no hacer tanto scroll */
+      #testimonial-container { min-height: auto; }
+      /* Mostramos solo 1 testimonio en celular para ahorrar espacio */
+      .testimonial-box:nth-child(2) { display: none; } 
       .form-side { padding: 24px; align-items: flex-start; }
       .card { padding: 30px 20px; box-shadow: none; border: none; background: transparent; }
     }
@@ -256,17 +268,9 @@
           <p>Detectamos ataques de phishing, extorsiones y enlaces maliciosos en tiempo real utilizando inteligencia artificial heurística antes de que afecten a tu negocio.</p>
         </div>
 
-        <div class="testimonials">
-          <div class="testimonial-box">
-            <p class="testimonial-text">"Un empleado hizo clic en un mail que parecía idéntico al de nuestro banco. Nos costó semanas recuperar el acceso y la confianza. Desde que implementamos un escáner estricto, dormimos tranquilos."</p>
-            <p class="testimonial-author">— Víctima de Phishing Corporativo</p>
-          </div>
-          
-          <div class="testimonial-box">
-            <p class="testimonial-text">"Me llegó un aviso de que mi cuenta de pagos estaba bloqueada. Todo era falso, pero usaba hasta los logos correctos. Si no fuera por alertas automatizadas, entregaba todos mis datos."</p>
-            <p class="testimonial-author">— Usuario Independiente</p>
-          </div>
-        </div>
+        <!-- Contenedor dinámico de testimonios -->
+        <div id="testimonial-container"></div>
+
       </div>
       
       <div style="color: #64748b; font-size: 13px; margin-top: 40px;">
@@ -319,5 +323,55 @@
 
   </div>
 
+  <!-- Script de Rotación de Testimonios -->
+  <script>
+    const testimonials = [
+      { text: '"Un empleado hizo clic en un mail que parecía idéntico al de nuestro banco. Nos costó semanas recuperarnos. Desde que implementamos el escáner, dormimos tranquilos."', author: "— Víctima de Phishing Corporativo" },
+      { text: '"Me llegó un aviso de que mi cuenta de pagos estaba bloqueada. Todo era falso, pero usaba hasta los logos correctos. La alerta temprana me salvó de entregar mis datos."', author: "— Usuario Independiente" },
+      { text: '"Clonaron el dominio de nuestro proveedor principal y nos pidieron un pago urgente. El sistema bloqueó el correo al detectar la mínima variación en la dirección web."', author: "— Gerente de Finanzas" },
+      { text: '"Una campaña de ransomware casi secuestra nuestros servidores por un enlace malicioso en un PDF. Frenar estas amenazas en la capa de correo es fundamental hoy en día."', author: "— Analista IT" },
+      { text: '"Pensé que el correo de recursos humanos era legítimo. Casi descargo un archivo que habría expuesto toda la red interna de la empresa."', author: "— Empleado Administrativo" },
+      { text: '"Me enviaron un recibo de transferencia falso por una venta. Estaba a punto de entregar el producto cuando recibí la alerta de que el remitente era fraudulento."', author: "— Comerciante Emprendedor" },
+      { text: '"Suplantaron la identidad de nuestro CEO pidiendo transferencias confidenciales. Afortunadamente, el análisis heurístico lo detectó al instante."', author: "— Director de Operaciones" },
+      { text: '"Mi bandeja de entrada era un campo minado de alertas de seguridad inventadas. Ahora la herramienta filtra la basura antes de que yo siquiera la vea."', author: "— Profesional Freelance" }
+    ];
+
+    const container = document.getElementById('testimonial-container');
+    let currentIndex = 0;
+
+    function renderTestimonials() {
+      // 1. Iniciamos el efecto de desvanecimiento
+      container.classList.add('fading');
+
+      // 2. Esperamos medio segundo a que termine de desaparecer para cambiar el texto
+      setTimeout(() => {
+        const t1 = testimonials[currentIndex];
+        const t2 = testimonials[(currentIndex + 1) % testimonials.length];
+
+        container.innerHTML = `
+          <div class="testimonial-box">
+            <p class="testimonial-text">${t1.text}</p>
+            <p class="testimonial-author">${t1.author}</p>
+          </div>
+          <div class="testimonial-box">
+            <p class="testimonial-text">${t2.text}</p>
+            <p class="testimonial-author">${t2.author}</p>
+          </div>
+        `;
+
+        // Avanzamos el índice de a dos para mostrar testimonios totalmente nuevos en la próxima vuelta
+        currentIndex = (currentIndex + 2) % testimonials.length;
+
+        // 3. Quitamos la clase para que vuelvan a aparecer suavemente
+        container.classList.remove('fading');
+      }, 500); 
+    }
+
+    // Ejecutamos la primera vez inmediatamente al cargar
+    renderTestimonials();
+
+    // Configuramos el bucle para que rote cada 8 segundos (8000 milisegundos)
+    setInterval(renderTestimonials, 8000);
+  </script>
 </body>
 </html>
